@@ -20,7 +20,7 @@
     "better-sqlite3": "13.0.3",
     "esbuild": "0.28.1",
     "typescript": "7.0.2",
-    "vitest": "4.1.12"
+    "vitest": "5.0.5"
   },
   "dependencies": {
     "@bongsu/core": "workspace:*"
