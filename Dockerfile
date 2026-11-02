@@ -2,7 +2,7 @@
 # schedules; the SQLite file lives on the /data volume, or the database is Postgres (DATABASE_URL).
 
 # ---- build: the PWA, the dashboard and the server bundle
-FROM node:22.23.2-bookworm-slim AS build
+FROM node:22.23.4-bookworm-slim AS build
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
@@ -24,7 +24,7 @@ RUN mkdir /out && cd /out \
  && npm install --omit=dev --no-audit --no-fund
 
 # ---- runtime
-FROM node:22.23.2-bookworm-slim
+FROM node:22.23.4-bookworm-slim
 ENV NODE_ENV=production \
     PORT=8787 \
     DATABASE_PATH=/data/bongsu.db \
