@@ -23,12 +23,12 @@
     "postgres": "3.4.9"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.10",
-    "@electric-sql/pglite-socket": "0.2.13",
+    "@electric-sql/pglite": "0.5.13",
+    "@electric-sql/pglite-socket": "0.2.16",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "22.20.4",
     "@types/nodemailer": "8.0.2",
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "typescript": "7.0.2",
     "vitest": "4.1.12"
   }
