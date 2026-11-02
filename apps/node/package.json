@@ -20,7 +20,7 @@
     "better-sqlite3": "13.0.3",
     "node-cron": "4.6.0",
     "nodemailer": "10.1.7",
-    "postgres": "3.4.9"
+    "postgres": "4.0.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.10",
