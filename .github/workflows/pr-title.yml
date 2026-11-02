@@ -11,6 +11,9 @@ permissions:
 
 jobs:
   commitlint:
+    # Dependabot's titles start with "Bump", which subject-case refuses; its prefix (chore(deps), ci(deps)) is set in
+    # dependabot.yml, and CI skips its commits the same way
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
