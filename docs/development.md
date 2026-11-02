@@ -180,7 +180,8 @@ The public repository releases with `.github/workflows/release.yml` (Changesets'
 1. With pending changesets it opens or updates the **Version Packages** pull request
    (`chore(release): version packages`): new versions, each package's `CHANGELOG.md`, the changesets removed.
 2. Merging it runs `pnpm changeset publish`: a git tag and a GitHub release per new version; packages that aren't
-   private (the CLI, `bongsu`) go to npm with provenance (`NPM_TOKEN`); when the product's version moved
+   private (the CLI, `bongsu`) go to npm with provenance through trusted publishing
+   (GitHub's OIDC token, no npm token stored; set on npmjs.com for `release.yml`); when the product's version moved
    (`@bongsu/core` and its fixed group), the Docker image from the `Dockerfile` goes to
    `ghcr.io/<owner>/<repo>` as `<version>`, `<major>.<minor>` and `latest` (amd64 and arm64).
 

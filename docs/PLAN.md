@@ -730,7 +730,7 @@ of the project (2.6).
         commit; the release flow is in `docs/development.md`.
   - [x] The CLI publishable: `bongsu` public with provenance, its own README, no runtime dependencies (the bundle);
         `npm pack` installs and runs on its own. The guides say "not on npm yet" until the first release.
-  - [ ] Turned on in the public repository (`NPM_TOKEN`, Actions may open pull requests, Pages from Actions, GHCR
+  - [ ] Turned on in the public repository (npm trusted publisher, Actions may open pull requests, Pages from Actions, GHCR
         visibility); the GitLab CI files removed at the switch.
 - [ ] First public version tagged (the changesets gathered until then).
 - [ ] Repository settings: branch protection, Dependabot/Renovate, topics, description.
