@@ -1,5 +1,6 @@
 # Weekly dependency updates, grouped so each ecosystem opens few pull requests a week. Commit messages follow
 # Conventional Commits (commitlint.config.js): chore(deps) for npm and Docker, ci(deps) for the workflows' actions.
+# Major versions are ignored for npm and Docker: each one (Node, vitest, postgres…) is upgraded on purpose, by hand.
 version: 2
 updates:
   - package-ecosystem: npm # pnpm workspaces: Dependabot reads pnpm-lock.yaml
@@ -16,6 +17,9 @@ updates:
         dependency-type: production
         update-types: [minor, patch]
     open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: github-actions
     directory: /
@@ -36,3 +40,6 @@ updates:
     groups:
       docker:
         patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: [version-update:semver-major]
