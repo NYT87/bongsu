@@ -1,0 +1,6 @@
+{
+  // Runtime-independent code: web-standard APIs only (fetch, WebCrypto), no Cloudflare or Node types.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "lib": ["es2023", "dom", "dom.iterable"], "types": [] },
+  "include": ["src"]
+}

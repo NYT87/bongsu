@@ -1,0 +1,1660 @@
+{
+  "$comment": "Generated from packages/schema: don't edit.",
+  "tables": {
+    "account_settings": {
+      "description": "Legacy: the Trial Reels default per Instagram account before accounts.settings held it; nothing reads it now.",
+      "columns": {
+        "account": {
+          "type": "id",
+          "primaryKey": true,
+          "description": "Instagram username"
+        },
+        "trial_reels": {
+          "type": "int",
+          "notNull": true,
+          "values": [
+            0,
+            1
+          ]
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        }
+      }
+    },
+    "accounts": {
+      "description": "The profiles and channels Bongsu publishes to, per workspace: what the platform allows (capabilities) and the owner's choices (settings).",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "workspace_id": {
+          "type": "id",
+          "notNull": true,
+          "references": "workspaces.id"
+        },
+        "platform": {
+          "type": "text",
+          "notNull": true
+        },
+        "handle": {
+          "type": "text",
+          "notNull": true
+        },
+        "display_name": {
+          "type": "text"
+        },
+        "external_id": {
+          "type": "text"
+        },
+        "connection_id": {
+          "type": "id",
+          "references": "connections.id"
+        },
+        "capabilities": {
+          "type": "json",
+          "notNull": true,
+          "default": "{}"
+        },
+        "settings": {
+          "type": "json",
+          "notNull": true,
+          "default": "{}"
+        },
+        "status": {
+          "type": "text",
+          "notNull": true,
+          "default": "active",
+          "values": [
+            "active",
+            "disabled"
+          ]
+        },
+        "sort": {
+          "type": "int",
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "unique": [
+        [
+          "workspace_id",
+          "platform",
+          "handle"
+        ]
+      ],
+      "indexes": [
+        {
+          "name": "accounts_workspace",
+          "columns": [
+            "workspace_id",
+            "platform"
+          ]
+        }
+      ]
+    },
+    "api_keys": {
+      "description": "Agent keys and CLI tokens: only their sha256 is kept. A CLI token names its person (user_id) and runs out (expires_at).",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "name": {
+          "type": "text",
+          "notNull": true
+        },
+        "key_hash": {
+          "type": "text",
+          "notNull": true,
+          "unique": true
+        },
+        "scopes": {
+          "type": "json",
+          "notNull": true,
+          "description": "JSON array"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "last_used_at": {
+          "type": "timestamp"
+        },
+        "revoked_at": {
+          "type": "timestamp"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        },
+        "created_by": {
+          "type": "text"
+        },
+        "user_id": {
+          "type": "id",
+          "references": "users.id"
+        },
+        "expires_at": {
+          "type": "timestamp"
+        }
+      }
+    },
+    "approvals": {
+      "description": "What was approved, as fingerprints: the texts' sha256 and the media references, compared again before publishing.",
+      "columns": {
+        "id": {
+          "type": "serial",
+          "primaryKey": true
+        },
+        "item_key": {
+          "type": "text",
+          "notNull": true
+        },
+        "caption_sha": {
+          "type": "text"
+        },
+        "comment_sha": {
+          "type": "text"
+        },
+        "alt_sha": {
+          "type": "text"
+        },
+        "media": {
+          "type": "json",
+          "notNull": true,
+          "default": "[]",
+          "description": "JSON [{\"driveId\",\"md5\"}], slide order"
+        },
+        "approved_at": {
+          "type": "text",
+          "notNull": true,
+          "description": "UTC ISO 8601"
+        },
+        "approved_by": {
+          "type": "text",
+          "notNull": true
+        },
+        "comment2_sha": {
+          "type": "text"
+        },
+        "user_id": {
+          "type": "text"
+        },
+        "due_at": {
+          "type": "timestamp"
+        },
+        "account": {
+          "type": "text",
+          "description": "The account (its id) the approval is for; a Shorts comment's channel. NULL only on one older than this column whose item was gone: never valid."
+        }
+      },
+      "indexes": [
+        {
+          "name": "approvals_key",
+          "columns": [
+            "item_key",
+            "id"
+          ]
+        }
+      ]
+    },
+    "audit": {
+      "description": "Who did what, when: approvals, connections, keys, settings, notifications.",
+      "columns": {
+        "id": {
+          "type": "serial",
+          "primaryKey": true
+        },
+        "at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "actor": {
+          "type": "text",
+          "notNull": true,
+          "description": "'cron', 'owner', or an api key id"
+        },
+        "action": {
+          "type": "text",
+          "notNull": true
+        },
+        "target": {
+          "type": "text"
+        },
+        "detail": {
+          "type": "json",
+          "description": "JSON"
+        },
+        "user_id": {
+          "type": "text"
+        },
+        "workspace_id": {
+          "type": "text"
+        }
+      },
+      "indexes": [
+        {
+          "name": "audit_actor_at",
+          "columns": [
+            "actor",
+            "at"
+          ]
+        },
+        {
+          "name": "audit_at",
+          "columns": [
+            "at"
+          ]
+        }
+      ]
+    },
+    "challenges": {
+      "description": "WebAuthn challenges in flight (sign-up, sign-in, approve), each used once.",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "challenge": {
+          "type": "text",
+          "notNull": true
+        },
+        "purpose": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "setup",
+            "login",
+            "approve"
+          ]
+        },
+        "data": {
+          "type": "text"
+        },
+        "expires_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      }
+    },
+    "comment_polls": {
+      "description": "Published posts whose new comments are checked, for 14 days after they went out.",
+      "columns": {
+        "media_id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "platform": {
+          "type": "text",
+          "notNull": true
+        },
+        "account": {
+          "type": "text",
+          "notNull": true
+        },
+        "item_key": {
+          "type": "text"
+        },
+        "since": {
+          "type": "timestamp",
+          "notNull": true,
+          "description": "when it went out (polled for 14 days)"
+        },
+        "checked_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": 0
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      }
+    },
+    "comments": {
+      "description": "Comments on published posts, fetched from the platforms: what the app's inbox shows.",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "description": "\"ig:<comment id>\" / \"yt:<comment id>\""
+        },
+        "platform": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "ig",
+            "yt"
+          ]
+        },
+        "account": {
+          "type": "text",
+          "notNull": true,
+          "description": "Instagram username, or main / vlogs"
+        },
+        "media_id": {
+          "type": "text",
+          "notNull": true,
+          "description": "Instagram media id, or YouTube video id"
+        },
+        "item_key": {
+          "type": "text",
+          "description": "the plan item (Instagram), or comment:<video id> (YouTube)"
+        },
+        "author": {
+          "type": "text",
+          "notNull": true
+        },
+        "text": {
+          "type": "text",
+          "notNull": true
+        },
+        "at": {
+          "type": "timestamp",
+          "notNull": true,
+          "description": "unix seconds, when it was written"
+        },
+        "own": {
+          "type": "bool",
+          "notNull": true,
+          "default": 0,
+          "description": "ours (the self-comment, our replies): never notified"
+        },
+        "seen": {
+          "type": "bool",
+          "notNull": true,
+          "default": 0
+        },
+        "reply_text": {
+          "type": "text"
+        },
+        "replied_at": {
+          "type": "timestamp"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      },
+      "indexes": [
+        {
+          "name": "comments_unseen",
+          "columns": [
+            "seen",
+            "own",
+            "at"
+          ]
+        }
+      ]
+    },
+    "connections": {
+      "description": "How Bongsu reaches a platform for one or more accounts: a Composio connection, an OAuth grant (encrypted credentials) or a named secret.",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "workspace_id": {
+          "type": "id",
+          "notNull": true,
+          "references": "workspaces.id"
+        },
+        "provider": {
+          "type": "text",
+          "notNull": true
+        },
+        "kind": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "composio",
+            "oauth",
+            "service"
+          ]
+        },
+        "label": {
+          "type": "text"
+        },
+        "external_ref": {
+          "type": "text"
+        },
+        "credentials": {
+          "type": "text"
+        },
+        "secret_name": {
+          "type": "text"
+        },
+        "status": {
+          "type": "text",
+          "notNull": true,
+          "default": "ok",
+          "values": [
+            "ok",
+            "expiring",
+            "broken"
+          ]
+        },
+        "expires_at": {
+          "type": "timestamp"
+        },
+        "last_error": {
+          "type": "text"
+        },
+        "last_checked_at": {
+          "type": "timestamp"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "indexes": [
+        {
+          "name": "connections_workspace",
+          "columns": [
+            "workspace_id"
+          ]
+        }
+      ]
+    },
+    "drafts": {
+      "description": "Proposed posts (from agents, the app, the Drive inbox) waiting to be scheduled or refused.",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "description": "random id"
+        },
+        "kind": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "reel",
+            "photo",
+            "carousel",
+            "shorts_comment"
+          ]
+        },
+        "account": {
+          "type": "text",
+          "notNull": true
+        },
+        "payload": {
+          "type": "json",
+          "notNull": true,
+          "description": "JSON: caption, comment, time, location, media refs (Drive ids)"
+        },
+        "fingerprints": {
+          "type": "json",
+          "description": "JSON: caption sha256, Drive md5 per media file"
+        },
+        "checks": {
+          "type": "json",
+          "description": "JSON: caption lint and dry-run results"
+        },
+        "source": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "api",
+            "pwa",
+            "drive",
+            "pc"
+          ]
+        },
+        "created_by": {
+          "type": "text",
+          "notNull": true,
+          "description": "api key id, or 'owner'"
+        },
+        "status": {
+          "type": "text",
+          "notNull": true,
+          "default": "draft",
+          "values": [
+            "draft",
+            "approved",
+            "refused",
+            "withdrawn"
+          ]
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      },
+      "indexes": [
+        {
+          "name": "drafts_workspace",
+          "columns": [
+            "workspace_id",
+            "status"
+          ]
+        },
+        {
+          "name": "drafts_status_created",
+          "columns": [
+            "status",
+            "created_at"
+          ]
+        }
+      ]
+    },
+    "inbox_seen": {
+      "description": "Files the Drive inbox already turned into drafts, so they aren't drafted twice.",
+      "columns": {
+        "store": {
+          "type": "text",
+          "notNull": true
+        },
+        "media_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "draft_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "primaryKey": [
+        "store",
+        "media_id"
+      ]
+    },
+    "jobs": {
+      "description": "One per plan item due to go out: the publishing state machine the tick advances.",
+      "columns": {
+        "id": {
+          "type": "serial",
+          "primaryKey": true
+        },
+        "item_key": {
+          "type": "text",
+          "notNull": true,
+          "unique": true
+        },
+        "kind": {
+          "type": "text",
+          "notNull": true
+        },
+        "account": {
+          "type": "text",
+          "notNull": true
+        },
+        "due_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "state": {
+          "type": "text",
+          "notNull": true,
+          "default": "pending",
+          "values": [
+            "pending",
+            "container_created",
+            "published",
+            "done",
+            "refused",
+            "failed",
+            "held"
+          ]
+        },
+        "container_id": {
+          "type": "text"
+        },
+        "children": {
+          "type": "text"
+        },
+        "media_id": {
+          "type": "text"
+        },
+        "permalink": {
+          "type": "text"
+        },
+        "attempts": {
+          "type": "int",
+          "notNull": true,
+          "default": 0
+        },
+        "last_error": {
+          "type": "text"
+        },
+        "dry_run": {
+          "type": "bool",
+          "notNull": true,
+          "default": 1
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "payload": {
+          "type": "json",
+          "notNull": true,
+          "default": "{}"
+        },
+        "notified_at": {
+          "type": "timestamp"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      },
+      "indexes": [
+        {
+          "name": "jobs_workspace",
+          "columns": [
+            "workspace_id",
+            "state"
+          ]
+        },
+        {
+          "name": "jobs_state_due",
+          "columns": [
+            "state",
+            "due_at"
+          ]
+        }
+      ]
+    },
+    "locks": {
+      "description": "Named locks with an expiry, so a slow run can't overlap the next.",
+      "columns": {
+        "name": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "holder": {
+          "type": "text",
+          "notNull": true
+        },
+        "expires_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      }
+    },
+    "media_cleanup": {
+      "description": "Media moved aside after publishing (to UPLOADS/_posted/), or refused by the store.",
+      "columns": {
+        "store": {
+          "type": "text",
+          "notNull": true
+        },
+        "media_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "item_key": {
+          "type": "text",
+          "notNull": true
+        },
+        "moved_at": {
+          "type": "timestamp"
+        },
+        "refused": {
+          "type": "text"
+        }
+      },
+      "primaryKey": [
+        "store",
+        "media_id"
+      ],
+      "indexes": [
+        {
+          "name": "media_cleanup_item",
+          "columns": [
+            "item_key"
+          ]
+        }
+      ]
+    },
+    "memberships": {
+      "description": "Who belongs to which workspace, and with what role.",
+      "columns": {
+        "workspace_id": {
+          "type": "id",
+          "notNull": true,
+          "references": "workspaces.id"
+        },
+        "user_id": {
+          "type": "id",
+          "notNull": true,
+          "references": "users.id"
+        },
+        "role": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "owner",
+            "admin",
+            "approver",
+            "editor",
+            "viewer"
+          ]
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "primaryKey": [
+        "workspace_id",
+        "user_id"
+      ]
+    },
+    "oauth_apps": {
+      "description": "The owner's own OAuth apps (Meta, Google): client id and encrypted secret.",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "description": "\"meta\", \"google\" (ConnectSpec.app)"
+        },
+        "client_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "client_secret": {
+          "type": "text",
+          "notNull": true,
+          "description": "encrypted (core/crypto.ts)"
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updated_by": {
+          "type": "text"
+        }
+      }
+    },
+    "oauth_states": {
+      "description": "OAuth flows in progress: the state's hash, the PKCE verifier, who started it. Single use, 15 minutes.",
+      "columns": {
+        "state_hash": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "provider": {
+          "type": "text",
+          "notNull": true
+        },
+        "user_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "verifier": {
+          "type": "text"
+        },
+        "connection_id": {
+          "type": "text"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "expires_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "used_at": {
+          "type": "timestamp"
+        }
+      }
+    },
+    "passkeys": {
+      "description": "Each person's passkeys (WebAuthn credentials), with a name and last use.",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true,
+          "description": "credential id (base64url)"
+        },
+        "public_key": {
+          "type": "text",
+          "notNull": true,
+          "description": "COSE public key (base64url)"
+        },
+        "counter": {
+          "type": "int",
+          "notNull": true,
+          "default": 0
+        },
+        "transports": {
+          "type": "json",
+          "description": "JSON array"
+        },
+        "name": {
+          "type": "text"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "last_used_at": {
+          "type": "timestamp"
+        },
+        "user_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "owner"
+        }
+      }
+    },
+    "plan_items": {
+      "description": "The plan: every post to publish, with its time, texts, media and options.",
+      "columns": {
+        "item_key": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "account": {
+          "type": "text",
+          "notNull": true
+        },
+        "folder": {
+          "type": "text",
+          "notNull": true
+        },
+        "name": {
+          "type": "text",
+          "notNull": true
+        },
+        "format": {
+          "type": "text"
+        },
+        "options": {
+          "type": "json",
+          "notNull": true,
+          "default": "{}"
+        },
+        "due_at": {
+          "type": "timestamp"
+        },
+        "hold": {
+          "type": "bool",
+          "notNull": true,
+          "default": 0
+        },
+        "note": {
+          "type": "text"
+        },
+        "sort": {
+          "type": "int",
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updated_by": {
+          "type": "text"
+        },
+        "content": {
+          "type": "text",
+          "notNull": true,
+          "default": "repo",
+          "values": [
+            "repo",
+            "db"
+          ]
+        },
+        "caption": {
+          "type": "text"
+        },
+        "comment": {
+          "type": "text"
+        },
+        "comment2": {
+          "type": "text"
+        },
+        "alt": {
+          "type": "text"
+        },
+        "media": {
+          "type": "text"
+        },
+        "draft_id": {
+          "type": "text"
+        },
+        "title": {
+          "type": "text"
+        },
+        "texts_at": {
+          "type": "timestamp"
+        },
+        "texts_by": {
+          "type": "text"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      },
+      "indexes": [
+        {
+          "name": "plan_items_workspace_due",
+          "columns": [
+            "workspace_id",
+            "due_at"
+          ]
+        },
+        {
+          "name": "plan_items_account_due",
+          "columns": [
+            "account",
+            "due_at"
+          ]
+        }
+      ]
+    },
+    "post_results": {
+      "description": "The 24 hours result of each published post: the marker that its notification went out, and the account's median views at that time.",
+      "columns": {
+        "item_key": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "account": {
+          "type": "text",
+          "notNull": true,
+          "description": "Instagram username"
+        },
+        "media_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "median_views": {
+          "type": "real",
+          "description": "the account's median views over earlier results (NULL: none yet)"
+        },
+        "fetched_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      }
+    },
+    "posted": {
+      "description": "What was published: by the scheduler, recorded by hand, or imported.",
+      "columns": {
+        "item_key": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "account": {
+          "type": "text",
+          "notNull": true
+        },
+        "media_id": {
+          "type": "text"
+        },
+        "permalink": {
+          "type": "text"
+        },
+        "source": {
+          "type": "text",
+          "notNull": true,
+          "default": "scheduler",
+          "values": [
+            "scheduler",
+            "manual",
+            "import"
+          ]
+        },
+        "at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "published_at": {
+          "type": "timestamp"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      },
+      "indexes": [
+        {
+          "name": "posted_account_published",
+          "columns": [
+            "account",
+            "published_at"
+          ]
+        }
+      ]
+    },
+    "push_subs": {
+      "description": "Web Push subscriptions: the devices notifications go to.",
+      "columns": {
+        "id": {
+          "type": "serial",
+          "primaryKey": true
+        },
+        "endpoint": {
+          "type": "text",
+          "notNull": true,
+          "unique": true
+        },
+        "p256dh": {
+          "type": "text",
+          "notNull": true
+        },
+        "auth": {
+          "type": "text",
+          "notNull": true
+        },
+        "device": {
+          "type": "text"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "last_ok_at": {
+          "type": "timestamp"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        },
+        "user_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "owner"
+        }
+      }
+    },
+    "rate_limits": {
+      "description": "Requests per agent key per minute.",
+      "columns": {
+        "key_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "window": {
+          "type": "int",
+          "notNull": true,
+          "description": "unix minute"
+        },
+        "n": {
+          "type": "int",
+          "notNull": true,
+          "default": 0
+        }
+      },
+      "primaryKey": [
+        "key_id",
+        "window"
+      ]
+    },
+    "recovery_codes": {
+      "description": "One-time recovery codes (sha256), for signing in after every passkey is lost.",
+      "columns": {
+        "code_hash": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "user_id": {
+          "type": "id",
+          "notNull": true,
+          "references": "users.id"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "used_at": {
+          "type": "timestamp"
+        }
+      },
+      "indexes": [
+        {
+          "name": "recovery_codes_user",
+          "columns": [
+            "user_id"
+          ]
+        }
+      ]
+    },
+    "reports": {
+      "description": "Performance reviews, as Markdown.",
+      "columns": {
+        "name": {
+          "type": "id",
+          "primaryKey": true,
+          "description": "the file's name without .md, e.g. 2026-10-21 or 2026-10-10_vlogs-shorts"
+        },
+        "markdown": {
+          "type": "text",
+          "notNull": true
+        },
+        "saved_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      }
+    },
+    "sessions": {
+      "description": "Signed-in sessions of the app and the dashboard (the token's sha256).",
+      "columns": {
+        "token_hash": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "expires_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "user_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "owner"
+        },
+        "app": {
+          "type": "text",
+          "notNull": true,
+          "default": "pwa",
+          "values": [
+            "pwa",
+            "dashboard"
+          ]
+        },
+        "verified_at": {
+          "type": "timestamp"
+        }
+      },
+      "indexes": [
+        {
+          "name": "sessions_expires",
+          "columns": [
+            "expires_at"
+          ]
+        }
+      ]
+    },
+    "settings": {
+      "description": "Instance-wide key/value settings (pause, bootstrap done, caches).",
+      "columns": {
+        "key": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "value": {
+          "type": "text",
+          "notNull": true
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        }
+      }
+    },
+    "setup_codes": {
+      "description": "One-time codes that add a device: the device creates its passkey with one.",
+      "columns": {
+        "code_hash": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "expires_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "used_at": {
+          "type": "timestamp"
+        },
+        "user_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "owner"
+        }
+      }
+    },
+    "shorts_commented": {
+      "description": "YouTube videos the Shorts comment was posted on.",
+      "columns": {
+        "video_id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "channel": {
+          "type": "text",
+          "notNull": true
+        },
+        "date_pt": {
+          "type": "text",
+          "notNull": true,
+          "description": "the day in Pacific time, as yt.py logged it"
+        },
+        "thread_id": {
+          "type": "text"
+        },
+        "label": {
+          "type": "text"
+        },
+        "source": {
+          "type": "text",
+          "notNull": true,
+          "default": "scheduler",
+          "values": [
+            "scheduler",
+            "manual",
+            "import"
+          ]
+        },
+        "at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      }
+    },
+    "shorts_comments": {
+      "description": "The Shorts comment list: which video gets which comment, in order.",
+      "columns": {
+        "video_id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "channel": {
+          "type": "text",
+          "notNull": true,
+          "description": "the YouTube account's id"
+        },
+        "file": {
+          "type": "text",
+          "notNull": true
+        },
+        "label": {
+          "type": "text"
+        },
+        "sort": {
+          "type": "int",
+          "notNull": true,
+          "default": 0
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": 0
+        },
+        "text": {
+          "type": "text"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      }
+    },
+    "snapshots": {
+      "description": "Daily stats snapshots, as collected.",
+      "columns": {
+        "day": {
+          "type": "id",
+          "primaryKey": true,
+          "description": "YYYY-MM-DD, the day the snapshot is for"
+        },
+        "taken": {
+          "type": "text",
+          "notNull": true,
+          "description": "the snapshot's own \"taken\" time"
+        },
+        "source": {
+          "type": "text",
+          "notNull": true,
+          "description": "'ci' (the nightly collect), 'pc', 'backfill'"
+        },
+        "data": {
+          "type": "json",
+          "notNull": true,
+          "description": "the snapshot JSON as collect.py wrote it"
+        },
+        "saved_at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      }
+    },
+    "trial_posts": {
+      "description": "The Trial Reel copies published after their regular Reel.",
+      "columns": {
+        "item_key": {
+          "type": "id",
+          "primaryKey": true,
+          "description": "the regular Reel's plan key"
+        },
+        "account": {
+          "type": "text",
+          "notNull": true,
+          "description": "Instagram username"
+        },
+        "media_id": {
+          "type": "text"
+        },
+        "permalink": {
+          "type": "text"
+        },
+        "published_at": {
+          "type": "timestamp"
+        },
+        "at": {
+          "type": "timestamp",
+          "notNull": true,
+          "default": {
+            "now": true
+          }
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      }
+    },
+    "users": {
+      "description": "People: the first one owns the instance. Email identifies them; passkeys sign them in.",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "email": {
+          "type": "text",
+          "unique": true
+        },
+        "name": {
+          "type": "text"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "timezone": {
+          "type": "text"
+        }
+      }
+    },
+    "workspace_settings": {
+      "description": "A workspace's time zone, daily digest hour and locale.",
+      "columns": {
+        "workspace_id": {
+          "type": "id",
+          "primaryKey": true,
+          "references": "workspaces.id"
+        },
+        "timezone": {
+          "type": "text",
+          "notNull": true,
+          "description": "IANA name, e.g. Asia/Seoul; dates and times in the plan are in it"
+        },
+        "digest_hour": {
+          "type": "int",
+          "notNull": true,
+          "between": [
+            0,
+            23
+          ]
+        },
+        "locale": {
+          "type": "text",
+          "notNull": true
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      }
+    },
+    "workspaces": {
+      "description": "Separate sets of accounts, each with its own people.",
+      "columns": {
+        "id": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "name": {
+          "type": "text",
+          "notNull": true
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      }
+    },
+    "post_metrics": {
+      "description": "The metrics series: one row per sample of a published post's lifetime counts (NULL when the platform gives none).",
+      "columns": {
+        "id": {
+          "type": "serial",
+          "primaryKey": true
+        },
+        "item_key": {
+          "type": "text",
+          "notNull": true,
+          "description": "The plan key; 'trial:<key>' for a Trial Reel copy, 'video:<id>' for a YouTube upload"
+        },
+        "account": {
+          "type": "text",
+          "notNull": true
+        },
+        "platform": {
+          "type": "text",
+          "notNull": true
+        },
+        "media_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "taken_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "views": {
+          "type": "int"
+        },
+        "reach": {
+          "type": "int"
+        },
+        "likes": {
+          "type": "int"
+        },
+        "comments": {
+          "type": "int"
+        },
+        "saves": {
+          "type": "int"
+        },
+        "shares": {
+          "type": "int"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        },
+        "follows": {
+          "type": "int",
+          "description": "accounts that followed or subscribed because of this post, lifetime (NULL: not reported)"
+        },
+        "profile_visits": {
+          "type": "int",
+          "description": "profile visits from this post, lifetime (Instagram; NULL: not reported)"
+        }
+      },
+      "indexes": [
+        {
+          "name": "post_metrics_item",
+          "columns": [
+            "item_key",
+            "taken_at"
+          ]
+        },
+        {
+          "name": "post_metrics_ws",
+          "columns": [
+            "workspace_id",
+            "taken_at"
+          ]
+        }
+      ]
+    },
+    "account_metrics": {
+      "description": "The account series: one row per sample of an account's follower count (NULL when hidden).",
+      "columns": {
+        "id": {
+          "type": "serial",
+          "primaryKey": true
+        },
+        "account": {
+          "type": "text",
+          "notNull": true,
+          "description": "accounts.id"
+        },
+        "platform": {
+          "type": "text",
+          "notNull": true
+        },
+        "taken_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "followers": {
+          "type": "int",
+          "description": "followers (Instagram) or subscribers (YouTube, rounded by YouTube)"
+        },
+        "workspace_id": {
+          "type": "text",
+          "notNull": true,
+          "default": "default"
+        }
+      },
+      "indexes": [
+        {
+          "name": "account_metrics_account",
+          "columns": [
+            "account",
+            "taken_at"
+          ]
+        },
+        {
+          "name": "account_metrics_ws",
+          "columns": [
+            "workspace_id",
+            "taken_at"
+          ]
+        }
+      ]
+    }
+  }
+}

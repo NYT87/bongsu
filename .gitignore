@@ -1,0 +1,26 @@
+# wrangler build cache, npm deps, and tool lock files created when commands run in a Worker folder
+.wrangler/
+node_modules/
+.claude/
+worker-configuration.d.ts
+.dev.vars
+dist/
+# the owner's list for scripts/check-personal.sh
+.personal-strings
+.pnpm-store/
+# local git-hook settings (lefthook-local.yml, its rc file)
+lefthook-local.yml
+.lefthook.rc
+# the project site, built by scripts/build-site.sh
+/public/
+# docker-compose settings (secrets): only .env.example is committed
+.env
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# per-plan scratch of the coding agents (ledgers, briefs, review packages)
+.superpowers/
+
+# the screenshot pipeline's demo instance
+scripts/screenshots/.scratch/

@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Bongsu: light the signal, reach every channel</title>
+    <meta
+      name="description"
+      content="A self-hosted publishing scheduler for creators: you approve each post with your passkey, it posts on time without your computer on."
+    />
+    <meta name="theme-color" content="#131f2a" />
+    <meta property="og:title" content="Bongsu" />
+    <meta property="og:description" content="A self-hosted publishing scheduler for creators: you approve, it posts on time." />
+    <meta property="og:image" content="{{SITE_URL}}/brand/social-card.png" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" href="brand/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="brand/apple-touch-icon-180.png" />
+    <link rel="stylesheet" href="site.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <!-- The mark's Ember gradient (deep orange bottom left, gold top right) for the icons drawn on a 48 grid -->
+    <svg class="defs" aria-hidden="true" focusable="false">
+      <linearGradient id="ember" gradientUnits="userSpaceOnUse" x1="4" y1="44" x2="44" y2="4">
+        <stop offset="0" stop-color="#e85d1c" />
+        <stop offset="0.55" stop-color="#f7931e" />
+        <stop offset="1" stop-color="#fdab1a" />
+      </linearGradient>
+      <!-- mark-small.svg's own gradient, per shape, for the icons built from its paths -->
+      <linearGradient id="ember-box" x1="0" y1="1" x2="1" y2="0">
+        <stop offset="0" stop-color="#e85d1c" />
+        <stop offset="0.55" stop-color="#f7931e" />
+        <stop offset="1" stop-color="#fdab1a" />
+      </linearGradient>
+    </svg>
+
+    <header class="hero">
+      <nav class="nav wrap" aria-label="Main">
+        <a class="nav-home" href="./"><img src="brand/lockup.svg" alt="Bongsu (봉수)" width="170" height="34" /></a>
+        <ul>
+          <li><a href="#how">How it works</a></li>
+          <li><a href="#agents">Agents</a></li>
+          <li><a href="docs/">Docs</a></li>
+          <li><a href="{{REPO_URL}}">Source</a></li>
+        </ul>
+      </nav>
+
+      <div class="hero-body wrap">
+        <div class="hero-text">
+          <p class="status"><span class="status-dot" aria-hidden="true"></span>Early development · MIT</p>
+          <h1>Light the signal. <span class="glow">Reach every channel.</span></h1>
+          <p class="lede">
+            A self-hosted publishing scheduler for creators: you approve, it posts on time. Instagram Reels, posts,
+            carousels, stories and Trial Reels, plus YouTube Shorts comments, in one queue.
+          </p>
+          <div class="ctas">
+            <a class="btn btn-ember" href="#run">Run your own</a>
+            <a class="btn btn-ghost" href="{{REPO_URL}}">Read the source</a>
+          </div>
+        </div>
+
+        <figure class="phone-stage">
+          <img class="hero-mark" src="brand/mark.svg" alt="" width="120" height="107" />
+          <div class="phone" role="img" aria-label="The Bongsu app on a phone: a Reel for @demo_running, shown exactly as it will go out, with the button Approve: publish Today 18:00 GMT+9.">
+            <div class="app-bar"><span class="app-back">‹ Today</span><b>Morning run</b><span></span></div>
+            <div class="app-body">
+              <p class="app-target"><span class="dot dot-reel"></span>Instagram Reel · @demo_running</p>
+              <p class="app-when">Today · 18:00 GMT+9</p>
+              <div class="app-media">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l10.5-6.5z" /></svg>
+              </div>
+              <p class="app-label">Caption</p>
+              <p class="app-caption">Six kilometres before the city wakes up. Same loop, different light every morning.</p>
+              <p class="app-label">Comment</p>
+              <p class="app-caption">Route and splits in the first reply.</p>
+            </div>
+            <div class="app-approve">
+              <p>Instagram Reel · @demo_running · Today 18:00 GMT+9</p>
+              <span class="app-btn">Approve: publish Today 18:00 GMT+9</span>
+            </div>
+          </div>
+          <figcaption class="sr-only">Demo data; the real app looks the same with your own accounts.</figcaption>
+        </figure>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="section wrap" aria-labelledby="promises-title">
+        <h2 id="promises-title" class="sr-only">What Bongsu promises</h2>
+        <ul class="promises">
+          <li class="card">
+            <span class="tile">
+              <svg class="icon" viewBox="0 0 48 48" aria-hidden="true">
+                <circle cx="15" cy="24" r="9" />
+                <path d="M24 24H43M37 24v6M43 24v5" />
+                <circle class="lit" cx="15" cy="24" r="3.5" />
+              </svg>
+            </span>
+            <h3>Your passkey approves every post</h3>
+            <p>
+              Before you approve, you see exactly what goes out: media, caption, alt text, comment, account and time.
+              Change the text or the media and it waits for you again.
+            </p>
+          </li>
+          <li class="card">
+            <span class="tile">
+              <svg class="icon" viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M33 5a10 10 0 1 0 10 14 8.5 8.5 0 0 1-10-14z" />
+                <path class="peak" d="M5.3 42L21 25.5L29.3 33.8L33 30L41.3 42Z" />
+              </svg>
+            </span>
+            <h3>It posts without your computer on</h3>
+            <p>
+              Bongsu runs on your own Cloudflare account, on the free plan, and publishes on schedule while you are
+              away from your desk or asleep.
+            </p>
+          </li>
+          <li class="card">
+            <span class="tile">
+              <svg class="icon" viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M6 12H28M6 22H24M6 32H18" />
+                <path d="M32.4 28.1A9 9 0 0 1 43 37" />
+                <circle class="lit" cx="34" cy="37" r="3.5" />
+              </svg>
+            </span>
+            <h3>Agents can plan, only you publish</h3>
+            <p>
+              An agent such as Claude can read the queue, write captions and propose drafts. Agent keys can't approve,
+              resume or publish.
+            </p>
+          </li>
+        </ul>
+      </section>
+
+      <section id="how" class="band" aria-labelledby="how-title">
+        <div class="wrap section">
+          <p class="eyebrow">봉수 · 烽燧</p>
+          <h2 id="how-title">How the signal travels</h2>
+          <p class="band-lede">
+            In Joseon-era Korea, beacon towers on mountain peaks burned smoke by day and fire by night. When one peak lit
+            its signal, the next caught it and passed it on. Bongsu works the same way: you light the signal once, and
+            it travels to every channel on schedule.
+          </p>
+          <ol class="relay">
+            <li>
+              <svg class="icon small" viewBox="5 15 56 46" aria-hidden="true">
+                <path class="peak" d="M9 54L30 32L41 43L46 38L57 54Z" />
+              </svg>
+              <p class="relay-term">Bongsudae <span>the beacon towers</span></p>
+              <p>Your connected accounts: Instagram profiles and YouTube channels.</p>
+            </li>
+            <li>
+              <svg class="icon" viewBox="0 0 48 48" aria-hidden="true">
+                <path d="M11 43c-5-6 4-9 0-15s4-9 1-15" />
+                <path d="M21 43c-5-6 4-9 0-15s4-9 1-15S26 5 24 4" />
+                <path d="M31 43c-5-6 4-9 0-15s4-9 1-13" />
+              </svg>
+              <p class="relay-term">Smoke <span>a signal getting ready</span></p>
+              <p>Planned items: drafts, items waiting for your approval, approved items queued for their time.</p>
+            </li>
+            <li>
+              <img class="icon" src="brand/mark-small.svg" alt="" width="28" height="28" />
+              <p class="relay-term">Fire <span>the signal lit</span></p>
+              <p>Published: the post goes out, its comments follow, and you're notified.</p>
+            </li>
+            <li>
+              <svg class="icon small" viewBox="13 0 40 40" aria-hidden="true">
+                <path d="M28.44 13.14A9 9 0 0 1 38.97 22.78" />
+                <path d="M24.36 6.5A16.5 16.5 0 0 1 44.95 28.97" />
+                <circle class="lit" cx="30" cy="22" r="4" />
+              </svg>
+              <p class="relay-term">Mangru <span>the watchtower</span></p>
+              <p>Results after 24 hours, new comments, and the Stats page.</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section wrap split" aria-labelledby="daily-title">
+        <div>
+          <h2 id="daily-title">The daily work, on your phone</h2>
+          <p>
+            An installable app for checking what goes out today and acting on it in seconds. What needs you comes first;
+            when nothing does, it stays quiet.
+          </p>
+        </div>
+        <dl class="facts">
+          <div>
+            <dt>Today, Calendar, Queue, Drafts</dt>
+            <dd>The plan in the workspace's time zone, shown next to every time.</dd>
+          </div>
+          <div>
+            <dt>Notifications</dt>
+            <dd>Push and ntfy, with buttons to approve from the notification, and a daily digest.</dd>
+          </div>
+          <div>
+            <dt>Drive inbox</dt>
+            <dd>Files dropped in a Google Drive folder become drafts, ready to schedule.</dd>
+          </div>
+          <div>
+            <dt>Caption checks</dt>
+            <dd>Length, the fold, the hashtag cap, one call to action and invisible characters, before posting.</dd>
+          </div>
+          <div>
+            <dt>Hold or pause</dt>
+            <dd>Stop one item and keep its approval, or pause everything until you resume.</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section id="agents" class="section wrap split" aria-labelledby="agents-title">
+        <div>
+          <h2 id="agents-title">Built for agents, with you in charge</h2>
+          <p>
+            Bongsu has a built-in MCP server and a REST API. Give an agent a key and it can manage the plan for you. If
+            it changes a post after you approved it, the post waits for you again.
+          </p>
+          <p><a class="link" href="docs/api-reference/">How agent keys work</a></p>
+        </div>
+        <div class="console">
+          <p class="console-head">An agent key can</p>
+          <ul>
+            <li><code>list_queue</code> read the plan and the queue</li>
+            <li><code>plan_add</code> add a Reel, post or story</li>
+            <li><code>plan_update</code> edit captions, comments, alt text and times</li>
+            <li><code>create_draft</code> propose a draft</li>
+            <li><code>pause_scheduler</code> stop all publishing</li>
+          </ul>
+          <p class="console-head console-no">Only your passkey can</p>
+          <ul>
+            <li><b>Approve</b> let a post go out</li>
+            <li><b>Resume</b> start publishing again</li>
+          </ul>
+        </div>
+      </section>
+
+      <section id="run" class="section wrap" aria-labelledby="run-title">
+        <h2 id="run-title">Run your own</h2>
+        <p class="section-lede">
+          Bongsu runs on Cloudflare Workers with D1, or in Docker on your own server with SQLite or Postgres. Try it
+          locally first, with demo accounts and nothing real behind them. You need Node 22 and pnpm.
+        </p>
+        <div class="code">
+          <pre><code id="quickstart">corepack enable
+pnpm install
+scripts/dev-seed.sh
+pnpm --filter @bongsu/cloudflare dev</code></pre>
+          <button class="copy" type="button" data-copy="quickstart">Copy</button>
+        </div>
+        <ul class="next">
+          <li><a class="link" href="{{BLOB_URL}}/docs/development.md#local-testing">Local testing</a></li>
+          <li><a class="link" href="docs/deploy-cloudflare/">Deploy to Cloudflare</a></li>
+          <li><a class="link" href="{{BLOB_URL}}/docs/PLAN.md">Roadmap</a></li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div class="wrap footer-row">
+        <p class="footer-name"><img src="brand/mark-small.svg" alt="" width="24" height="24" />Bongsu</p>
+        <p>MIT License · <a href="{{REPO_URL}}">Source</a> · <a href="docs/">Docs</a></p>
+      </div>
+    </footer>
+
+    <script>
+      // Copy buttons: the only script on the page; without it the commands are still there to select.
+      for (const button of document.querySelectorAll("[data-copy]")) {
+        button.addEventListener("click", async () => {
+          const text = document.getElementById(button.dataset.copy).textContent;
+          try {
+            await navigator.clipboard.writeText(text);
+            button.textContent = "Copied";
+          } catch {
+            button.textContent = "Select and copy";
+          }
+          setTimeout(() => {
+            button.textContent = "Copy";
+          }, 2000);
+        });
+      }
+    </script>
+  </body>
+</html>

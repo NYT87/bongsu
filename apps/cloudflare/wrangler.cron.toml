@@ -1,0 +1,29 @@
+# The cron Worker: only tick() (src/cron.ts), small so each run stays under 10 ms CPU.
+# Same D1 and the same secrets as bongsu (`bongsu deploy-secrets` sends them to both). Media links and push
+# notifications point at bongsu, which serves them.
+name = "bongsu-cron"
+main = "src/cron.ts"
+compatibility_date = "2026-08-20"
+workers_dev = true
+
+[vars]
+DRY_RUN = "1"   # "1": every step logs and notifies instead of publishing. Set "0" to go live.
+PUBLIC_URL = "https://bongsu.example.com"
+RP_ID = "bongsu.example.com"
+VAPID_PUBLIC_KEY = "REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY"
+VAPID_SUBJECT = "mailto:owner@example.com"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "bongsu"
+database_id = "00000000-0000-0000-0000-000000000000"
+migrations_dir = "../../migrations/sqlite"
+
+[triggers]
+crons = ["*/5 * * * *", "2,32 * * * *", "7,22,37,52 * * * *"]   # tick(): Instagram / Shorts comments; the Drive inbox (src/config.ts CRON_*)
+
+# Workers Logs: the runs' console output kept a few days on the free plan, readable in the dashboard
+# (Workers → this Worker → Logs) or with the observability API. Everything is logged (head_sampling_rate 1).
+[observability]
+enabled = true
+head_sampling_rate = 1

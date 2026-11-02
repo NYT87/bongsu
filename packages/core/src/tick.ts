@@ -1,0 +1,922 @@
+// The scheduler's tick, run by the cron every 5 minutes.
+//
+//   lock → paused? → discover due items → advance active jobs one step each → Shorts comments → prune audit
+//
+// Everything it reads is in D1 (src/data.ts): the plan, approvals, posted log, Shorts comments and the texts
+// (captions, comments, alt texts; a repo item's are copied there by an importer); the media is in the media store. Nothing
+// is read from the repo, so nothing has to be pushed for a post to go out. Only approved items are
+// published, exactly as approved, for the account they were approved for: every fingerprint is checked again just
+// before the container is created, the comments' again before they're posted, and the plan's word on the job (still
+// there, same time, same account, released, the account enabled) before each step that reaches the platform. In
+// dry-run (DRY_RUN != "0") nothing is written outside the jobs/audit tables: each item ends as a done job with
+// dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
+
+import { type Account, DEFAULT_WORKSPACE, findAccount, listAccounts } from "./accounts";
+import { AUDIT_KEEP_S, CATCH_UP_S, JOBS_PER_TICK, LINK_TTL_S, MAX_POLLS } from "./constants";
+import {
+  contentPaths,
+  dueItems,
+  getItem,
+  isPosted,
+  itemDue,
+  itemOptions,
+  latestApprovals,
+  pausedState,
+  pendingShorts,
+  readText,
+  recordCommented,
+  recordPosted,
+  type ShortRow,
+  shortKey,
+  trialFor,
+} from "./data";
+import type { Env } from "./env";
+import { type Approval, type MediaRef, sha256Hex } from "./formats/approved";
+import { altLines, captionText, comment2Text, commentText } from "./formats/texts";
+import { acquire, release } from "./lock";
+import { mediaUrl } from "./media";
+import { inStore, mediaStore } from "./media/index";
+import { isVideo, type MediaStore } from "./media/store";
+import { audit, type Notifier, notifier } from "./notify";
+import { platform } from "./platforms/index";
+import type { Format } from "./platforms/types";
+import { providerFor } from "./providers/index";
+import { ComposioInstagram } from "./providers/instagram-composio";
+import { InstagramProvider } from "./providers/instagram-publish";
+import type { OutgoingPost, Provider, Step } from "./providers/types";
+import { jsonList } from "./sql";
+import * as N from "./texts/notifications";
+import { workspaceZone } from "./workspaces";
+
+export interface Deps {
+  fetch: typeof fetch;
+  now: Date;
+}
+
+/** Which part of the work this invocation does (one per cron trigger). */
+export type Part = "instagram" | "shorts";
+
+/** A job is a post in one of the platform formats, or a comment on a post published elsewhere (Shorts comments). */
+type Kind = Format | "comment";
+type State = "pending" | "container_created" | "published" | "done" | "refused" | "failed" | "held";
+
+export interface Payload {
+  queueDir: string;
+  /** The workspace of the item (jobs.workspace_id). */
+  workspaceId?: string;
+  /** Instagram username (posted.account); `account` is the Composio connection id. */
+  username?: string;
+  account: string;
+  igUserId: string;
+  postedKey: string;
+  location: string;
+  captionPath: string;
+  commentPath: string;
+  /** The second comment's text (posted after the first); absent on jobs queued before it existed. */
+  comment2Path?: string;
+  altPath?: string;
+  approvedAt?: string;
+  approval?: {
+    captionSha256: string;
+    commentSha256: string | null;
+    comment2Sha256?: string | null;
+    altSha256: string | null;
+    media: MediaRef[];
+  };
+  children?: string[];
+  childKinds?: ("image" | "video")[];
+  locationDropped?: boolean;
+  commented?: boolean;
+  commented2?: boolean;
+  /** An Instagram Story: no caption, no comments. */
+  story?: boolean;
+  /** The item's format (null: decided by the media) and its platform options, as planned. Jobs queued before these
+   *  existed carry story / location / coverMs instead. */
+  format?: Format | null;
+  options?: Record<string, unknown>;
+  /** The video's chosen cover frame, ms (thumb_offset); absent = 500. */
+  coverMs?: number;
+  /** It went out as a Reel (a queue Reel, or a single-video post). */
+  reel?: boolean;
+  /** The Trial Reel copy (job 'trial:<key>'): the same approved Reel, shown to non-followers first. */
+  trial?: boolean;
+  /** Held because its item is on hold: it goes on (a new container) once the item is released. */
+  onHold?: boolean;
+  /** The publishing call was made (set just before it): the post may be live even if the job then failed, so a new
+   *  approval never reopens it (#148). */
+  publishing?: boolean;
+  /** The provider's publishing state between runs (providers/types.ts Step). */
+  step?: Step;
+  mediaId?: string;
+  permalink?: string;
+  publishedAt?: number; // unix seconds, Instagram's timestamp
+  // Shorts comments
+  video?: string;
+  file?: string;
+  label?: string;
+  log?: string;
+  /** The YouTube account's connection that commented. */
+  connectionId?: string;
+}
+
+interface JobRow {
+  id: number;
+  item_key: string;
+  kind: Kind;
+  account: string;
+  due_at: number;
+  state: State;
+  container_id: string | null;
+  attempts: number;
+  dry_run: number;
+  payload: string;
+  workspace_id: string;
+  media_id?: string | null;
+  updated_at?: number;
+}
+
+class Ctx {
+  store: MediaStore;
+  note: Notifier;
+  dry: boolean;
+  nowS: number;
+  private zones = new Map<string, string>();
+  private providers = new Map<string, Provider>();
+  constructor(
+    public env: Env,
+    public deps: Deps,
+  ) {
+    this.store = mediaStore(env, deps.fetch);
+    this.nowS = Math.floor(deps.now.getTime() / 1000);
+    this.dry = env.DRY_RUN !== "0";
+    this.note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, this.nowS, env);
+  }
+  /** The provider that reaches the job's account (its connection), looked up once per run. Jobs queued before the
+   *  providers name only a Composio connection. */
+  async provider(p: Payload): Promise<Provider> {
+    const k = `${p.workspaceId ?? DEFAULT_WORKSPACE}/${p.username ?? p.account}`;
+    let pr = this.providers.get(k);
+    if (!pr) {
+      const a = p.username ? await findAccount(this.env.DB, p.username, p.workspaceId ?? DEFAULT_WORKSPACE) : null;
+      pr =
+        (a && (await providerFor(this.env, this.deps.fetch, a))) ??
+        new InstagramProvider(
+          new ComposioInstagram(this.env.COMPOSIO_CONSUMER_KEY ?? "", p.account, p.igUserId, this.deps.fetch),
+        );
+      this.providers.set(k, pr);
+    }
+    return pr;
+  }
+  /** The workspace's time zone (for the messages), looked up once per run. */
+  async zone(workspaceId: string): Promise<string> {
+    let tz = this.zones.get(workspaceId);
+    if (!tz) {
+      tz = await workspaceZone(this.env.DB, workspaceId);
+      this.zones.set(workspaceId, tz);
+    }
+    return tz;
+  }
+  /** A text by its contentPaths path ("db:<field>:<key>", the item's D1 column). */
+  read(path: string) {
+    return readText(this.env.DB, path);
+  }
+  async setJob(
+    id: number,
+    fields: Partial<Pick<JobRow, "state" | "container_id" | "attempts" | "dry_run">> & {
+      last_error?: string | null;
+      payload?: Payload;
+      notified?: boolean;
+    },
+  ) {
+    const sets: string[] = ["updated_at = ?1"];
+    const vals: unknown[] = [this.nowS];
+    const add = (col: string, v: unknown) => {
+      vals.push(v);
+      sets.push(`${col} = ?${vals.length}`);
+    };
+    if (fields.state !== undefined) add("state", fields.state);
+    if (fields.container_id !== undefined) add("container_id", fields.container_id);
+    if (fields.attempts !== undefined) add("attempts", fields.attempts);
+    if (fields.dry_run !== undefined) add("dry_run", fields.dry_run);
+    if (fields.last_error !== undefined) add("last_error", fields.last_error);
+    if (fields.payload !== undefined) add("payload", JSON.stringify(fields.payload));
+    if (fields.notified) add("notified_at", this.nowS);
+    vals.push(id);
+    await this.env.DB.prepare(`UPDATE jobs SET ${sets.join(", ")} WHERE id = ?${vals.length}`)
+      .bind(...vals)
+      .run();
+  }
+}
+
+export async function tick(
+  env: Env,
+  deps: Deps,
+  part: Part = "instagram",
+): Promise<{ status: string; detail?: unknown }> {
+  const nowS = Math.floor(deps.now.getTime() / 1000);
+  const holder = crypto.randomUUID();
+  const lock = `tick:${part}`;
+  if (!(await acquire(env.DB, lock, holder, nowS, 240))) return { status: "locked" };
+  try {
+    const c = new Ctx(env, deps);
+    if (await pausedState(env.DB)) {
+      await audit(env.DB, nowS, "paused", "settings:paused", {});
+      return { status: "paused" };
+    }
+    if (part === "shorts") {
+      await shortsComments(c);
+      await env.DB.prepare("DELETE FROM audit WHERE at < ?1")
+        .bind(nowS - AUDIT_KEEP_S)
+        .run();
+      return { status: "ok", detail: { part, dry_run: c.dry } };
+    }
+    // every account on a platform Bongsu publishes to (YouTube's are only commented on, below)
+    for (const a of await listAccounts(env.DB)) if (platform(a.platform)?.formats.length) await discover(c, a);
+    const active = await env.DB.prepare(
+      "SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1 ORDER BY due_at LIMIT ?2",
+    )
+      .bind(nowS, JOBS_PER_TICK)
+      .all<JobRow>();
+    for (const job of active.results) await advance(c, job);
+    return { status: "ok", detail: { part, advanced: active.results.length, dry_run: c.dry } };
+  } finally {
+    await release(env.DB, lock, holder);
+  }
+}
+
+// ---------------------------------------------------------------- discovery
+
+interface Candidate {
+  key: string;
+  /** The item's format; null until the approval's media decide it. */
+  format: Format | null;
+  dueAt: number;
+  payload: Payload;
+  mediaCount: number;
+}
+
+async function discover(c: Ctx, a: Account) {
+  if (!a.externalId || !a.connection || a.connection.status === "broken") return; // not connected: nothing can go out
+  const base = {
+    queueDir: "",
+    username: a.id,
+    account: a.connection.externalRef ?? a.connection.id,
+    igUserId: a.externalId,
+    workspaceId: a.workspaceId,
+  };
+  const cands: Candidate[] = [];
+  for (const i of await dueItems(c.env.DB, a.id, c.nowS)) {
+    const at = i.due_at as number; // dueItems: due_at ≤ now
+    const paths = contentPaths(i);
+    cands.push({
+      key: i.item_key,
+      format: i.format ?? null,
+      dueAt: at,
+      mediaCount: i.format === "video" ? 1 : 0,
+      payload: {
+        ...base,
+        postedKey: shortKey(i.item_key),
+        location: "",
+        captionPath: paths.caption,
+        commentPath: paths.comment,
+        comment2Path: paths.comment2,
+        ...(paths.alt ? { altPath: paths.alt } : {}),
+        ...(i.format === "story" ? { story: true } : {}),
+        format: i.format ?? null,
+        options: itemOptions(i),
+      },
+    });
+  }
+  if (!cands.length) return;
+  const approvals = await latestApprovals(
+    c.env.DB,
+    cands.map((x) => x.key),
+  ); // only when something is due
+  const existing = await c.env.DB.prepare(`SELECT * FROM jobs WHERE item_key IN ${jsonList(c.env.DB, 1)}`)
+    .bind(JSON.stringify(cands.map((x) => x.key)))
+    .all<JobRow>();
+  const byKey = new Map(existing.results.map((j) => [j.item_key, j]));
+  for (const cand of cands) {
+    const a = approvals.get(cand.key);
+    const job = byKey.get(cand.key);
+    if (job) {
+      if (a && reopens(job, JSON.parse(job.payload) as Payload, a)) await reopen(c, job.id, cand, a);
+      continue;
+    }
+    await create(c, cand, a);
+  }
+}
+
+/** Whether an approval brings a closed job back (as a fresh job: no container, no attempts). A refused/held job comes
+ *  back when you approve it again (a newer approval line); one held for its item's hold comes back when the item is
+ *  released (it's due again, dueItems leaves out held ones). A failed job comes back on an approval made after it
+ *  failed, unless the publishing call was ever made: the post may be live then (a timeout on Instagram's side), and
+ *  posting again could double it; the owner checks the account and records it by hand (#148). */
+export function reopens(
+  job: { state: string; media_id?: string | null; updated_at?: number },
+  p: Payload,
+  a: Pick<Approval, "dueAt" | "approvedAt">,
+): boolean {
+  if (a.dueAt === null) return false;
+  const newer = a.approvedAt !== p.approvedAt;
+  if (job.state === "refused") return newer;
+  if (job.state === "held") return newer || !!p.onHold;
+  if (job.state !== "failed" || !newer || mayBeLive(job, p)) return false;
+  return job.updated_at !== undefined && Date.parse(a.approvedAt) / 1000 > job.updated_at; // NaN: never
+}
+
+/** Whether a job's post may be live: it has a media id, or the publishing call was made (its answer may have been lost). */
+export function mayBeLive(job: { media_id?: string | null }, p: Pick<Payload, "mediaId" | "publishing">): boolean {
+  return !!(job.media_id || p.mediaId || p.publishing);
+}
+
+function withApproval(cand: Candidate, a: Approval): { payload: Payload; kind: Kind } {
+  const payload: Payload = {
+    ...cand.payload,
+    approvedAt: a.approvedAt,
+    approval: {
+      captionSha256: a.captionSha256,
+      commentSha256: a.commentSha256,
+      comment2Sha256: a.comment2Sha256 ?? null,
+      altSha256: a.altSha256,
+      media: a.media,
+    },
+  };
+  // no format planned: the approved media decide (one file: an image, or a video once its type is known; several: a carousel)
+  const kind: Kind = cand.format ?? (a.media.length === 1 ? "image" : "carousel");
+  return { payload, kind };
+}
+
+function verdict(c: Ctx, cand: Candidate, a: Approval | undefined): { state: State; reason: string | null } {
+  if (c.nowS - cand.dueAt > CATCH_UP_S)
+    return {
+      state: "held",
+      reason: `missed by more than ${CATCH_UP_S / 3600} h: post it by hand or reschedule and approve again`,
+    };
+  if (!a || a.dueAt === null) return { state: "refused", reason: a ? "approval revoked" : "not approved" };
+  if (a.account !== cand.payload.username)
+    return {
+      state: "refused",
+      reason: a.account
+        ? `approved for ${a.account}, now planned for ${cand.payload.username}: approve again`
+        : "the approval names no account: approve again",
+    };
+  if (a.dueAt !== cand.dueAt) return { state: "refused", reason: "the schedule changed after approval: approve again" };
+  return { state: "pending", reason: null };
+}
+
+async function create(c: Ctx, cand: Candidate, a: Approval | undefined) {
+  const v = verdict(c, cand, a);
+  const { payload, kind } =
+    a && a.dueAt !== null ? withApproval(cand, a) : { payload: cand.payload, kind: cand.format ?? "carousel" };
+  const r = await c.env.DB.prepare(
+    `INSERT INTO jobs (item_key, kind, account, due_at, state, last_error, dry_run, payload, created_at, updated_at,
+       workspace_id)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10) ON CONFLICT (item_key) DO NOTHING RETURNING id`,
+  )
+    .bind(
+      cand.key,
+      kind,
+      cand.payload.account,
+      cand.dueAt,
+      v.state,
+      v.reason,
+      c.dry ? 1 : 0,
+      JSON.stringify(payload),
+      c.nowS,
+      cand.payload.workspaceId ?? DEFAULT_WORKSPACE,
+    )
+    .first<{ id: number }>();
+  if (r && v.state !== "pending") {
+    await c.note.send(N.jobVerdict(cand.key, v.state, v.reason));
+    await c.setJob(r.id, { notified: true });
+  }
+}
+
+async function reopen(c: Ctx, id: number, cand: Candidate, a: Approval) {
+  const v = verdict(c, cand, a);
+  const { payload, kind } = withApproval(cand, a);
+  await c.env.DB.prepare(
+    "UPDATE jobs SET state = ?1, last_error = ?2, kind = ?3, due_at = ?4, payload = ?5, attempts = 0, container_id = NULL, dry_run = ?6, updated_at = ?7 WHERE id = ?8",
+  )
+    .bind(v.state, v.reason, kind, cand.dueAt, JSON.stringify(payload), c.dry ? 1 : 0, c.nowS, id)
+    .run();
+}
+
+// ---------------------------------------------------------------- one step per job
+
+async function advance(c: Ctx, job: JobRow) {
+  const p = JSON.parse(job.payload) as Payload;
+  try {
+    if (job.state === "pending") await stepPending(c, job, p);
+    else if (job.state === "container_created") await stepContainer(c, job, p);
+    else if (job.state === "published") await stepPublished(c, job, p);
+  } catch (e) {
+    const attempts = job.attempts + 1;
+    const msg = String((e as Error).message ?? e).slice(0, 500);
+    if (attempts >= 3) {
+      await c.setJob(job.id, { state: "failed", attempts, last_error: msg });
+      await c.note.send(N.jobFailed(job.item_key, msg));
+    } else {
+      await c.setJob(job.id, { attempts, last_error: msg });
+    }
+  }
+}
+
+async function refuse(c: Ctx, job: JobRow, reason: string) {
+  await c.setJob(job.id, { state: "refused", last_error: reason, notified: true });
+  await c.note.send(N.jobRefused(job.item_key, reason));
+}
+
+/** The plan's current word on a queued job, asked before each step that reaches the platform: the item is still
+ *  there, at the same time, for the same account, released and not posted, and its account enabled (a Trial Reel
+ *  copy: its Reel is still planned, with the trial switch on). Null when the job may go on. */
+async function recheck(
+  c: Ctx,
+  job: JobRow,
+  p: Payload,
+): Promise<{ state: "done" | "refused" | "wait"; reason: string } | null> {
+  const key = p.trial ? job.item_key.replace(/^trial:/, "") : job.item_key;
+  const item = await getItem(c.env.DB, key);
+  if (!item) return { state: "refused", reason: "removed from the plan" };
+  if (p.trial) {
+    if (!(await trialFor(c.env.DB, item)).on) return { state: "done", reason: "trial copy switched off" };
+  } else {
+    if (await isPosted(c.env.DB, key))
+      return { state: "done", reason: "already posted (published outside the scheduler)" };
+    // Moved or removed after this job was queued: it must not go out at the old time (approve again for the new one).
+    if (item.due_at !== job.due_at) {
+      const tz = await c.zone(job.workspace_id);
+      return {
+        state: "refused",
+        reason: `rescheduled to ${itemDue(item, tz) ?? "no date"} ${tz}: approve again for the new time`,
+      };
+    }
+    if (item.hold) return { state: "wait", reason: "on hold: it goes out once released" };
+  }
+  if (item.account !== p.username)
+    return { state: "refused", reason: `planned for ${item.account} now, approved for ${p.username}: approve again` };
+  const a = p.username ? await findAccount(c.env.DB, p.username, job.workspace_id) : null;
+  if (p.username && a?.status !== "active") return { state: "refused", reason: `${p.username} is disabled` };
+  return null;
+}
+
+/** What recheck found: the job settles (done, refused), or is held until the item is released (discover brings it
+ *  back; a held job doesn't take one of the tick's slots while it waits). */
+async function settle(c: Ctx, job: JobRow, p: Payload, r: { state: "done" | "refused" | "wait"; reason: string }) {
+  if (r.state === "refused") return refuse(c, job, r.reason);
+  if (r.state === "done") return c.setJob(job.id, { state: "done", last_error: r.reason });
+  await c.setJob(job.id, { state: "held", last_error: r.reason, payload: { ...p, onHold: true } });
+}
+
+/** Every fingerprint again, just before publishing: the texts and each media file's checksum in its store. */
+async function verify(
+  c: Ctx,
+  p: Payload,
+): Promise<{ problem: string | null; caption: string; comment: string | null; alts: string[] }> {
+  const ap = p.approval!;
+  const captionRaw = p.story ? "" : await c.read(p.captionPath); // a Story has no caption or comments
+  if (captionRaw === null) {
+    const key = p.captionPath.replace(/^db:caption:/, "");
+    return {
+      problem: p.captionPath.startsWith("db:")
+        ? `no caption in the scheduler: add one in the app or with \`bongsu texts set ${key}\``
+        : "queued before the texts moved to the scheduler's database: approve it again",
+      caption: "",
+      comment: null,
+      alts: [],
+    };
+  }
+  const caption = captionText(captionRaw);
+  const comment = p.story ? null : commentText(caption, await c.read(p.commentPath));
+  const alt = p.altPath ? ((await c.read(p.altPath)) ?? "").trim() : "";
+  if ((await sha256Hex(caption)) !== ap.captionSha256)
+    return { problem: "the caption changed after approval", caption, comment, alts: [] };
+  if ((comment ? await sha256Hex(comment) : null) !== ap.commentSha256)
+    return { problem: "the self-comment changed after approval", caption, comment, alts: [] };
+  if ((alt ? await sha256Hex(alt) : null) !== ap.altSha256)
+    return { problem: "the alt text changed after approval", caption, comment, alts: [] };
+  const comment2 = p.comment2Path && !p.story ? comment2Text(await c.read(p.comment2Path)) : null;
+  if ((comment2 ? await sha256Hex(comment2) : null) !== (ap.comment2Sha256 ?? null))
+    return { problem: "the second comment changed after approval", caption, comment, alts: [] };
+  for (const m of ap.media) {
+    if (!inStore(c.store, m))
+      return {
+        problem: `approved on the ${m.store} store, now ${c.store.id}: approve again`,
+        caption,
+        comment,
+        alts: [],
+      };
+    const meta = await c.store.stat(m.id);
+    if (!meta) return { problem: `media file ${m.id} is gone`, caption, comment, alts: [] };
+    if (meta.checksum !== m.checksum)
+      return { problem: `media file ${m.id} changed after approval`, caption, comment, alts: [] };
+  }
+  return { problem: null, caption, comment, alts: altLines(alt) };
+}
+
+async function link(c: Ctx, m: MediaRef, video: boolean) {
+  return mediaUrl(c.store, {
+    base: c.env.PUBLIC_URL,
+    secret: c.env.MEDIA_SIGNING_KEY,
+    id: m.id,
+    video,
+    nowS: c.nowS,
+    ttlS: LINK_TTL_S,
+  });
+}
+const isVideoRef = async (c: Ctx, m: MediaRef) => isVideo((await c.store.stat(m.id)) ?? { mime: "" });
+
+async function stepPending(c: Ctx, job: JobRow, p: Payload) {
+  if (p.trial) return stepTrialPending(c, job, p);
+  if (c.nowS - job.due_at > CATCH_UP_S) {
+    await c.setJob(job.id, { state: "held", last_error: "missed the catch-up window", notified: true });
+    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600));
+    return;
+  }
+  const r = await recheck(c, job, p);
+  if (r) return settle(c, job, p, r);
+
+  const v = await verify(c, p);
+  if (v.problem) return refuse(c, job, v.problem);
+  const media = p.approval!.media;
+
+  if (c.dry) {
+    await c.setJob(job.id, { state: "done", dry_run: 1, last_error: "dry run: nothing published" });
+    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, {
+      kind: job.kind,
+      account: p.account,
+      media: media.length,
+      location: p.location,
+    });
+    await c.note.send(
+      N.dryRunPublish(
+        job.item_key,
+        job.kind,
+        p.account,
+        `${media.length} media, caption ${v.caption.length} chars${v.comment ? ", with self-comment" : ""}`,
+      ),
+    );
+    return;
+  }
+
+  const kinds = await Promise.all(media.map((m) => isVideoRef(c, m)));
+  // an "image" whose file is a video goes out as a video (a single-video post: the slideshow Reels in posts/reelN_<name>/)
+  const format: Format = p.story ? "story" : job.kind === "image" && kinds[0] ? "video" : (job.kind as Format);
+  await startPublishing(c, job, p, {
+    format,
+    caption: v.caption,
+    alts: v.alts,
+    media: await Promise.all(
+      media.map(async (m, i) => ({ id: m.id, url: await link(c, m, kinds[i]), video: kinds[i] })),
+    ),
+    options: postOptions(p, format),
+  });
+}
+
+/** The post's platform options: as planned, or (a job queued before options existed) from its own fields. The trial
+ *  switch only matters on the trial copy's job (the regular Reel goes out without it). */
+function postOptions(p: Payload, format: Format): Record<string, unknown> {
+  const o: Record<string, unknown> = p.options
+    ? { ...p.options }
+    : { ...(p.location ? { location: p.location } : {}), ...(p.coverMs != null ? { coverMs: p.coverMs } : {}) };
+  delete o.trial;
+  if (format === "story") delete o.location;
+  if (format !== "video") delete o.coverMs;
+  if (format === "video" && p.trial) o.trial = true;
+  if (p.locationDropped) delete o.location;
+  return o;
+}
+
+/** The provider's first step; its state goes with the job (payload.step) for check and finish on the next runs. */
+async function startPublishing(c: Ctx, job: JobRow, p: Payload, post: OutgoingPost) {
+  const pr = await c.provider(p);
+  const step = await pr.start(post);
+  const next: Payload = {
+    ...p,
+    step,
+    ...(step.data.locationDropped ? { locationDropped: true } : {}),
+    ...(post.format === "video" ? { reel: true } : {}),
+  };
+  if (step.state === "ready") return publish(c, job, next, pr, step); // a network that posts in one call
+  if (step.state === "failed") return failStep(c, job, next, pr, step);
+  await c.setJob(job.id, {
+    state: "container_created",
+    container_id: typeof step.data.container === "string" ? step.data.container : null,
+    attempts: 0,
+    payload: next,
+  });
+}
+
+/** The Trial Reel copy: the approval checked again, then a REELS container with trial_params (through Composio, that's
+ *  the raw workbench call: see providers/instagram-composio.ts). It graduates to followers on its own when
+ *  non-followers respond well (SS_PERFORMANCE); then the usual container → publish → comments steps. */
+async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
+  const regular = job.item_key.replace(/^trial:/, "");
+  if (await c.env.DB.prepare("SELECT 1 FROM trial_posts WHERE item_key = ?1").bind(regular).first()) {
+    await c.setJob(job.id, { state: "done", last_error: "trial copy already posted" });
+    return;
+  }
+  if (c.nowS - job.due_at > CATCH_UP_S) {
+    // the scheduler was paused or stuck: a late trial copy isn't worth it
+    await c.setJob(job.id, { state: "held", last_error: "trial copy not posted within the catch-up window" });
+    return;
+  }
+  const item = await getItem(c.env.DB, regular);
+  if (!item || !(await trialFor(c.env.DB, item)).on) {
+    // switched off after the Reel went out
+    await c.setJob(job.id, { state: "done", last_error: "trial copy switched off" });
+    return;
+  }
+  const v = await verify(c, p);
+  if (v.problem) return refuse(c, job, `trial copy: ${v.problem}`);
+  if (c.dry) {
+    await c.setJob(job.id, { state: "done", dry_run: 1, last_error: "dry run: trial copy not posted" });
+    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, { kind: "trial", account: p.account, media: 1 });
+    return;
+  }
+  const m = p.approval!.media[0];
+  await startPublishing(c, job, p, {
+    format: "video",
+    caption: v.caption,
+    alts: [],
+    media: [{ id: m.id, url: await link(c, m, true), video: true }],
+    options: postOptions({ ...p, trial: true }, "video"),
+  });
+}
+
+/** After a Reel whose trial switch is on (its own, or its account's default): its trial copy, as its own job, due now. */
+async function queueTrial(c: Ctx, job: JobRow, p: Payload) {
+  const { mediaId: _m, permalink: _l, publishedAt: _t, commented: _c, commented2: _c2, ...rest } = p;
+  const payload: Payload = { ...rest, trial: true };
+  await c.env.DB.prepare(
+    `INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id)
+     VALUES (?1, 'video', ?2, ?3, 'pending', 0, ?4, ?3, ?3, ?5) ON CONFLICT (item_key) DO NOTHING`,
+  )
+    .bind(`trial:${job.item_key}`, p.account, c.nowS, JSON.stringify(payload), p.workspaceId ?? DEFAULT_WORKSPACE)
+    .run();
+}
+
+async function stepContainer(c: Ctx, job: JobRow, p: Payload) {
+  const pr = await c.provider(p);
+  const step = p.step ?? (await legacyStep(c, job, p));
+  const next = await pr.check(step);
+  if (next.state === "failed") return failStep(c, job, p, pr, next);
+  if (next.state === "processing") {
+    const container = typeof next.data.container === "string" ? next.data.container : null;
+    if (container !== job.container_id) {
+      // a new container to wait for (a carousel's parent): a fresh count of polls
+      await c.setJob(job.id, { container_id: container, attempts: 0, payload: { ...p, step: next } });
+      return;
+    }
+    return pollWait(c, job, pr);
+  }
+  const r = await recheck(c, job, p);
+  if (r) return settle(c, job, p, r);
+  return publish(c, job, p, pr, next);
+}
+
+async function failStep(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step) {
+  await c.setJob(job.id, { state: "failed", last_error: step.error ?? "failed", payload: { ...p, step } });
+  await c.note.send(N.providerFailed(job.item_key, platformName(pr), step.error ?? "failed"));
+}
+
+/** The provider's last step: the post goes live; comments and the record follow on the next run. In dry run (switched
+ *  on while the job was under way) the container stays unpublished. */
+async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step) {
+  if (c.dry) {
+    await c.setJob(job.id, {
+      state: "done",
+      dry_run: 1,
+      last_error: "dry run: nothing published (the container stays unpublished)",
+      payload: { ...p, step },
+    });
+    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, { kind: job.kind, account: p.account });
+    await c.note.send(N.dryRunPublish(job.item_key, job.kind, p.account));
+    return;
+  }
+  // From here the post may go live even if the call fails: a failed job never reopens after this (reopens()).
+  await c.setJob(job.id, { payload: { ...p, step, publishing: true } });
+  const got = await pr.finish(step);
+  await c.setJob(job.id, {
+    state: "published",
+    attempts: 0,
+    payload: {
+      ...p,
+      step,
+      mediaId: got.mediaId,
+      permalink: got.permalink ?? "",
+      publishedAt: got.publishedAt ?? c.nowS,
+    },
+  });
+  await c.env.DB.prepare("UPDATE jobs SET media_id = ?1, permalink = ?2 WHERE id = ?3")
+    .bind(got.mediaId, got.permalink ?? "", job.id)
+    .run();
+}
+
+/** A job queued before the providers had no payload.step: rebuilt from its container ids (Instagram's). */
+async function legacyStep(c: Ctx, job: JobRow, p: Payload): Promise<Step> {
+  if (job.container_id) return { state: "processing", data: { container: job.container_id } };
+  return {
+    state: "processing",
+    data: {
+      children: p.children ?? [],
+      caption: captionText((await c.read(p.captionPath)) ?? ""),
+      location: p.location && !p.locationDropped ? p.location : null,
+    },
+  };
+}
+
+const platformName = (pr: Provider) => platform(pr.platform)?.name ?? pr.platform;
+
+async function pollWait(c: Ctx, job: JobRow, pr: Provider) {
+  const attempts = job.attempts + 1;
+  if (attempts > MAX_POLLS) {
+    const name = platformName(pr);
+    await c.setJob(job.id, { state: "failed", attempts, last_error: `${name} never finished processing` });
+    await c.note.send(N.processingTimeout(job.item_key, name));
+  } else {
+    await c.setJob(job.id, { attempts });
+  }
+}
+
+/** A comment under the live post, exactly as approved: the text is read again and must still hash to the approval's
+ *  (an agent can edit it between the post and this run); nothing goes out in dry run. Never fatal, the post is live:
+ *  the note says what didn't happen, for the owner to do by hand. */
+async function postComment(c: Ctx, p: Payload, what: string, text: string | null, approvedSha: string | null) {
+  if (!text && !approvedSha) return "";
+  if ((text ? await sha256Hex(text) : null) !== approvedSha) return ` (the ${what} changed after approval: not posted)`;
+  if (c.dry) return ` (dry run: ${what} not posted)`;
+  try {
+    await (await c.provider(p)).comment?.(p.mediaId!, text!);
+    return "";
+  } catch (e) {
+    return ` (${what} failed: ${(e as Error).message}; post it by hand)`;
+  }
+}
+
+async function stepPublished(c: Ctx, job: JobRow, p: Payload) {
+  let firstNote = "";
+  if (p.story) {
+    p.commented = true;
+    p.commented2 = true;
+  } // Stories take no comments
+  if (!p.commented) {
+    const caption = captionText((await c.read(p.captionPath)) ?? "");
+    const comment = commentText(caption, await c.read(p.commentPath));
+    const note = await postComment(c, p, "self-comment", comment, p.approval?.commentSha256 ?? null);
+    p.commented = true;
+    firstNote = note;
+    await c.setJob(job.id, { payload: p, last_error: note || null });
+  }
+  if (!p.commented2) {
+    // the second comment, right after the first (only when it has text)
+    const comment2 = p.comment2Path ? comment2Text(await c.read(p.comment2Path)) : null;
+    const note = await postComment(c, p, "second comment", comment2, p.approval?.comment2Sha256 ?? null);
+    p.commented2 = true;
+    await c.setJob(job.id, { payload: p, ...(note ? { last_error: `${firstNote}${note}`.trim() } : {}) });
+  }
+  if (p.trial) {
+    await c.env.DB.prepare(`INSERT INTO trial_posts (item_key, account, media_id, permalink, published_at, workspace_id)
+      VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (item_key) DO NOTHING`)
+      .bind(
+        job.item_key.replace(/^trial:/, ""),
+        p.username ?? "",
+        p.mediaId ?? null,
+        p.permalink ?? null,
+        p.publishedAt ?? c.nowS,
+        job.workspace_id,
+      )
+      .run();
+    await c.setJob(job.id, { state: "done" });
+    await c.note.send(N.publishedTrial(job.item_key.replace(/^trial:/, ""), p.permalink ?? null));
+    return;
+  }
+  await recordPosted(c.env.DB, {
+    key: job.item_key,
+    account: p.username ?? "",
+    mediaId: p.mediaId ?? null,
+    permalink: p.permalink ?? null,
+    source: "scheduler",
+    publishedAt: p.publishedAt ?? c.nowS,
+    recordedAt: c.nowS,
+    workspaceId: job.workspace_id,
+  });
+  await c.setJob(job.id, { state: "done" });
+  if (p.reel && !p.story) {
+    const item = await getItem(c.env.DB, job.item_key);
+    if (item && (await trialFor(c.env.DB, item)).on) await queueTrial(c, job, p);
+  }
+  await c.note.send(
+    N.published(job.item_key, p.permalink ?? null, { story: !!p.story, locationDropped: !!p.locationDropped }),
+  );
+}
+
+// ---------------------------------------------------------------- Shorts comments
+
+const ptDate = (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone: "America/Los_Angeles" }).format(d);
+
+/** Why a Shorts comment can't go out yet: no text, or no approval of exactly this text for this channel (the owner
+ *  approves it in the app, like a post). Null when it may. */
+async function shortsVerdict(r: ShortRow, channel: string, a: Approval | undefined): Promise<string | null> {
+  const text = (r.text ?? "").trim();
+  if (!text) return `no comment text in the scheduler: add one in the app or with \`bongsu texts set <key> --comment\``;
+  if (!a || a.dueAt === null) return "not approved: approve the comment in the app";
+  if (a.account !== channel) return `approved for ${a.account ?? "no account"}, listed for ${channel}: approve again`;
+  if (a.captionSha256 !== (await sha256Hex(text))) return "the comment changed after approval: approve again";
+  return null;
+}
+
+/** Comments on posts published outside Bongsu (the Shorts comments), for every account whose platform does that
+ *  (Platform.features.commentOnExisting), through its provider. Each needs the owner's approval of its text, as a
+ *  post does; one refused for the lack of it is taken up again once approved. */
+async function shortsComments(c: Ctx) {
+  let budget = 2; // comments per tick (each costs ~3 subrequests)
+  const accounts = (await listAccounts(c.env.DB)).filter((a) => platform(a.platform)?.features.commentOnExisting);
+  for (const s of accounts) {
+    if (budget <= 0) return;
+    const pending = await pendingShorts(c.env.DB, s.id);
+    if (!pending.length) continue;
+    const keys = pending.map((r) => `comment:${r.video_id}`);
+    const known = await c.env.DB.prepare(`SELECT item_key, state FROM jobs WHERE item_key IN ${jsonList(c.env.DB, 1)}`)
+      .bind(JSON.stringify(keys))
+      .all<{ item_key: string; state: string }>();
+    const states = new Map(known.results.map((r) => [r.item_key, r.state]));
+    const approvals = await latestApprovals(c.env.DB, keys);
+    // new ones, and refused ones whose approval has arrived since
+    const todo: { r: ShortRow; why: string | null }[] = [];
+    for (const r of pending) {
+      const state = states.get(`comment:${r.video_id}`);
+      const why = await shortsVerdict(r, s.id, approvals.get(`comment:${r.video_id}`));
+      if (state === undefined || (state === "refused" && why === null)) todo.push({ r, why });
+    }
+    if (!todo.length) continue;
+    const pr = await providerFor(c.env, c.deps.fetch, s);
+    if (!pr?.comment) {
+      await c.note.send(N.shortsWaiting(s.handle, s.id));
+      continue;
+    }
+    const ready = todo.filter((t) => t.why === null).map((t) => t.r.video_id);
+    const visible = pr.isPublic && ready.length ? await pr.isPublic(ready) : null;
+    for (const { r, why } of todo) {
+      if (budget <= 0) return;
+      if (why === null && visible && !visible.has(r.video_id)) continue; // not public yet (or gone): try again later
+      const key = `comment:${r.video_id}`;
+      const label = r.label ?? "";
+      const text = (r.text ?? "").trim();
+      const payload: Payload = {
+        queueDir: "",
+        workspaceId: s.workspaceId,
+        account: s.id,
+        igUserId: "",
+        postedKey: r.video_id,
+        location: "",
+        captionPath: "",
+        commentPath: "",
+        video: r.video_id,
+        file: r.file,
+        label,
+        connectionId: s.connection?.id,
+      };
+      // a refused job (no approval yet) comes back as pending once the approval is there
+      const ins = await c.env.DB.prepare(
+        `INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id)
+         VALUES (?1, 'comment', ?2, ?3, 'pending', ?4, ?5, ?3, ?3, ?6) ON CONFLICT (item_key) DO UPDATE
+         SET state = 'pending', last_error = NULL, attempts = 0, dry_run = excluded.dry_run, payload = excluded.payload,
+             updated_at = excluded.updated_at WHERE jobs.state = 'refused'
+         RETURNING id`,
+      )
+        .bind(key, s.id, c.nowS, c.dry ? 1 : 0, JSON.stringify(payload), s.workspaceId)
+        .first<{ id: number }>();
+      if (!ins) continue;
+      if (why !== null) {
+        await c.setJob(ins.id, { state: "refused", last_error: why });
+        await c.note.send(N.jobRefused(key, why));
+        continue;
+      }
+      budget--;
+      if (c.dry) {
+        await c.setJob(ins.id, { state: "done", last_error: "dry run: nothing posted" });
+        await c.note.send(N.dryRunComment(label || r.video_id, text.slice(0, 200), key));
+        continue;
+      }
+      try {
+        const thread = (await pr.comment(r.video_id, text)) || null;
+        await recordCommented(c.env.DB, {
+          video: r.video_id,
+          channel: s.id,
+          workspaceId: s.workspaceId,
+          datePt: ptDate(c.deps.now),
+          threadId: thread,
+          label: r.label,
+          source: "scheduler",
+        });
+        await c.setJob(ins.id, { state: "done" });
+        await c.note.send(N.commented(label || r.video_id, key));
+      } catch (e) {
+        await c.setJob(ins.id, { state: "failed", last_error: String((e as Error).message).slice(0, 500) });
+        await c.note.send(N.jobFailed(key, String((e as Error).message).slice(0, 300)));
+      }
+    }
+  }
+}

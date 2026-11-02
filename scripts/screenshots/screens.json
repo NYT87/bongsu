@@ -1,0 +1,19 @@
+[
+  { "name": "today", "app": "pwa", "url": "/#/", "readme": true, "crop": "viewport" },
+  { "name": "calendar", "app": "pwa", "url": "/#/calendar" },
+  { "name": "queue", "app": "pwa", "url": "/#/queue" },
+  { "name": "drafts", "app": "pwa", "url": "/#/drafts" },
+  { "name": "item", "app": "pwa", "url": "/#/item/{itemKey}", "readme": true, "crop": "viewport" },
+  { "name": "item-approved", "app": "pwa", "url": "/#/item/{approvedKey}" },
+  { "name": "results", "app": "pwa", "url": "/#/item/{postedKey}/results" },
+  { "name": "video", "app": "pwa", "url": "/#/video/main/{videoId}?d={videoDate}" },
+  { "name": "comments", "app": "pwa", "url": "/#/comments" },
+  { "name": "settings", "app": "pwa", "url": "/#/settings" },
+  { "name": "overview", "app": "dashboard", "url": "/dashboard/", "readme": true },
+  { "name": "connections", "app": "dashboard", "url": "/dashboard/connections" },
+  { "name": "accounts", "app": "dashboard", "url": "/dashboard/accounts" },
+  { "name": "videos", "app": "dashboard", "url": "/dashboard/videos" },
+  { "name": "keys", "app": "dashboard", "url": "/dashboard/keys" },
+  { "name": "settings", "file": "dashboard-settings", "app": "dashboard", "url": "/dashboard/settings" },
+  { "name": "docs", "app": "dashboard", "url": "/dashboard/docs/the-app" }
+]

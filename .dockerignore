@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.wrangler
+**/data
+.git
+.changeset
+site/*
+!site/docs
+public
+scripts
+.env
+.dev.vars

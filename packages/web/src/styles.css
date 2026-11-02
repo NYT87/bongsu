@@ -1,0 +1,1228 @@
+/* Tokens (colours, light and dark) are in tokens.css, shared with the dashboard. */
+@import "./tokens.css";
+* {
+  box-sizing: border-box;
+}
+html {
+  scrollbar-gutter: stable;
+  scrollbar-color: var(--line) var(--bg);
+} /* the scrollbar coming and going doesn't shift the centered bars */
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    16px / 1.45 system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  caret-color: var(--accent);
+  -webkit-tap-highlight-color: transparent;
+}
+::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+a {
+  color: inherit;
+}
+a.link {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+code {
+  font-size: 13px;
+}
+.num,
+.when {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- top bar */
+.top {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+header {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr minmax(0, auto) 1fr;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 16px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  z-index: 2;
+}
+.brand {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 8px;
+}
+.brand img {
+  display: block;
+  border-radius: 7px;
+}
+header h1 {
+  margin: 0;
+  font-size: 17px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+}
+header .icon {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -4px -11px -4px 0;
+  border-radius: 8px;
+  color: var(--muted);
+}
+header .icon.on {
+  color: var(--accent);
+}
+
+/* paused, on every screen */
+.banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 16px;
+  font-size: 15px;
+}
+.banner.bad {
+  background: var(--banner-bad);
+  color: var(--on-banner);
+}
+.banner span {
+  flex: 1;
+}
+.banner a {
+  color: inherit;
+  font-weight: 700;
+  text-underline-offset: 3px;
+}
+
+main {
+  padding: 12px 16px calc(96px + env(safe-area-inset-bottom));
+  max-width: 720px;
+  margin: 0 auto;
+}
+/* every page starts the same 12px under the header (main's padding): its first block and that block's first child
+   bring no top margin of their own (a heading, a card, the segmented control, a paragraph…) */
+main > :first-child,
+main > :first-child > :first-child {
+  margin-top: 0;
+}
+main.center {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  justify-content: center;
+  min-height: 100vh;
+  padding-bottom: 16px;
+}
+/* The sign-in screen's heading: the mark and the name, as in the header */
+.brand-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-title img {
+  border-radius: 7px;
+}
+main:has(.has-action) {
+  padding-bottom: calc(190px + env(safe-area-inset-bottom));
+}
+body:has(.has-action) nav {
+  display: none;
+} /* approving: the bar takes the thumb zone, no tab to mis-tap */
+
+/* ---- bottom tabs: icon + label, count badges */
+nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  background: var(--card);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+  z-index: 2;
+}
+nav a {
+  flex: 0 1 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 0 7px;
+  color: var(--muted);
+  text-decoration: none;
+}
+nav a.on {
+  color: var(--accent);
+}
+nav a.on .tab-label {
+  font-weight: 700;
+}
+.tab-icon {
+  position: relative;
+  display: flex;
+}
+.tab-icon svg {
+  width: 24px;
+  height: 24px;
+}
+.tab-label {
+  font-size: 12px;
+  line-height: 1.2;
+}
+.badge {
+  position: absolute;
+  top: -5px;
+  right: -10px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: var(--on-warn);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- type */
+h1 {
+  font-size: 24px;
+}
+h2 {
+  font-size: 18px;
+  margin: 22px 0 8px;
+}
+h3 {
+  font-size: 15px;
+  margin: 16px 0 6px;
+}
+.card h2 {
+  margin-top: 0;
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 13px;
+}
+.clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ok {
+  color: var(--ok);
+}
+.warn {
+  color: var(--warn);
+}
+.error {
+  color: var(--bad);
+}
+.ok-text {
+  color: var(--ok);
+}
+.bad-text {
+  color: var(--bad);
+}
+
+/* ---- surfaces (The Flat Room Rule: tone and hairline, no shadows) */
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+  margin: 10px 0;
+}
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.list li {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 8px 0;
+}
+.list li > a,
+.list li > div {
+  display: block;
+  padding: 10px 12px;
+  text-decoration: none;
+}
+.list li > a:active {
+  background: color-mix(in srgb, var(--fg) 5%, var(--card));
+  border-radius: 12px;
+}
+.list.compact li > a,
+.list.compact li > div {
+  padding: 8px 12px;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.row > strong.clip {
+  flex: 1;
+}
+/* `.list li > div` (block) outranks `.row`: a row straight in a list item (a draft) would run its title and kind
+   together. */
+.list li > .row {
+  display: flex;
+}
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 13px;
+  margin-top: 2px;
+}
+.meta .when {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.pill {
+  font-size: 13px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pill.ok {
+  color: var(--ok);
+  border-color: currentColor;
+}
+.pill.warn {
+  color: var(--warn);
+  border-color: currentColor;
+}
+.pill.bad {
+  color: var(--bad);
+  border-color: currentColor;
+}
+
+.notice {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin: 10px 0;
+  background: var(--card);
+}
+.notice.ok {
+  color: var(--ok);
+  border-color: currentColor;
+  background: color-mix(in srgb, var(--ok) 8%, var(--card));
+}
+.notice.warn {
+  color: var(--warn);
+  border-color: currentColor;
+  background: color-mix(in srgb, var(--warn) 5%, var(--card));
+}
+.notice.bad {
+  color: var(--bad);
+  border-color: currentColor;
+  background: color-mix(in srgb, var(--bad) 8%, var(--card));
+}
+.notice ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.notice.row {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.notice.row button {
+  flex: none;
+  color: var(--fg);
+}
+
+/* ---- today */
+.status {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+}
+.status p {
+  margin: 6px 0 0;
+}
+.status.is-paused {
+  border-color: var(--bad);
+}
+.needs {
+  margin: 14px 0 0;
+}
+.needs h2 {
+  margin-top: 18px;
+  color: var(--warn);
+}
+.check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--ok);
+  color: var(--card);
+}
+.activity {
+  margin: 22px 0 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.activity summary {
+  font-weight: 700;
+  font-size: 15px;
+  padding: 10px 0;
+  cursor: pointer;
+}
+
+/* ---- queue */
+.segmented {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 4px 0 10px;
+}
+.segmented button {
+  flex: 1;
+  border: 0;
+  border-radius: 0;
+  padding: 10px;
+  background: var(--card);
+}
+.segmented button + button {
+  border-left: 1px solid var(--line);
+}
+.segmented button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  color: var(--fg);
+  font-weight: 700;
+}
+.segmented button[aria-pressed="true"] .muted {
+  color: var(--fg);
+  font-weight: 400;
+}
+.filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 6px 0 4px;
+}
+.filters select {
+  font: inherit;
+  font-size: 16px;
+  min-height: 44px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--fg);
+  flex: 1 1 40%;
+  min-width: 0;
+}
+.day-head {
+  font-size: 15px;
+  margin: 18px 0 2px;
+}
+
+/* ---- controls (soft, thumb-sized) */
+button {
+  font: inherit;
+  padding: 10px 14px;
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+}
+button:active:not(:disabled) {
+  background: color-mix(in srgb, var(--fg) 6%, var(--card));
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  width: 100%;
+  padding: 14px;
+  font-weight: 700;
+}
+button.primary:active:not(:disabled) {
+  filter: brightness(0.9);
+}
+button.danger {
+  border-color: var(--bad);
+  color: var(--bad);
+}
+button.danger.full {
+  width: 100%;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+}
+input {
+  font: inherit;
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--fg);
+  margin: 6px 0;
+}
+details {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+summary {
+  cursor: pointer;
+}
+pre.text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  margin: 0;
+}
+.actions {
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+.actions > button {
+  flex: 1;
+}
+.confirm-ask {
+  flex: 1 1 100%;
+  border: 1px solid var(--bad);
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--bad) 6%, var(--card));
+}
+.confirm-ask.go {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, var(--card));
+}
+.confirm-ask p {
+  margin: 0 0 8px;
+}
+button.primary.inline {
+  width: auto;
+  padding: 10px 14px;
+}
+.confirm-ask .row button {
+  flex: 1;
+}
+
+/* ---- item page */
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 44px;
+  padding-right: 12px;
+  text-decoration: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+.back-row {
+  margin: -4px 0 4px;
+}
+.item-target {
+  margin: 0;
+  font-size: 15px;
+}
+.action-bar .notice {
+  margin: 0 0 8px;
+}
+.action-bar.done {
+  border-top-color: var(--ok);
+}
+.confirm-line {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.action-bar.done .row button {
+  flex: 1;
+}
+.held-line {
+  margin: 6px 0 0;
+}
+.key-details {
+  margin: 16px 0 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+}
+.key-details code {
+  word-break: break-all;
+}
+.tap {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+} /* text links and disclosures: a 44px target */
+/* A text-looking button inside a sentence ("Use the default"); still a 44px target. */
+button.link-button {
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* On/off switch: the whole row is the button (44px tall), the track shows the state, the label says what it is. */
+.switch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  border: 0;
+  background: none;
+  padding: 0;
+  text-align: left;
+}
+.switch:active:not(:disabled) {
+  background: none;
+}
+.switch:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.switch-track {
+  flex: none;
+  position: relative;
+  width: 44px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--line);
+  transition: background-color 0.15s;
+}
+.switch-knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  transition: transform 0.15s;
+}
+.switch[aria-checked="true"] .switch-track {
+  background: var(--accent);
+}
+.switch[aria-checked="true"] .switch-knob {
+  transform: translateX(18px);
+}
+.switch:focus-visible .switch-track {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.switch-label {
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch-track,
+  .switch-knob,
+  .chart-line {
+    transition: none;
+  }
+}
+summary.tap {
+  display: list-item;
+  min-height: 0;
+  padding: 13px 0;
+} /* keeps the disclosure triangle; 44px tall */
+.item-target .dot {
+  margin-right: 6px;
+}
+.key {
+  margin: 2px 0 8px;
+  word-break: break-all;
+}
+.confirm {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin: 10px 0;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--ok);
+  background: color-mix(in srgb, var(--ok) 8%, var(--card));
+}
+.action-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+  background: var(--card);
+  border-top: 1px solid var(--line);
+}
+.action-bar > * {
+  max-width: 688px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.action-bar > button {
+  display: block;
+} /* auto margins only centre a block: the Approve button was stuck left on wide screens */
+.action-bar p {
+  margin: 0 0 8px;
+}
+.media {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+.media video,
+.media img {
+  width: 100%;
+  max-height: 70vh;
+  border-radius: 12px;
+  background: var(--media);
+  object-fit: contain;
+}
+.media.carousel {
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+}
+.media.carousel img,
+.media.carousel video {
+  flex: 0 0 85%;
+  scroll-snap-align: center;
+}
+
+/* ---- channel code (The Channel Code Rule: always next to a label or legend) */
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: -1px;
+  flex: none;
+}
+/* one colour per platform; a circle for videos, a square for other posts; YouTube a triangle; any other platform a
+   neutral square until it gets its own colour */
+.dot {
+  background: var(--muted);
+  border-radius: 2px;
+}
+.dot.video {
+  border-radius: 50%;
+}
+.dot.p-instagram {
+  background: var(--post);
+}
+.dot.p-instagram.video {
+  background: var(--reel);
+}
+.dot.p-youtube {
+  background: var(--main);
+  border-radius: 0;
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+}
+.dot.ring {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+}
+.legend .dot.ring {
+  background: transparent;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 8px 0;
+  color: var(--muted);
+}
+
+/* ---- chart (The Channel Code Rule's twin: a series hue always comes with its label and its marker shape) */
+.chart {
+  margin: 8px 0;
+}
+.chart-plot {
+  touch-action: pan-y; /* a sideways drag moves the readout, an upward one still scrolls the page */
+  cursor: crosshair;
+}
+.chart-plot svg {
+  display: block;
+  overflow: visible;
+}
+.chart-axis line {
+  stroke: var(--line);
+}
+.chart-axis text {
+  fill: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.chart-guide {
+  stroke: var(--muted);
+  stroke-dasharray: 3 3;
+}
+.chart .s1 {
+  --series: var(--series-1);
+}
+.chart .s2 {
+  --series: var(--series-2);
+}
+.chart .s3 {
+  --series: var(--series-3);
+}
+.chart .s4 {
+  --series: var(--series-4);
+}
+.chart .s5 {
+  --series: var(--series-5);
+}
+.chart-series {
+  fill: var(--series);
+}
+.chart-line {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  transition: d 200ms ease;
+}
+.chart-cross {
+  fill: none;
+  stroke: var(--series);
+  stroke-width: 2;
+}
+.chart-legend {
+  list-style: none;
+  padding: 0;
+}
+.chart-legend li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.chart-readout {
+  margin: 0;
+  min-height: 1.45em;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- stats */
+.list li > .aud,
+.aud {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.aud-n {
+  text-align: right;
+}
+
+/* ---- calendar */
+.month-bar {
+  flex-wrap: nowrap;
+}
+.month-bar h2 {
+  margin: 0;
+}
+.cal {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.cal-head {
+  text-align: center;
+  padding: 4px 0;
+}
+.cal-cell {
+  aspect-ratio: 1 / 1;
+  min-height: 0;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+}
+.cal-cell.empty {
+  border: none;
+  background: transparent;
+}
+.cal-cell.today {
+  border-color: var(--accent);
+  border-width: 2px;
+}
+.cal-cell.sel {
+  background: color-mix(in srgb, var(--accent) 18%, var(--card));
+}
+.cal-num {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.cal-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  justify-content: center;
+}
+.cal-dots .dot {
+  width: 8px;
+  height: 8px;
+  margin: 0;
+}
+
+/* ---- forms */
+.form label {
+  display: block;
+  font-size: 15px;
+  margin-top: 10px;
+}
+.form textarea,
+.form select {
+  font: inherit;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  margin: 6px 0 0;
+}
+.form .row label {
+  flex: 1;
+}
+.form .row {
+  gap: 8px;
+}
+/* QR codes need dark modules on light, in dark mode too */
+.qr {
+  margin: 10px 0;
+}
+.qr-img {
+  width: 220px;
+  max-width: 100%;
+  background: var(--qr-tile);
+  padding: 8px;
+  border-radius: 10px;
+}
+.qr-img svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.form label.button {
+  display: inline-block;
+  flex: 1;
+  text-align: center;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 15px;
+}
+.form .picks {
+  margin-top: 4px;
+}
+.vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.form label.button:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.form label.button {
+  position: relative;
+  min-height: 44px;
+}
+
+/* rows: a separate icon to open the real post or video (the row itself opens the item in the app) */
+.list li {
+  position: relative;
+}
+.list li.has-out > a {
+  padding-right: 56px;
+} /* the title and meta stop before the icon */
+.out {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  border-radius: 10px;
+}
+.out svg {
+  width: 26px;
+  height: 26px;
+}
+.out:active {
+  background: color-mix(in srgb, var(--fg) 6%, var(--card));
+}
+/* a link that looks like a default button (Open on Instagram / YouTube) */
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--fg);
+  text-decoration: none;
+}
+.button-link:active {
+  background: color-mix(in srgb, var(--fg) 6%, var(--card));
+}
+.card.published p {
+  margin: 0 0 10px;
+}
+/* rows: the status is the border (green approved/posted/public, amber waiting on the owner, red failed, hairline
+   neutral); the word stays for screen readers. 1.5px so the colour reads at a glance on a phone. */
+.list li.tone-ok,
+.list li.tone-warn,
+.list li.tone-bad {
+  border-width: 1.5px;
+}
+.list li.tone-ok {
+  border-color: var(--ok);
+}
+.list li.tone-warn {
+  border-color: var(--warn);
+}
+.list li.tone-bad {
+  border-color: var(--bad);
+}
+
+/* item page: the display name with its rename button */
+.item-name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: 2px 0 4px;
+}
+.item-name h2 {
+  margin: 0;
+  flex: 1;
+}
+/* drafts: New draft centred first, the info button beside it */
+.drafts-head {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+.drafts-head > :first-child {
+  grid-column: 2;
+} /* the button itself is centred; the info icon sits beside it */
+.drafts-head > .icon-btn {
+  justify-self: start;
+}
+.drafts-head .icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+/* stats: audience rows open the channel page; its follower count */
+a.aud {
+  color: inherit;
+  text-decoration: none;
+}
+.stat-big {
+  font-size: 34px;
+  font-weight: 700;
+  margin: 0;
+  line-height: 1.1;
+}
+/* header: comments (with its unread badge) and settings side by side on the right */
+.head-icons {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: -11px;
+}
+.head-icons .icon {
+  margin: -4px 0;
+}
+/* comments page */
+.comment-group h2 {
+  margin-bottom: 0;
+  flex-wrap: nowrap;
+}
+.comment-group h2 .clip {
+  flex: 1;
+}
+.out-inline {
+  color: var(--muted);
+  border: 0;
+  background: transparent;
+}
+.comment-text {
+  margin: 4px 0 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.results-line {
+  margin: 0 0 10px;
+}
+/* free-slot choices after a clash */
+.slots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 8px 0;
+}
+.chip {
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+/* A performance review (#/stats/report/…): readable prose, tables scroll sideways inside their own box. */
+.md {
+  overflow-wrap: anywhere;
+}
+.md h2 {
+  margin: 18px 0 8px;
+}
+.md h3,
+.md h4 {
+  margin: 16px 0 6px;
+}
+.md ul,
+.md ol {
+  padding-left: 22px;
+  margin: 6px 0 10px;
+}
+.md li {
+  margin: 3px 0;
+}
+.md code {
+  font-size: 0.92em;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 7%, var(--card));
+}
+.md-table {
+  overflow-x: auto;
+  margin: 8px 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.md-table table {
+  border-collapse: collapse;
+  min-width: 100%;
+  font-size: 14px;
+}
+.md-table th,
+.md-table td {
+  padding: 7px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.md-table tr:last-child td {
+  border-bottom: 0;
+}
+.md-table th {
+  font-weight: 700;
+  background: color-mix(in srgb, var(--fg) 4%, var(--card));
+}
+/* the Results view's metric picker: six choices, three to a row (the hairlines are the gaps over the line colour) */
+.segmented.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+}
+.segmented.grid button + button {
+  border-left: 0;
+}

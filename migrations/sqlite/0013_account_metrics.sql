@@ -1,0 +1,13 @@
+-- Generated from packages/schema (pnpm --filter @bongsu/schema generate): don't edit by hand.
+
+-- The account series: one row per sample of an account's follower count (NULL when hidden).
+CREATE TABLE account_metrics (
+  id INTEGER PRIMARY KEY,
+  account TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  taken_at INTEGER NOT NULL,
+  followers INTEGER,
+  workspace_id TEXT NOT NULL DEFAULT 'default'
+);
+CREATE INDEX account_metrics_account ON account_metrics (account, taken_at);
+CREATE INDEX account_metrics_ws ON account_metrics (workspace_id, taken_at);

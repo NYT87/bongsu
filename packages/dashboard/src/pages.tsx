@@ -1,0 +1,1980 @@
+// The dashboard's sections (DESIGN.md, Layout). Each gets the instance state and `go` to move to another section.
+import { startRegistration } from "@simplewebauthn/browser";
+import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import type { State } from "./App";
+import { api, when, withFreshCheck } from "./api";
+import { GuideLink } from "./docs";
+import { Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
+
+interface Props {
+  state: State;
+  go: (section: string) => void;
+}
+
+const errorText = (e: unknown) => (e as Error).message;
+
+// ---- Overview
+
+interface Overview {
+  dryRun: boolean;
+  accounts: number;
+  connections: Record<string, number>;
+  keys: number;
+  passkeys: number;
+  recoveryCodesLeft: number;
+  waitingApproval: number;
+  setup: Setup;
+}
+interface Setup {
+  timezone: boolean;
+  oauthApp: boolean;
+  connection: boolean;
+  device: boolean;
+}
+const setupDone = (s: Setup) => Object.values(s).filter(Boolean).length;
+
+export function Overview({ go }: Props) {
+  const { data, error, reload } = useLoad<Overview>("overview");
+  const conns = data ? Object.values(data.connections).reduce((a, b) => a + b, 0) : 0;
+  const broken = (data?.connections.broken ?? 0) + (data?.connections.expiring ?? 0);
+  return (
+    <Page title="Overview" intro="What this instance publishes with, and what needs you.">
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <div className="overview">
+          {setupDone(data.setup) < 4 && (
+            <div className="banner setup" role="status">
+              <span>
+                <strong>Finish setting up:</strong> {setupDone(data.setup)} of 4 done.
+              </span>
+              <button type="button" className="primary" onClick={() => go("start")}>
+                Continue
+              </button>
+            </div>
+          )}
+          <div className="grid stats">
+            <Stat label="Accounts" value={data.accounts} onClick={() => go("accounts")} />
+            <Stat
+              label="Connections"
+              value={conns}
+              note={broken ? `${broken} need attention` : undefined}
+              onClick={() => go("connections")}
+            />
+            <Stat label="Waiting for approval" value={data.waitingApproval} note="Approve in the Bongsu app" />
+            <Stat label="Agent keys" value={data.keys} onClick={() => go("keys")} />
+          </div>
+          <Card title="Needs you">
+            <ul className="todo">
+              {conns === 0 && (
+                <Todo
+                  text="Connect an account to publish to."
+                  action="Connect an account"
+                  onClick={() => go("connections")}
+                />
+              )}
+              {broken > 0 && (
+                <Todo
+                  text={`${broken} connection(s) are expiring or broken.`}
+                  action="Reconnect"
+                  onClick={() => go("connections")}
+                />
+              )}
+              {data.passkeys < 2 && (
+                <Todo
+                  text="Add a second passkey or another device, so losing one doesn't lock you out."
+                  action="Add a passkey"
+                  onClick={() => go("devices")}
+                />
+              )}
+              {data.recoveryCodesLeft < 3 && (
+                <Todo
+                  text={
+                    data.recoveryCodesLeft
+                      ? `Only ${data.recoveryCodesLeft} recovery codes left: make new ones.`
+                      : "No recovery codes left: make new ones."
+                  }
+                  action="Make new codes"
+                  onClick={() => go("devices")}
+                />
+              )}
+              {/* Dry run isn't repeated here: the banner above every page says it. */}
+              {conns > 0 && !broken && data.passkeys >= 2 && data.recoveryCodesLeft >= 3 && (
+                <li className="muted">Nothing: all good.</li>
+              )}
+            </ul>
+          </Card>
+        </div>
+      )}
+    </Page>
+  );
+}
+
+function Stat({ label, value, note, onClick }: { label: string; value: number; note?: string; onClick?: () => void }) {
+  // The label row is the same in every card (with or without "View"), so the numbers line up.
+  const inner = (
+    <>
+      <div className="stat-head">
+        <span className="muted small">{label}</span>
+        {onClick && (
+          <span className="go" aria-hidden="true">
+            View
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              aria-hidden="true"
+            >
+              <path d="m9 6 6 6-6 6" />
+            </svg>
+          </span>
+        )}
+      </div>
+      <div className="stat">{value}</div>
+      {note && <div className="small muted">{note}</div>}
+    </>
+  );
+  return onClick ? (
+    <button type="button" className="card stat-card" onClick={onClick}>
+      {inner}
+    </button>
+  ) : (
+    <div className="card stat-card">{inner}</div>
+  );
+}
+
+const Todo = ({ text, action, onClick }: { text: string; action?: string; onClick?: () => void }) => (
+  <li>
+    {text}{" "}
+    {onClick && (
+      <button type="button" className="link" onClick={onClick}>
+        {action}
+      </button>
+    )}
+  </li>
+);
+
+// ---- Connections
+
+interface ConnectKind {
+  provider: string;
+  kind: "token" | "oauth2" | "composio";
+  label: string;
+  platform: string;
+  app?: string;
+  canPaste: boolean;
+  pasteToken?: boolean;
+  docs: string;
+}
+interface Connection {
+  id: string;
+  provider: string;
+  label: string | null;
+  status: string;
+  expires_at: number | null;
+  last_error: string | null;
+  last_checked_at: number | null;
+  accounts: string[];
+}
+
+const APP_NAME: Record<string, string> = { meta: "Meta app", google: "Google app" };
+
+/** Sends the browser to the provider's sign-in (after a passkey check when the last one is old). */
+async function startConnect(provider: string, reconnect?: string) {
+  const r = await withFreshCheck(() =>
+    api<{ url: string }>(`connect/${encodeURIComponent(provider)}/start`, reconnect ? { reconnect } : {}),
+  );
+  location.assign(r.url);
+}
+
+const PROVIDER_NAME: Record<string, string> = { instagram: "Instagram", youtube: "YouTube" };
+const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** What the provider's redirect back says (…/connections?connected=… or ?error=…), as a toast, once. */
+function useReturn() {
+  const toast = useToast();
+  useEffect(() => {
+    const q = new URLSearchParams(location.search);
+    if (q.has("connected"))
+      toast({
+        ok: true,
+        text: `${PROVIDER_NAME[q.get("connected") ?? ""] ?? q.get("connected")} connected: ${count(Number(q.get("accounts") ?? 1), "account")}.`,
+      });
+    else if (q.has("error")) toast({ ok: false, text: `Couldn't connect: ${q.get("error")}` });
+    else return;
+    history.replaceState(null, "", location.pathname);
+  }, [toast]);
+}
+
+export function Connections({ go }: Props) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{ connections: Connection[]; kinds: ConnectKind[]; appsReady: string[] }>(
+    "connections",
+  );
+  useReturn();
+  const [err, setErr] = useState<string | null>(null);
+  const [paste, setPaste] = useState<ConnectKind | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const kind = (p: string) => data?.kinds.find((k) => k.provider === p);
+  /** A greyed-out Connect/Reconnect still answers a click (a tooltip never shows on a phone): it says why and goes
+   *  where the fix is. */
+  const needApp = (app?: string) => {
+    toast({ ok: false, text: `Add your ${APP_NAME[app ?? ""] ?? "OAuth app"} first, then connect.` });
+    go("apps");
+  };
+  const connect = async (provider: string, reconnect?: string) => {
+    setErr(null);
+    try {
+      await startConnect(provider, reconnect);
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  return (
+    <Page
+      title="Connections"
+      intro="How Bongsu reaches each platform: a login or token per provider. One connection can reach several accounts."
+    >
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          <Card title="Connected">
+            {data.connections.length === 0 ? (
+              <p className="empty">No connections yet: add one below.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="stack">
+                  <thead>
+                    <tr>
+                      <th>Connection</th>
+                      <th>Status</th>
+                      <th>Accounts</th>
+                      <th>Expires</th>
+                      <th className="right">
+                        <span className="vh">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.connections.map((c) => {
+                      const k = kind(c.provider);
+                      return (
+                        <tr key={c.id}>
+                          <td>
+                            <div>{c.label ?? c.id}</div>
+                            <div className="muted small">{k?.label ?? c.provider}</div>
+                            {c.last_error && <div className="error small">{c.last_error}</div>}
+                          </td>
+                          <td data-label="Status">
+                            <Pill status={c.status} />
+                          </td>
+                          <td data-label="Accounts" className="small">
+                            {c.accounts.join(", ") || <span className="muted">none</span>}
+                          </td>
+                          <td data-label="Expires" className="small nowrap">
+                            {c.expires_at ? when(c.expires_at) : "—"}
+                          </td>
+                          <td className="right nowrap">
+                            {k?.kind === "oauth2" && (
+                              <button
+                                type="button"
+                                className="link"
+                                aria-disabled={!data.appsReady.includes(k.app ?? "")}
+                                title={
+                                  data.appsReady.includes(k.app ?? "")
+                                    ? undefined
+                                    : `Add your ${APP_NAME[k.app ?? ""] ?? "OAuth app"} first`
+                                }
+                                onClick={() =>
+                                  data.appsReady.includes(k.app ?? "") ? connect(c.provider, c.id) : needApp(k.app)
+                                }
+                              >
+                                Reconnect
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="link danger"
+                              onClick={() =>
+                                confirm({
+                                  title: `Remove ${c.label ?? c.id}?`,
+                                  detail:
+                                    "Its accounts stay, with their plans, but nothing is published to them until they're connected again. Bongsu's access is revoked where the provider allows it.",
+                                  verb: "Remove",
+                                  run: async () => {
+                                    await withFreshCheck(() =>
+                                      api(`connections/${encodeURIComponent(c.id)}/remove`, {}),
+                                    );
+                                    toast({
+                                      ok: true,
+                                      text: `Removed ${c.label ?? c.id}: its accounts keep their plans.`,
+                                    });
+                                    reload();
+                                  },
+                                })
+                              }
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+          <Card title="Add a connection">
+            <ul className="connect-list">
+              {data.kinds.map((k) => {
+                const ready = !k.app || data.appsReady.includes(k.app);
+                return (
+                  <li key={k.provider}>
+                    <div>
+                      <strong>{k.label}</strong>
+                      <div className="muted small">
+                        {k.kind === "composio"
+                          ? "Paste the connected-account id from Composio."
+                          : ready
+                            ? "Sign in with the account and allow access."
+                            : `Needs your ${APP_NAME[k.app ?? ""] ?? "OAuth app"}: `}
+                        {!ready && (
+                          <button type="button" className="link inline" onClick={() => go("apps")}>
+                            add it
+                          </button>
+                        )}
+                        <span aria-hidden="true"> · </span>
+                        <GuideLink doc={k.docs}>Setup guide</GuideLink>
+                      </div>
+                    </div>
+                    <div className="row">
+                      {k.canPaste && (
+                        <button type="button" onClick={() => setPaste(k)}>
+                          {k.kind === "composio" ? "Paste the id" : "Paste a token"}
+                        </button>
+                      )}
+                      {k.kind === "oauth2" && (
+                        <button
+                          type="button"
+                          className="primary"
+                          aria-disabled={!ready}
+                          onClick={() => (ready ? connect(k.provider) : needApp(k.app))}
+                        >
+                          Connect
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+            {paste && (
+              <PasteForm
+                kind={paste}
+                onClose={() => setPaste(null)}
+                onDone={(text) => {
+                  setPaste(null);
+                  toast({ ok: true, text });
+                  reload();
+                }}
+              />
+            )}
+          </Card>
+          {dialog}
+        </>
+      )}
+    </Page>
+  );
+}
+
+/** A long-lived token (Instagram) or a Composio connected-account id, checked with the provider before it's kept. */
+function PasteForm({
+  kind,
+  onClose,
+  onDone,
+}: {
+  kind: ConnectKind;
+  onClose: () => void;
+  onDone: (result: string) => void;
+}) {
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const composio = kind.kind === "composio";
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await withFreshCheck(() =>
+        api<{ label: string; accounts: { id: string; created: boolean }[] }>(
+          `connect/${encodeURIComponent(kind.provider)}/paste`,
+          { value },
+        ),
+      );
+      onDone(`Connected ${r.label}: ${r.accounts.map((a) => a.id + (a.created ? " (new)" : "")).join(", ")}.`);
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <form onSubmit={submit} className="inset">
+      <Field
+        label={composio ? "Connected-account id" : `${kind.label}: long-lived token`}
+        help={
+          composio
+            ? "From Composio's dashboard (ca_…). Only the id is kept; Composio holds the login."
+            : "Stored encrypted. Bongsu renews it before its 60 days run out."
+        }
+        error={err}
+      >
+        {(p) => (
+          <input
+            {...p}
+            className="mono"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+            required
+          />
+        )}
+      </Field>
+      <div className="actions">
+        <button type="button" onClick={onClose}>
+          Cancel
+        </button>
+        <button className="primary" type="submit" aria-disabled={busy}>
+          {busy ? "Checking…" : "Connect"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+// ---- OAuth apps
+
+interface OAuthApp {
+  id: string;
+  clientId: string | null;
+  updatedAt: number | null;
+  providers: { provider: string; label: string; redirectUri: string }[];
+}
+const APP_GUIDE: Record<string, { title: string; idLabel: string; secretLabel: string; docs: string }> = {
+  meta: {
+    title: "Meta app (Instagram)",
+    idLabel: "Instagram app ID",
+    secretLabel: "Instagram app secret",
+    docs: "site/docs/instagram-graph.md",
+  },
+  google: {
+    title: "Google app (YouTube)",
+    idLabel: "Client ID",
+    secretLabel: "Client secret",
+    docs: "site/docs/youtube.md",
+  },
+};
+
+export function OAuthApps(_: Props) {
+  const { data, error, reload } = useLoad<{ apps: OAuthApp[]; encryptionKeySet: boolean }>("oauth-apps");
+  return (
+    <Page
+      title="OAuth apps"
+      intro="Your own Meta and Google apps: Bongsu signs in to Instagram and YouTube with them. Make each app once, register the redirect URL shown here, then paste its id and secret."
+    >
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          {!data.encryptionKeySet && (
+            <p className="notice bad" role="alert">
+              ENCRYPTION_KEY isn't set on the Worker: app secrets and tokens can't be stored until it is (see{" "}
+              <GuideLink doc="deploy-cloudflare">the deploy guide</GuideLink>).
+            </p>
+          )}
+          {data.apps.map((a) => (
+            <AppCard key={a.id} app={a} onChange={reload} />
+          ))}
+        </>
+      )}
+    </Page>
+  );
+}
+
+function AppCard({ app, onChange }: { app: OAuthApp; onChange: () => void }) {
+  const g = APP_GUIDE[app.id] ?? { title: app.id, idLabel: "Client ID", secretLabel: "Client secret", docs: "" };
+  const [editing, setEditing] = useState(!app.clientId);
+  const [clientId, setClientId] = useState(app.clientId ?? "");
+  const [secret, setSecret] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const toast = useToast();
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await withFreshCheck(() => api(`oauth-apps/${app.id}`, { clientId, clientSecret: secret }));
+      toast({ ok: true, text: `${g.title} saved.` });
+      setSecret("");
+      setEditing(false);
+      onChange();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card
+      title={g.title}
+      actions={app.clientId ? <Pill status="ok" label="Set" /> : <Pill status="waiting" label="Not set" />}
+    >
+      <p className="muted small">
+        Redirect URL{app.providers.length > 1 ? "s" : ""} to register in the app (
+        {g.docs ? <GuideLink doc={g.docs}>the setup guide</GuideLink> : "its settings"} shows where):
+      </p>
+      <ul className="redirects">
+        {app.providers.map((p) => (
+          <li key={p.provider}>
+            <code className="mono">{p.redirectUri}</code>
+            <button
+              type="button"
+              className="link"
+              onClick={async () => {
+                await navigator.clipboard.writeText(p.redirectUri);
+                setCopied(p.provider);
+              }}
+            >
+              {copied === p.provider ? "Copied" : "Copy"}
+            </button>
+            {app.providers.length > 1 && <span className="muted small">{p.label}</span>}
+          </li>
+        ))}
+      </ul>
+      <span className="vh" aria-live="polite">
+        {copied ? "Copied to the clipboard" : ""}
+      </span>
+      {editing ? (
+        <form onSubmit={save}>
+          <Field label={g.idLabel}>
+            {(p) => (
+              <input
+                {...p}
+                className="mono"
+                value={clientId}
+                onChange={(e) => setClientId(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                required
+              />
+            )}
+          </Field>
+          <Field label={g.secretLabel} help="Stored encrypted; it isn't shown again." error={err}>
+            {(p) => (
+              <input
+                {...p}
+                type="password"
+                className="mono"
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+                autoComplete="off"
+                required
+              />
+            )}
+          </Field>
+          <div className="actions">
+            {app.clientId && (
+              <button type="button" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+            )}
+            <button className="primary" type="submit" aria-disabled={busy}>
+              {busy ? "Saving…" : "Save"}
+            </button>
+          </div>
+        </form>
+      ) : (
+        <div className="row spread">
+          <span className="small">
+            <span className="muted">{g.idLabel}:</span> <span className="mono">{app.clientId}</span>
+            {app.updatedAt && <span className="muted"> · saved {when(app.updatedAt)}</span>}
+          </span>
+          <span className="row">
+            <button type="button" onClick={() => setEditing(true)}>
+              Replace
+            </button>
+            <button
+              type="button"
+              className="danger"
+              onClick={() =>
+                confirm({
+                  title: `Remove the ${g.title}?`,
+                  detail:
+                    "Connections already made keep working (they carry their own tokens); new ones and reconnects need an app again.",
+                  verb: "Remove",
+                  run: async () => {
+                    await withFreshCheck(() => api(`oauth-apps/${app.id}/remove`, {}));
+                    toast({ ok: true, text: `${g.title} removed.` });
+                    setClientId("");
+                    setEditing(true);
+                    onChange();
+                  },
+                })
+              }
+            >
+              Remove
+            </button>
+          </span>
+        </div>
+      )}
+      {dialog}
+    </Card>
+  );
+}
+
+// ---- Accounts
+
+interface Account {
+  id: string;
+  platform: string;
+  handle: string;
+  name: string;
+  status: string;
+  connection: { id: string; provider: string; label: string | null; status: string } | null;
+  trialReels: { capable: boolean; on: boolean } | null;
+  captionRules: (LintRules & { defaults: LintRules }) | null;
+}
+/** The caption check's rules (core's formats/caption-lint.ts): what the dashboard lets the owner tune per account. */
+interface LintRules {
+  hashtagMax: number;
+  foldChars: number;
+  languageChecks: boolean;
+}
+interface PlatformInfo {
+  id: string;
+  name: string;
+  accountNoun: string;
+  formats: { format: string; plural: string }[];
+  features: { comments: boolean };
+}
+
+/** One account's caption rules: a number field left empty means the platform's default (shown as the placeholder).
+ *  Each change saves its own field only (an emptied field as null, back to the default), so two quick edits can't
+ *  overwrite each other. */
+function CaptionRulesCell({
+  rules,
+  save,
+}: {
+  rules: LintRules & { defaults: LintRules };
+  save: (change: { [K in keyof LintRules]?: LintRules[K] | null }) => Promise<boolean>;
+}) {
+  const { defaults } = rules;
+  const shown = (k: "hashtagMax" | "foldChars") => (rules[k] === defaults[k] ? "" : String(rules[k]));
+  const [draft, setDraft] = useState({ hashtagMax: shown("hashtagMax"), foldChars: shown("foldChars") });
+  const number = (k: "hashtagMax" | "foldChars", label: string, min: number, max: number) => (
+    <label>
+      <span>{label}</span>
+      <input
+        type="number"
+        inputMode="numeric"
+        min={min}
+        max={max}
+        placeholder={String(defaults[k])}
+        value={draft[k]}
+        onChange={(e) => setDraft({ ...draft, [k]: e.target.value })}
+        onBlur={async () => {
+          const v = draft[k].trim();
+          if (v === shown(k)) return;
+          if (!(await save({ [k]: v === "" ? null : Number(v) }))) setDraft({ ...draft, [k]: shown(k) });
+        }}
+      />
+    </label>
+  );
+  return (
+    <div className="rules">
+      {number("hashtagMax", "Hashtags max", 0, 30)}
+      {number("foldChars", "First line chars", 50, 500)}
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={rules.languageChecks}
+          onChange={(e) => save({ languageChecks: e.target.checked })}
+        />
+        Language checks
+      </label>
+    </div>
+  );
+}
+
+export function Accounts(_: Props) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{ accounts: Account[]; platforms: PlatformInfo[] }>("accounts");
+  const [err, setErr] = useState<string | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const update = async (id: string, change: Record<string, unknown>) => {
+    setErr(null);
+    try {
+      await api(`accounts/${encodeURIComponent(id)}`, change);
+      reload();
+      return true;
+    } catch (e) {
+      setErr(errorText(e));
+      return false;
+    }
+  };
+  const platformName = (id: string) => data?.platforms.find((p) => p.id === id)?.name ?? id;
+  /** What Bongsu can do with an account: its platform's formats, plus Trial Reels once the account qualifies. */
+  const capabilities = (a: Account) => {
+    const p = data?.platforms.find((x) => x.id === a.platform);
+    const can = p?.formats.map((f) => f.plural) ?? [];
+    if (a.trialReels?.capable) can.push("Trial Reels");
+    if (!can.length && p?.features.comments) can.push("Comments on posts made elsewhere");
+    return can.join(", ") || "—";
+  };
+  return (
+    <Page title="Accounts" intro="The accounts Bongsu publishes to, and their defaults.">
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <Card>
+          {err && (
+            <p className="error" role="alert">
+              {err}
+            </p>
+          )}
+          {data.accounts.length === 0 ? (
+            <p className="empty">No accounts yet: they appear when you add a connection.</p>
+          ) : (
+            <div className="table-wrap">
+              <table className="stack">
+                <thead>
+                  <tr>
+                    <th>Account</th>
+                    <th>Publishes</th>
+                    <th>Connection</th>
+                    <th>Trial Reels by default</th>
+                    <th>Caption checks</th>
+                    <th>Status</th>
+                    <th className="right">
+                      <span className="vh">Actions</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.accounts.map((a) => (
+                    <tr key={a.id}>
+                      <td>
+                        <div>{a.name}</div>
+                        <div className="muted small">
+                          {platformName(a.platform)} · @{a.handle}
+                        </div>
+                      </td>
+                      <td data-label="Publishes" className="small">
+                        {capabilities(a)}
+                      </td>
+                      <td data-label="Connection" className="small">
+                        {a.connection ? (
+                          <>
+                            {a.connection.label ?? a.connection.provider} <Pill status={a.connection.status} />
+                          </>
+                        ) : (
+                          <span className="muted">none</span>
+                        )}
+                      </td>
+                      <td data-label="Trial Reels">
+                        {a.trialReels ? (
+                          <label className="check">
+                            <input
+                              type="checkbox"
+                              checked={a.trialReels.on}
+                              disabled={!a.trialReels.capable}
+                              onChange={(e) => update(a.id, { trialReels: e.target.checked })}
+                            />
+                            {a.trialReels.capable ? (a.trialReels.on ? "On" : "Off") : "Not available yet"}
+                          </label>
+                        ) : (
+                          <span className="muted small">—</span>
+                        )}
+                      </td>
+                      <td data-label="Caption checks">
+                        {a.captionRules ? (
+                          <CaptionRulesCell
+                            key={`${a.id}:${a.captionRules.hashtagMax}:${a.captionRules.foldChars}`}
+                            rules={a.captionRules}
+                            save={(captionRules) => update(a.id, { captionRules })}
+                          />
+                        ) : (
+                          <span className="muted small">—</span>
+                        )}
+                      </td>
+                      <td data-label="Status">
+                        <Pill status={a.status} />
+                      </td>
+                      <td className="right">
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={() => {
+                            const name = window.prompt("Display name", a.name);
+                            if (name !== null) update(a.id, { name });
+                          }}
+                        >
+                          Rename
+                        </button>
+                        {a.status === "active" ? (
+                          <button
+                            type="button"
+                            className="link danger"
+                            onClick={() =>
+                              confirm({
+                                title: `Disable ${a.name}?`,
+                                detail: "Nothing is published to it until you enable it again. Its plan stays.",
+                                verb: "Disable",
+                                run: async () => {
+                                  await api(`accounts/${encodeURIComponent(a.id)}`, { status: "disabled" });
+                                  toast({ ok: true, text: `${a.name} disabled: nothing is published to it.` });
+                                  reload();
+                                },
+                              })
+                            }
+                          >
+                            Disable
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              className="link"
+                              onClick={() =>
+                                update(a.id, { status: "active" }).then(
+                                  (ok) => ok && toast({ ok: true, text: `${a.name} enabled.` }),
+                                )
+                              }
+                            >
+                              Enable
+                            </button>
+                            <button
+                              type="button"
+                              className="link danger"
+                              onClick={() =>
+                                confirm({
+                                  title: `Remove ${a.name}?`,
+                                  detail:
+                                    "It leaves Bongsu: only possible with nothing left to publish to it. What was published stays in the history.",
+                                  verb: "Remove",
+                                  run: async () => {
+                                    await withFreshCheck(() => api(`accounts/${encodeURIComponent(a.id)}/remove`, {}));
+                                    toast({ ok: true, text: `${a.name} removed.` });
+                                    reload();
+                                  },
+                                })
+                              }
+                            >
+                              Remove
+                            </button>
+                          </>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {dialog}
+        </Card>
+      )}
+    </Page>
+  );
+}
+
+// ---- Videos
+
+interface VideoRow {
+  id: string;
+  title: string;
+  short: boolean;
+  status: "public" | "scheduled" | "private" | "unlisted";
+  when: string | null;
+  url: string;
+}
+interface VideoList {
+  channels: { id: string; name: string; videos: VideoRow[] }[];
+  warnings: string[];
+}
+
+export function Videos(_: Props) {
+  const toast = useToast();
+  const [path, setPath] = useState("videos");
+  const { data, error, reload } = useLoad<VideoList>(path);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // "Check YouTube now" reads past the hour's cache; the next plain load goes back to it
+  const check = () => (path === "videos?refresh=1" ? reload() : setPath("videos?refresh=1"));
+  const start = (v: VideoRow) => {
+    setEditing(v.id);
+    setErr(null);
+    const [d, t] = (v.when ?? "").split(" ");
+    setDate(d ?? "");
+    setTime(t ?? "");
+  };
+  const save = async (v: VideoRow) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await withFreshCheck(() =>
+        api<{ due: string }>(`videos/${encodeURIComponent(v.id)}/release`, { date, time }),
+      );
+      toast({ ok: true, text: `Moved to ${r.due}.` });
+      setEditing(null);
+      // a plain load again: it ends "Check YouTube now"'s read past the cache
+      if (path === "videos") reload();
+      else setPath("videos");
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Page title="Videos" intro="Each YouTube channel's uploads. A scheduled video's release date can move from here.">
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          <div className="actions">
+            <button type="button" onClick={check}>
+              Check YouTube now
+            </button>
+          </div>
+          {data.warnings.map((w) => (
+            <p key={w} className="error" role="alert">
+              {w}
+            </p>
+          ))}
+          {data.channels.length === 0 && (
+            <Card>
+              <p className="empty">No YouTube channel connected yet.</p>
+            </Card>
+          )}
+          {data.channels.map((ch) => (
+            <Card key={ch.id} title={ch.name}>
+              {ch.videos.length === 0 ? (
+                <p className="empty">No uploads found.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table className="stack">
+                    <thead>
+                      <tr>
+                        <th>Title</th>
+                        <th>Kind</th>
+                        <th>State</th>
+                        <th>When</th>
+                        <th className="right">
+                          <span className="vh">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ch.videos.map((v) => (
+                        <tr key={v.id}>
+                          <td>
+                            <a href={v.url} target="_blank" rel="noreferrer">
+                              {v.title}
+                            </a>
+                          </td>
+                          <td data-label="Kind">{v.short ? "Short" : "Video"}</td>
+                          <td data-label="State">
+                            <Pill status={v.status} />
+                          </td>
+                          <td data-label="When">{v.when ?? "—"}</td>
+                          <td className="right">
+                            {v.status !== "scheduled" ? null : editing === v.id ? (
+                              <form
+                                className="row"
+                                onSubmit={(e) => {
+                                  e.preventDefault();
+                                  save(v);
+                                }}
+                              >
+                                <Field label="Date">
+                                  {(p) => (
+                                    <input
+                                      {...p}
+                                      type="date"
+                                      required
+                                      value={date}
+                                      onChange={(e) => setDate(e.target.value)}
+                                    />
+                                  )}
+                                </Field>
+                                <Field label="Time">
+                                  {(p) => (
+                                    <input
+                                      {...p}
+                                      type="time"
+                                      required
+                                      value={time}
+                                      onChange={(e) => setTime(e.target.value)}
+                                    />
+                                  )}
+                                </Field>
+                                <button className="primary" type="submit" aria-disabled={busy}>
+                                  Save
+                                </button>
+                                <button type="button" className="link" onClick={() => setEditing(null)}>
+                                  Cancel
+                                </button>
+                                {err && (
+                                  <p className="error" role="alert">
+                                    {err}
+                                  </p>
+                                )}
+                              </form>
+                            ) : (
+                              <button type="button" className="link" onClick={() => start(v)}>
+                                Change date
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          ))}
+        </>
+      )}
+    </Page>
+  );
+}
+
+// ---- Devices & passkeys
+
+interface Passkeys {
+  passkeys: { id: string; short: string; name: string | null; created_at: number; last_used_at: number | null }[];
+  devices: { device: string | null; created_at: number }[];
+}
+interface DeviceCode {
+  id: string;
+  code: string;
+  link: string;
+  expiresAt: number;
+}
+
+export function Devices(_: Props) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<Passkeys>("passkeys");
+  const [err, setErr] = useState<string | null>(null);
+  const [device, setDevice] = useState<DeviceCode | null>(null);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const run = async (fn: () => Promise<void>) => {
+    setErr(null);
+    try {
+      await fn();
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  const addPasskey = () =>
+    run(async () => {
+      const name = window.prompt("Name this passkey (e.g. the computer or key)", "Laptop");
+      if (name === null) return;
+      await withFreshCheck(async () => {
+        const o = await api<{ options: never; challengeId: string }>("passkeys/options", {});
+        const response = await startRegistration({ optionsJSON: o.options });
+        await api("passkeys/verify", { challengeId: o.challengeId, response, name });
+      });
+      toast({ ok: true, text: `Passkey "${name}" added.` });
+      reload();
+    });
+  return (
+    <Page
+      title="Devices & passkeys"
+      intro="Your devices approve posts in the Bongsu app; your passkeys sign you in here and in the app."
+    >
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
+      <Card
+        title="Add a device"
+        actions={
+          !device && (
+            <button
+              type="button"
+              className="primary"
+              onClick={() => run(async () => setDevice(await withFreshCheck(() => api<DeviceCode>("devices", {}))))}
+            >
+              Add a device
+            </button>
+          )
+        }
+      >
+        {device ? (
+          <DeviceSetup
+            device={device}
+            onDone={() => {
+              setDevice(null);
+              reload();
+            }}
+          />
+        ) : (
+          <p className="muted">
+            Shows a QR code: scan it with the device's camera (a phone or tablet), then it creates its own passkey and
+            gets the app.
+          </p>
+        )}
+      </Card>
+      <Card
+        title="Passkeys"
+        actions={
+          <button type="button" onClick={addPasskey}>
+            Add a passkey here
+          </button>
+        }
+      >
+        {!data ? (
+          <Loading error={error} retry={reload} />
+        ) : (
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Added</th>
+                  <th>Last used</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.passkeys.map((k) => (
+                  <tr key={k.id}>
+                    <td>
+                      {k.name ?? "passkey"} <span className="muted small mono">{k.short}</span>
+                    </td>
+                    <td data-label="Added" className="small">
+                      {when(k.created_at)}
+                    </td>
+                    <td data-label="Last used" className="small">
+                      {when(k.last_used_at)}
+                    </td>
+                    <td className="right">
+                      <button
+                        type="button"
+                        className="link"
+                        onClick={() => {
+                          const name = window.prompt("Rename the passkey", k.name ?? "");
+                          if (name)
+                            run(async () => {
+                              await api(`passkeys/${encodeURIComponent(k.id)}/rename`, { name });
+                              reload();
+                            });
+                        }}
+                      >
+                        Rename
+                      </button>
+                      <button
+                        type="button"
+                        className="link danger"
+                        aria-disabled={data.passkeys.length <= 1}
+                        title={data.passkeys.length <= 1 ? "Your only passkey: add another one first" : undefined}
+                        onClick={() =>
+                          data.passkeys.length <= 1
+                            ? toast({
+                                ok: false,
+                                text: "That's your only passkey: add another one (or another device) before removing it.",
+                              })
+                            : confirm({
+                                title: `Remove "${k.name ?? "passkey"}"?`,
+                                detail:
+                                  "That device can't sign in with it any more (the Bongsu app there stops working too).",
+                                verb: "Remove",
+                                run: async () => {
+                                  await withFreshCheck(() => api(`passkeys/${encodeURIComponent(k.id)}/revoke`, {}));
+                                  toast({ ok: true, text: `Passkey "${k.name ?? k.short}" removed.` });
+                                  reload();
+                                },
+                              })
+                        }
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        {data && data.devices.length > 0 && (
+          <p className="muted small">
+            Devices getting notifications: {data.devices.map((d) => d.device ?? "a device").join(", ")}.
+          </p>
+        )}
+      </Card>
+      <Card
+        title="Recovery codes"
+        actions={
+          !codes && (
+            <button
+              type="button"
+              onClick={() =>
+                confirm({
+                  title: "Make new recovery codes?",
+                  detail: "The codes you have now stop working.",
+                  verb: "Make new codes",
+                  run: async () => {
+                    const r = await withFreshCheck(() => api<{ recoveryCodes: string[] }>("recovery-codes", {}));
+                    setCodes(r.recoveryCodes);
+                  },
+                })
+              }
+            >
+              Make new codes
+            </button>
+          )
+        }
+      >
+        {codes ? (
+          <SecretOnce title="Your new recovery codes" lines={codes} onDone={() => setCodes(null)} />
+        ) : (
+          <p className="muted">Each signs you in once when every passkey is lost.</p>
+        )}
+      </Card>
+      {dialog}
+    </Page>
+  );
+}
+
+/** The QR code and the code itself; polls until the device has used it (or it expires). */
+function DeviceSetup({ device, onDone }: { device: DeviceCode; onDone: () => void }) {
+  const [status, setStatus] = useState<"waiting" | "used" | "expired">("waiting");
+  useEffect(() => {
+    if (status !== "waiting") return;
+    const t = setInterval(() => {
+      api<{ used: boolean; expired: boolean }>(`devices/${device.id}`)
+        .then((r) => setStatus(r.used ? "used" : r.expired ? "expired" : "waiting"))
+        .catch(() => {});
+    }, 3000);
+    return () => clearInterval(t);
+  }, [device.id, status]);
+  if (status === "used")
+    return (
+      <div role="status">
+        <p>
+          <Pill status="ok" label="Connected" /> The device has its passkey.
+        </p>
+        <button type="button" className="primary" onClick={onDone}>
+          Done
+        </button>
+      </div>
+    );
+  if (status === "expired")
+    return (
+      <div role="status">
+        <p className="error">The code expired before the device used it.</p>
+        <button type="button" onClick={onDone}>
+          Close
+        </button>
+      </div>
+    );
+  return (
+    <div className="device-setup">
+      <QrCode text={device.link} label="QR code that opens the Bongsu app on the device" />
+      <div>
+        <ol>
+          <li>Open the device's camera and point it at the code.</li>
+          <li>Open the link, then create the passkey when asked.</li>
+          <li>Add the app to the home screen to get notifications.</li>
+        </ol>
+        <p className="muted small">
+          Or open <span className="mono">{device.link.split("/#")[0]}</span> on the device and enter{" "}
+          <span className="mono">{device.code}</span>. It works once, until {when(device.expiresAt)}.
+        </p>
+        <p className="small" aria-live="polite">
+          <Pill status="waiting" label="Waiting for the device…" />
+        </p>
+        <button type="button" className="link" onClick={onDone}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---- Agent keys
+
+interface Key {
+  id: string;
+  name: string;
+  scopes: string[];
+  created_at: number;
+  last_used_at: number | null;
+  revoked_at: number | null;
+}
+const SCOPE_HELP: Record<string, string> = {
+  read: "read the plan, jobs and notifications",
+  draft: "propose drafts",
+  plan: "add, reschedule, hold and remove plan items",
+  pause: "pause publishing",
+  reschedule: "move a YouTube release date (not given by default)",
+  metrics: "upload metrics samples collected elsewhere (not given by default)",
+  approve: "approve posts",
+  resume: "resume publishing",
+};
+
+export function Keys(_: Props) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{ scopes: string[]; keys: Key[] }>("keys");
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [scopes, setScopes] = useState<string[]>(["read"]);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [made, setMade] = useState<{ key: string; name: string } | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await withFreshCheck(() => api<{ key: string; name: string }>("keys", { name, scopes }));
+      setMade(r);
+      setCreating(false);
+      setName("");
+      setScopes(["read"]);
+      reload();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Page
+      title="Keys & tokens"
+      intro="Agent keys let agents and scripts plan with Bongsu (the agent API and MCP); they can't approve or resume. Your CLI tokens act as you."
+    >
+      {made && (
+        <Card>
+          <SecretOnce title={`Key for ${made.name}`} value={made.key} onDone={() => setMade(null)} />
+        </Card>
+      )}
+      <Card
+        title="Agent keys"
+        actions={
+          !creating &&
+          !made && (
+            <button type="button" className="primary" onClick={() => setCreating(true)}>
+              Create a key
+            </button>
+          )
+        }
+      >
+        {creating && data && (
+          <form onSubmit={create} className="inset">
+            <Field label="Name" help="Who uses it: the agent or the machine.">
+              {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} required autoFocus />}
+            </Field>
+            <fieldset>
+              <legend>What it can do</legend>
+              {data.scopes.map((s) => (
+                <label key={s} className="check">
+                  <input
+                    type="checkbox"
+                    checked={scopes.includes(s)}
+                    onChange={(e) => setScopes(e.target.checked ? [...scopes, s] : scopes.filter((x) => x !== s))}
+                  />
+                  <span>
+                    <strong>{s}</strong> <span className="muted">{SCOPE_HELP[s] ?? ""}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
+            {err && (
+              <p className="error" role="alert">
+                {err}
+              </p>
+            )}
+            <div className="actions">
+              <button type="button" onClick={() => setCreating(false)}>
+                Cancel
+              </button>
+              <button className="primary" type="submit" aria-disabled={busy || !scopes.length}>
+                {busy ? "Creating…" : "Create the key"}
+              </button>
+            </div>
+          </form>
+        )}
+        {!data ? (
+          <Loading error={error} retry={reload} />
+        ) : data.keys.length === 0 ? (
+          <p className="empty">No keys yet.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Scopes</th>
+                  <th>Last used</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.keys.map((k) => (
+                  <tr key={k.id} className={k.revoked_at ? "muted" : undefined}>
+                    <td>
+                      <div>{k.name}</div>
+                      <div className="muted small">Created {when(k.created_at)}</div>
+                    </td>
+                    <td data-label="Scopes" className="small">
+                      {k.scopes.join(", ")}
+                    </td>
+                    <td data-label="Last used" className="small">
+                      {when(k.last_used_at)}
+                    </td>
+                    <td className="right">
+                      {k.revoked_at ? (
+                        <Pill status="revoked" />
+                      ) : (
+                        <button
+                          type="button"
+                          className="link danger"
+                          onClick={() =>
+                            confirm({
+                              title: `Revoke "${k.name}"?`,
+                              detail: "Whatever uses it stops working at once. This can't be undone.",
+                              verb: "Revoke",
+                              run: async () => {
+                                await withFreshCheck(() => api(`keys/${encodeURIComponent(k.id)}/revoke`, {}));
+                                toast({ ok: true, text: `Key "${k.name}" revoked.` });
+                                reload();
+                              },
+                            })
+                          }
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      <CliTokens />
+      {dialog}
+    </Page>
+  );
+}
+
+interface Token {
+  id: string;
+  name: string;
+  created_at: number;
+  last_used_at: number | null;
+  expires_at: number;
+  revoked_at: number | null;
+}
+
+/** The signed-in person's tokens for the bongsu CLI: they act as that person, with their role's rights. */
+function CliTokens() {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{ rights: string[]; days: number[]; tokens: Token[] }>("tokens");
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [days, setDays] = useState(90);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [made, setMade] = useState<{ token: string; name: string } | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const now = Date.now() / 1000;
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await withFreshCheck(() => api<{ token: string; name: string }>("tokens", { name, days }));
+      setMade(r);
+      setCreating(false);
+      setName("");
+      reload();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      {made && (
+        <Card>
+          <SecretOnce title={`CLI token for ${made.name}`} value={made.token} onDone={() => setMade(null)} />
+        </Card>
+      )}
+      <Card
+        title="Your CLI tokens"
+        actions={
+          !creating &&
+          !made && (
+            <button type="button" onClick={() => setCreating(true)}>
+              Create a token
+            </button>
+          )
+        }
+      >
+        <p className="muted">
+          For the <span className="mono">bongsu</span> command line on your computer. A token acts as you, with your
+          rights here{data?.rights.length ? `: ${data.rights.join(", ")}` : ""}. Keep it like a password; revoke it when
+          the computer goes.
+        </p>
+        {creating && data && (
+          <form onSubmit={create} className="inset">
+            <Field label="Name" help="The computer it's for.">
+              {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} required />}
+            </Field>
+            <Field label="Lasts">
+              {(p) => (
+                <select {...p} value={days} onChange={(e) => setDays(Number(e.target.value))}>
+                  {data.days.map((d) => (
+                    <option key={d} value={d}>
+                      {d} days
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+            {err && (
+              <p className="error" role="alert">
+                {err}
+              </p>
+            )}
+            <div className="actions">
+              <button type="button" onClick={() => setCreating(false)}>
+                Cancel
+              </button>
+              <button className="primary" type="submit" aria-disabled={busy}>
+                {busy ? "Creating…" : "Create the token"}
+              </button>
+            </div>
+          </form>
+        )}
+        {!data ? (
+          <Loading error={error} retry={reload} />
+        ) : data.tokens.length === 0 ? (
+          <p className="empty">No tokens yet.</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Expires</th>
+                  <th>Last used</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.tokens.map((t) => (
+                  <tr key={t.id} className={t.revoked_at || t.expires_at <= now ? "muted" : undefined}>
+                    <td>
+                      <div>{t.name}</div>
+                      <div className="muted small">Created {when(t.created_at)}</div>
+                    </td>
+                    <td data-label="Expires" className="small">
+                      {when(t.expires_at)}
+                    </td>
+                    <td data-label="Last used" className="small">
+                      {when(t.last_used_at)}
+                    </td>
+                    <td className="right">
+                      {t.revoked_at ? (
+                        <Pill status="revoked" />
+                      ) : t.expires_at <= now ? (
+                        <Pill status="disabled" label="Expired" />
+                      ) : (
+                        <button
+                          type="button"
+                          className="link danger"
+                          onClick={() =>
+                            confirm({
+                              title: `Revoke "${t.name}"?`,
+                              detail: "The CLI using it stops working at once. This can't be undone.",
+                              verb: "Revoke",
+                              run: async () => {
+                                await withFreshCheck(() => api(`tokens/${encodeURIComponent(t.id)}/revoke`, {}));
+                                toast({ ok: true, text: `Token "${t.name}" revoked.` });
+                                reload();
+                              },
+                            })
+                          }
+                        >
+                          Revoke
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      {dialog}
+    </>
+  );
+}
+
+// ---- Audit
+
+interface Entry {
+  id: number;
+  at: number;
+  actor: string;
+  action: string;
+  target: string | null;
+  detail: string | null;
+}
+
+export function Audit(_: Props) {
+  const [entries, setEntries] = useState<Entry[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [more, setMore] = useState(true);
+  const load = (before?: number) =>
+    api<{ entries: Entry[] }>(`audit${before ? `?before=${before}` : ""}`)
+      .then((r) => {
+        setEntries((old) => (before ? [...(old ?? []), ...r.entries] : r.entries));
+        setMore(r.entries.length === 50);
+        setError(null);
+      })
+      .catch((e: Error) => setError(e.message));
+  useEffect(() => {
+    load();
+  }, []);
+  return (
+    <Page title="Audit" intro="Every change to this instance: who, what, when.">
+      <Card>
+        {!entries ? (
+          <Loading error={error} retry={() => load()} />
+        ) : entries.length === 0 ? (
+          <p className="empty">Nothing yet.</p>
+        ) : (
+          <>
+            <div className="table-wrap">
+              <table className="stack">
+                <thead>
+                  <tr>
+                    <th>When</th>
+                    <th>Who</th>
+                    <th>What</th>
+                    <th>Detail</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {entries.map((e) => (
+                    <tr key={e.id}>
+                      <td data-label="When" className="small nowrap">
+                        {when(e.at)}
+                      </td>
+                      <td data-label="Who" className="small">
+                        {e.actor}
+                      </td>
+                      <td data-label="What">
+                        {e.action.replaceAll("_", " ")}
+                        {e.target && <div className="muted small mono">{e.target}</div>}
+                      </td>
+                      <td data-label="Detail" className="small mono muted">
+                        {e.detail && e.detail !== "{}" ? e.detail : ""}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {more && (
+              <div className="actions">
+                <button type="button" onClick={() => load(entries[entries.length - 1]?.id)}>
+                  Load older
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </Card>
+    </Page>
+  );
+}
+
+// ---- Get started (after sign-up)
+
+/** The hours of the day, for the digest hour pickers. */
+const HOURS = Array.from({ length: 24 }, (_, h) => h);
+
+/** The first run, step by step: each step's state comes from the data (overview's `setup`), so the page is right
+ *  whatever was done elsewhere, and there's nothing to dismiss. */
+export function GetStarted({ go }: Props) {
+  const { data, error, reload } = useLoad<Overview>("overview");
+  const settings = useLoad<{ timezone: string; digestHour: number }>("settings");
+  const toast = useToast();
+  const [tz, setTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone);
+  const [hour, setHour] = useState(8);
+  // Once chosen, the form shows the saved zone; before that, this browser's as a suggestion.
+  useEffect(() => {
+    if (data?.setup.timezone && settings.data) {
+      setTz(settings.data.timezone);
+      setHour(settings.data.digestHour);
+    }
+  }, [data?.setup.timezone, settings.data]);
+  const [err, setErr] = useState<string | null>(null);
+  const zones = Intl.supportedValuesOf?.("timeZone") ?? [];
+  const saveZone = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    try {
+      await api("settings", { timezone: tz, digestHour: hour });
+      toast({ ok: true, text: `Time zone set: ${tz}.` });
+      reload();
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  const Step = ({ n, title, done, children }: { n: number; title: string; done: boolean; children: ReactNode }) => (
+    <Card
+      title={`${n}. ${title}`}
+      actions={done ? <Pill status="ok" label="Done" /> : <Pill status="waiting" label="To do" />}
+    >
+      {children}
+    </Card>
+  );
+  return (
+    <Page
+      title="Get started"
+      intro="Four steps from here to your first approved post. Each one can also be done later from its own page."
+    >
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          <Step n={1} title="Your time zone" done={data.setup.timezone}>
+            <p className="muted">
+              Times in the dashboard, the app and the daily digest use it. Each person can pick their own later.
+            </p>
+            <form onSubmit={saveZone} className="inline-form">
+              <Field label="Time zone">
+                {(p) => (
+                  <select {...p} value={tz} onChange={(e) => setTz(e.target.value)}>
+                    {(zones.includes(tz) ? zones : [tz, ...zones]).map((z) => (
+                      <option key={z}>{z}</option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+              <Field label="Daily digest">
+                {(p) => (
+                  <select {...p} value={hour} onChange={(e) => setHour(Number(e.target.value))}>
+                    {HOURS.map((h) => (
+                      <option key={h} value={h}>
+                        {String(h).padStart(2, "0")}:00
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+              <div className="actions">
+                {err && (
+                  <span className="error" role="alert">
+                    {err}
+                  </span>
+                )}
+                <button className={data.setup.timezone ? "" : "primary"} type="submit">
+                  {data.setup.timezone ? "Save again" : "Save"}
+                </button>
+              </div>
+            </form>
+          </Step>
+          <Step n={2} title="Your OAuth apps" done={data.setup.oauthApp}>
+            <p className="muted">
+              Bongsu talks to Instagram and YouTube through apps you own: paste a Meta app for Instagram and a Google
+              app for YouTube (the page shows the exact redirect URLs to register). Connecting through Composio needs
+              neither.
+            </p>
+            <div className="actions">
+              <button type="button" className={data.setup.oauthApp ? "" : "primary"} onClick={() => go("apps")}>
+                Open OAuth apps
+              </button>
+            </div>
+          </Step>
+          <Step n={3} title="Connect an account" done={data.setup.connection}>
+            <p className="muted">An Instagram account or a YouTube channel to publish to.</p>
+            <div className="actions">
+              <button
+                type="button"
+                className={data.setup.oauthApp && !data.setup.connection ? "primary" : ""}
+                onClick={() => go("connections")}
+              >
+                Open Connections
+              </button>
+            </div>
+          </Step>
+          <Step n={4} title="Add the device you approve on" done={data.setup.device}>
+            <p className="muted">
+              Approving happens in the Bongsu app, with a passkey: add your phone (or another device) and turn on its
+              notifications.
+            </p>
+            <div className="actions">
+              <button
+                type="button"
+                className={data.setup.connection && !data.setup.device ? "primary" : ""}
+                onClick={() => go("devices")}
+              >
+                Open Devices &amp; passkeys
+              </button>
+            </div>
+          </Step>
+          <Card title="Then: dry run, and going live">
+            <p className="muted">
+              {data.dryRun
+                ? "This instance is in dry run: every step runs and notifies you, but nothing is published. Try a post end to end, then go live from Settings."
+                : "This instance is live: approved posts are published at their time."}
+            </p>
+            <div className="actions">
+              <button type="button" onClick={() => go("settings")}>
+                Open Settings
+              </button>
+              <button type="button" className="link" onClick={() => go("")}>
+                Go to the overview
+              </button>
+            </div>
+          </Card>
+        </>
+      )}
+    </Page>
+  );
+}
+
+// ---- Settings
+
+export function Settings(_: Props) {
+  const { data, error, reload } = useLoad<{ timezone: string; digestHour: number; dryRun: boolean; publicUrl: string }>(
+    "settings",
+  );
+  const [tz, setTz] = useState("");
+  const [hour, setHour] = useState(8);
+  const [err, setErr] = useState<string | null>(null);
+  const toast = useToast();
+  useEffect(() => {
+    if (data) {
+      setTz(data.timezone);
+      setHour(data.digestHour);
+    }
+  }, [data]);
+  const zones = Intl.supportedValuesOf?.("timeZone") ?? [];
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    try {
+      await api("settings", { timezone: tz, digestHour: hour });
+      toast({ ok: true, text: "Settings saved." });
+      reload();
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  return (
+    <Page title="Settings" intro="Defaults for the workspace. Times are stored in UTC; this zone is how they're shown.">
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          <Card title="Workspace">
+            <form onSubmit={save}>
+              <Field label="Time zone" help="Each person can pick their own in the Bongsu app; this is the default.">
+                {(p) => (
+                  <select {...p} value={tz} onChange={(e) => setTz(e.target.value)}>
+                    {(zones.includes(tz) ? zones : [tz, ...zones]).map((z) => (
+                      <option key={z}>{z}</option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+              <Field label="Daily digest" help="When the day's summary arrives, in the zone above.">
+                {(p) => (
+                  <select {...p} value={hour} onChange={(e) => setHour(Number(e.target.value))}>
+                    {HOURS.map((h) => (
+                      <option key={h} value={h}>
+                        {String(h).padStart(2, "0")}:00
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+              <div className="actions">
+                {err && (
+                  <span className="error" role="alert">
+                    {err}
+                  </span>
+                )}
+                <button className="primary" type="submit">
+                  Save
+                </button>
+              </div>
+            </form>
+          </Card>
+          <Card title="Instance">
+            <dl className="facts">
+              <dt>Address</dt>
+              <dd className="mono">{data.publicUrl}</dd>
+              <dt>Publishing</dt>
+              <dd>
+                {data.dryRun ? (
+                  <>
+                    <Pill status="waiting" label="Dry run" /> set <code>DRY_RUN = "0"</code> in the wrangler files and
+                    deploy to go live.
+                  </>
+                ) : (
+                  <Pill status="ok" label="Live" />
+                )}
+              </dd>
+            </dl>
+          </Card>
+        </>
+      )}
+    </Page>
+  );
+}

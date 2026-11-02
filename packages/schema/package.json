@@ -1,0 +1,28 @@
+{
+  "name": "@bongsu/schema",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": "NYT87 <nyt87@proton.me> (https://github.com/NYT87)",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "generate": "esbuild src/generate.ts --bundle --platform=node --format=esm --outfile=dist/generate.mjs --log-level=warning && node dist/generate.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.10",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.20.4",
+    "better-sqlite3": "13.0.3",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.12"
+  },
+  "dependencies": {
+    "@bongsu/core": "workspace:*"
+  }
+}

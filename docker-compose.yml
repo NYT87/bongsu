@@ -1,0 +1,72 @@
+# Bongsu with Docker (site/docs/self-hosting.md). `docker compose up -d` runs it on port 8787; passkeys and Instagram's
+# media fetch need a public HTTPS address, which the optional Caddy gives you:
+#   docker compose --profile https up -d     Caddy in front, with a certificate for $DOMAIN
+#   docker compose --profile mail up -d      Mailpit: catches the emails (MAILER=smtp), shown on http://localhost:8025
+#   docker compose --profile postgres up -d  Postgres instead of the SQLite file (DATABASE_URL in .env)
+services:
+  bongsu:
+    build:
+      context: .
+      args:
+        # branding, read at build time (site/docs/configuration.md); empty means the defaults
+        BONGSU_APP_NAME: ${BONGSU_APP_NAME:-}
+        BONGSU_THEME_COLOR: ${BONGSU_THEME_COLOR:-}
+    image: bongsu:local
+    restart: unless-stopped
+    stop_grace_period: 35s # the server waits up to 30 s for a run in progress; Docker's default would kill it at 10 s
+    env_file: .env
+    ports:
+      - "${BONGSU_PORT:-8787}:8787"
+    volumes:
+      - bongsu-data:/data # the SQLite database
+      - bongsu-media:/media # media, with MEDIA_STORE=local
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false # only with the postgres profile
+
+  caddy:
+    profiles: [https]
+    image: caddy:2.11.4-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN in .env for the https profile}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - bongsu
+
+  postgres:
+    profiles: [postgres]
+    image: postgres:17.10-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: bongsu
+      POSTGRES_USER: bongsu
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env for the postgres profile}
+    volumes:
+      - bongsu-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bongsu -d bongsu"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mailpit:
+    profiles: [mail]
+    image: axllent/mailpit:v1.31.4
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025" # its web page, on this machine only
+
+volumes:
+  bongsu-postgres:
+  bongsu-data:
+  bongsu-media:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,35 @@
+{
+  "name": "@bongsu/node",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": "NYT87 <nyt87@proton.me> (https://github.com/NYT87)",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node dist/server.mjs",
+    "migrate": "node dist/server.mjs migrate",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@bongsu/api": "workspace:*",
+    "@bongsu/core": "workspace:*",
+    "@bongsu/schema": "workspace:*",
+    "@hono/node-server": "2.1.5",
+    "better-sqlite3": "13.0.3",
+    "node-cron": "4.6.0",
+    "nodemailer": "10.1.7",
+    "postgres": "3.4.9"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.10",
+    "@electric-sql/pglite-socket": "0.2.13",
+    "@types/better-sqlite3": "9.6.0",
+    "@types/node": "22.20.4",
+    "@types/nodemailer": "8.0.2",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.12"
+  }
+}

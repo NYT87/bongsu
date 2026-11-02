@@ -1,0 +1,31 @@
+{
+  "name": "@bongsu/web",
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "NYT87 <nyt87@proton.me> (https://github.com/NYT87)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@simplewebauthn/browser": "14.0.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.1",
+    "typescript": "7.0.2",
+    "vite": "8.3.5",
+    "vitest": "4.1.12"
+  },
+  "exports": {
+    "./tokens.css": "./src/tokens.css"
+  }
+}

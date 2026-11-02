@@ -1,0 +1,55 @@
+/* Design tokens shared by the PWA and the dashboard (packages/web/DESIGN.md, packages/dashboard/DESIGN.md). Every
+   colour has a light and a dark value (The Twin Theme Rule). */
+:root {
+  --bg: #f8fafc;
+  --fg: #0f172a;
+  --muted: #64748b;
+  --card: #ffffff;
+  --line: #e2e8f0;
+  --accent: #15803d;
+  --ok: #15803d;
+  --warn: #b45309;
+  --bad: #b91c1c;
+  --on-warn: #ffffff;
+  --on-accent: #ffffff;
+  /* the same in both themes on purpose: white on the light red keeps 4.5:1; media letterbox; QR needs light modules' ground */
+  --banner-bad: #b91c1c;
+  --on-banner: #ffffff;
+  --media: #000000;
+  --qr-tile: #ffffff;
+  /* channel code: four hues kept apart from each other and from the status colours */
+  --reel: #7c3aed;
+  --post: #0891b2;
+  --main: #db2777;
+  /* chart series hues: kept apart from the channel code and the status colours, each 3:1 or more on --card */
+  --series-1: #86198f;
+  --series-2: #7c2d12;
+  --series-3: #0f766e;
+  --series-4: #6b6a0a;
+  --series-5: #334155;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f172a;
+    --fg: #e2e8f0;
+    --muted: #94a3b8;
+    --card: #1e293b;
+    --line: #334155;
+    --accent: #22c55e;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --on-warn: #0f172a;
+    --on-accent: #052e16;
+    --reel: #a78bfa;
+    --post: #22d3ee;
+    --main: #f472b6;
+    --series-1: #f0abfc;
+    --series-2: #d99a6c;
+    --series-3: #5eead4;
+    --series-4: #bef264;
+    --series-5: #cbd5e1;
+    color-scheme: dark;
+  }
+}

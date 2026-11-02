@@ -1,0 +1,5 @@
+# HTTPS in front of Bongsu (docker-compose.yml, profile "https"): Caddy gets and renews the certificate for $DOMAIN.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy bongsu:8787
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@bongsu/core",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": "NYT87 <nyt87@proton.me> (https://github.com/NYT87)",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@block65/webcrypto-web-push": "2.0.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.10",
+    "@types/node": "22.20.4",
+    "typescript": "7.0.2",
+    "vitest": "4.1.12"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@bongsu/cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": "NYT87 <nyt87@proton.me> (https://github.com/NYT87)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy && wrangler deploy -c wrangler.cron.toml",
+    "types": "wrangler types --include-env=false",
+    "typecheck": "wrangler types --include-env=false >/dev/null && tsc --noEmit",
+    "test": "vitest run",
+    "db:migrate:local": "wrangler d1 migrations apply bongsu --local",
+    "db:migrate:remote": "wrangler d1 migrations apply bongsu --remote"
+  },
+  "dependencies": {
+    "@bongsu/api": "workspace:*",
+    "@bongsu/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@cloudflare/workers-types": "5.20261003.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.12",
+    "wrangler": "4.147.0"
+  }
+}

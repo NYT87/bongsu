@@ -1,0 +1,99 @@
+{
+  "about": "A synthetic week for the scenario test (scenario.test.ts): every kind of post, both Instagram providers, a Shorts comment, and the ways a post is held back. Made-up accounts, texts and ids only.",
+  "timezone": "Asia/Seoul",
+  "items": [
+    {
+      "name": "short1_monday",
+      "account": "demo_travel",
+      "format": "video",
+      "date": "2026-10-19",
+      "time": "18:00",
+      "caption": "A ferry at dusk.\n\nWhere would you go next?\n\n#travel",
+      "comment": "Filmed on the morning boat.",
+      "media": [{ "id": "media_monday_reel_0001", "mime": "video/mp4" }],
+      "approve": true,
+      "expect": { "state": "done", "posted": true, "calls": "composio" }
+    },
+    {
+      "name": "carousel1_monday",
+      "account": "demo_cycling",
+      "date": "2026-10-19",
+      "time": "19:00",
+      "caption": "Three climbs, one day.\n\nWhich one would you ride?",
+      "alt": "A road climbing a hill\nA bike against a wall",
+      "media": [
+        { "id": "media_monday_img_0001", "mime": "image/jpeg" },
+        { "id": "media_monday_img_0002", "mime": "image/jpeg" }
+      ],
+      "approve": true,
+      "expect": { "state": "done", "posted": true, "calls": "graph", "jobKind": "carousel" }
+    },
+    {
+      "name": "story1_tuesday",
+      "account": "demo_cycling",
+      "format": "story",
+      "date": "2026-10-20",
+      "time": "09:00",
+      "media": [{ "id": "media_tuesday_story_01", "mime": "image/jpeg" }],
+      "approve": true,
+      "expect": { "state": "done", "posted": true, "calls": "graph", "jobKind": "story" }
+    },
+    {
+      "name": "short2_tuesday",
+      "account": "demo_travel",
+      "format": "video",
+      "date": "2026-10-20",
+      "time": "18:00",
+      "caption": "Not approved yet.",
+      "media": [{ "id": "media_tuesday_reel_0001", "mime": "video/mp4" }],
+      "approve": false,
+      "expect": { "state": "refused", "posted": false, "error": "not approved" }
+    },
+    {
+      "name": "short3_wednesday",
+      "account": "demo_cycling",
+      "format": "video",
+      "date": "2026-10-21",
+      "time": "18:00",
+      "caption": "The approved caption.",
+      "media": [{ "id": "media_wednesday_reel_01", "mime": "video/mp4" }],
+      "approve": true,
+      "editAfterApproval": { "caption": "Changed after approval." },
+      "expect": { "state": "refused", "posted": false, "error": "caption changed" }
+    },
+    {
+      "name": "short4_thursday",
+      "account": "demo_travel",
+      "format": "video",
+      "date": "2026-10-22",
+      "time": "18:00",
+      "caption": "On hold.",
+      "media": [{ "id": "media_thursday_reel_001", "mime": "video/mp4" }],
+      "approve": true,
+      "hold": true,
+      "expect": { "state": null, "posted": false }
+    },
+    {
+      "name": "photo1_friday",
+      "account": "demo_cycling",
+      "date": "2026-10-23",
+      "time": "12:00",
+      "caption": "Lunch stop.",
+      "alt": "A bowl of noodles",
+      "options": { "location": "123456" },
+      "media": [{ "id": "media_friday_img_00001", "mime": "image/jpeg" }],
+      "approve": true,
+      "expect": { "state": "done", "posted": true, "calls": "graph", "jobKind": "image" }
+    }
+  ],
+  "shorts": [
+    {
+      "video": "vidSCENARIO1",
+      "channel": "main",
+      "text": "Full ride on the channel.",
+      "privacy": "public",
+      "expect": "commented"
+    },
+    { "video": "vidSCENARIO2", "channel": "main", "text": "Not public yet.", "privacy": "private", "expect": "waiting" }
+  ]
+}

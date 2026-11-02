@@ -1,0 +1,47 @@
+{
+  "name": "bongsu",
+  "version": "0.1.0",
+  "description": "Script a self-hosted Bongsu publishing scheduler: queue, texts, approvals, stats, export and an MCP bridge",
+  "license": "MIT",
+  "author": "NYT87 <nyt87@proton.me> (https://github.com/NYT87)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NYT87/bongsu.git",
+    "directory": "packages/cli"
+  },
+  "homepage": "https://github.com/NYT87/bongsu#readme",
+  "keywords": [
+    "bongsu",
+    "instagram",
+    "youtube",
+    "scheduler",
+    "cli",
+    "mcp"
+  ],
+  "type": "module",
+  "bin": {
+    "bongsu": "dist/cli.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@bongsu/schema": "workspace:*",
+    "@types/node": "22.20.4",
+    "esbuild": "0.28.1",
+    "typescript": "7.0.2",
+    "vitest": "4.1.12"
+  }
+}

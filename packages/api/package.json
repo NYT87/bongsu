@@ -1,0 +1,22 @@
+{
+  "name": "@bongsu/api",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "author": "NYT87 <nyt87@proton.me> (https://github.com/NYT87)",
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@bongsu/core": "workspace:*",
+    "@simplewebauthn/server": "14.0.3",
+    "hono": "4.13.12"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
+}

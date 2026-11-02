@@ -1,0 +1,17 @@
+# gitleaks (https://github.com/gitleaks/gitleaks): the default rules, minus two test fixtures in the fake world that
+# look like secrets but aren't. Matched on their content, not on commit ids, so the allowlist survives a rewritten
+# history.
+title = "Bongsu"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Test fixtures: a made-up ENCRYPTION_KEY and a PEM wrapper around a key generated at test time"
+condition = "AND"
+regexTarget = "match"
+paths = ['''(^|/)test/world\.ts$''']
+regexes = [
+  '''test-encryption-key-0123456789''',
+  '''-----BEGIN PRIVATE KEY-----\\n\$\{btoa\(''',
+]

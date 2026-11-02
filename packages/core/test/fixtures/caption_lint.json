@@ -1,0 +1,686 @@
+[
+  {
+    "file": "edge",
+    "text": "#tag first line",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "15 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "FAIL",
+        "detail": "opens on a hashtag/mention — the one spot worth a sentence"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "WARN",
+        "detail": "no number or name before the fold (check by eye for Korean, which has no capitals)"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "1 tag(s): #tag"
+      },
+      {
+        "check": "TAG PLACEMENT",
+        "status": "WARN",
+        "detail": "a hashtag sits before the fold, spending feed space on a label"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "WARN",
+        "detail": "no call to action"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "edge",
+    "text": "",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "0 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "FAIL",
+        "detail": "opens on a blank line"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "WARN",
+        "detail": "no number or name before the fold (check by eye for Korean, which has no capitals)"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "WARN",
+        "detail": "no call to action"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "edge",
+    "text": "Hello​ world with zero width",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "28 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "28 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "WARN",
+        "detail": "no number or name before the fold (check by eye for Korean, which has no capitals)"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "WARN",
+        "detail": "no call to action"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      },
+      {
+        "check": "INVISIBLE",
+        "status": "FAIL",
+        "detail": "1 zero-width/format character(s): U+200B — strip them"
+      }
+    ]
+  },
+  {
+    "file": "edge",
+    "text": "One two #a #b #c #d #e #f",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "25 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "25 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "WARN",
+        "detail": "no number or name before the fold (check by eye for Korean, which has no capitals)"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "FAIL",
+        "detail": "6 tags, over Instagram's cap of 5"
+      },
+      {
+        "check": "TAG PLACEMENT",
+        "status": "WARN",
+        "detail": "a hashtag sits before the fold, spending feed space on a label"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "WARN",
+        "detail": "no call to action"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "edge",
+    "text": "Look at www.example.com/x and comment below! Which one?",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "55 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "55 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "1 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "WARN",
+        "detail": "1 link(s) — captions aren't clickable; use the bio"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "WARN",
+        "detail": "2 asks (comment, question)"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic1",
+    "text": "A 30 km loop around the lake before sunrise 🌅\n\n🇪🇸 Una vuelta de 30 km al lago antes del amanecer.\n\nWould you ride it?\n\n#cycling #lakeloop #sunrise #bikeride #morningride\n",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "169 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "45 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "5 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "5 tag(s): #cycling #lakeloop #sunrise #bikeride #morningride"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "PASS",
+        "detail": "call to action: question"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "1 emoji, 0.6/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic2",
+    "text": "Morning run along the river, 10 km easy pace\n\nWhere do you run?\n\n#running #runner #run #fitness #love\n",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "101 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "44 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "2 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "WARN",
+        "detail": "5 tags, generic: #love"
+      },
+      {
+        "check": "TAG PLACEMENT",
+        "status": "WARN",
+        "detail": "a hashtag sits before the fold, spending feed space on a label"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "PASS",
+        "detail": "call to action: question"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic3",
+    "text": "새벽 공원 달리기 10km 🏃\n\n🇬🇧 A 10 km dawn run in the park.\n\n어디서 달리세요?\n\n#러닝 #달리기 #morningrun\n",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "83 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "16 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "4 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "3 tag(s): #러닝 #달리기 #morningrun"
+      },
+      {
+        "check": "TAG PLACEMENT",
+        "status": "WARN",
+        "detail": "a hashtag sits before the fold, spending feed space on a label"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "PASS",
+        "detail": "call to action: question"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "1 emoji, 1.2/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic4",
+    "text": "This first line is deliberately very long so that it goes past the fold of the caption preview on Instagram and gets cut mid thought\n\nWhat do you think?",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "152 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "WARN",
+        "detail": "132 chars, cut at 125 mid-thought"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "1 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "PASS",
+        "detail": "call to action: question"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic5",
+    "text": "Street food in Lisbon 🍜🍜🍜🔥🔥🔥😋😋\n\nTag a friend! Save this! Which one would you try?\n\n#food",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "88 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "30 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "3 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "1 tag(s): #food"
+      },
+      {
+        "check": "TAG PLACEMENT",
+        "status": "WARN",
+        "detail": "a hashtag sits before the fold, spending feed space on a label"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "WARN",
+        "detail": "2 asks (save, question)"
+      },
+      {
+        "check": "EMOJI",
+        "status": "WARN",
+        "detail": "8 emoji, 9.1/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic6",
+    "text": "Coffee stop with @friend_one @friend_two @friend_three @friend_four @friend_five @friend_six\n\nSee you there?",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "108 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "92 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "WARN",
+        "detail": "no number or name before the fold (check by eye for Korean, which has no capitals)"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "6 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "PASS",
+        "detail": "call to action: question"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic7",
+    "text": "Ferry ride to the island, 2 hours of sea\n\nLink in bio: https://example.com/full-video\n\n#ferry #island",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "101 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "40 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "1 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "2 tag(s): #ferry #island"
+      },
+      {
+        "check": "TAG PLACEMENT",
+        "status": "WARN",
+        "detail": "a hashtag sits before the fold, spending feed space on a label"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "WARN",
+        "detail": "1 link(s) — captions aren't clickable; use the bio"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "PASS",
+        "detail": "call to action: link in bio"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic8",
+    "text": "Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. Long story. \n\nThoughts?",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "FAIL",
+        "detail": "2411 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "WARN",
+        "detail": "2399 chars, cut at 125 mid-thought"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "10 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "PASS",
+        "detail": "call to action: question"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "0 emoji, 0.0/100 chars"
+      }
+    ]
+  },
+  {
+    "file": "synthetic9",
+    "text": "el mejor café de la ciudad ☕\n\n¿Cuál es el tuyo?\n\n#café #cafe",
+    "checks": [
+      {
+        "check": "LENGTH",
+        "status": "PASS",
+        "detail": "60 / 2200 characters"
+      },
+      {
+        "check": "FIRST LINE",
+        "status": "PASS",
+        "detail": "28 chars, lands whole"
+      },
+      {
+        "check": "CONCRETE HOOK",
+        "status": "PASS",
+        "detail": "1 number(s)/name(s) before the fold"
+      },
+      {
+        "check": "HASHTAGS",
+        "status": "PASS",
+        "detail": "2 tag(s): #café #cafe"
+      },
+      {
+        "check": "TAG PLACEMENT",
+        "status": "WARN",
+        "detail": "a hashtag sits before the fold, spending feed space on a label"
+      },
+      {
+        "check": "MENTIONS",
+        "status": "PASS",
+        "detail": "0 @mention(s)"
+      },
+      {
+        "check": "LINKS",
+        "status": "PASS",
+        "detail": "none"
+      },
+      {
+        "check": "ONE ASK",
+        "status": "PASS",
+        "detail": "call to action: question"
+      },
+      {
+        "check": "EMOJI",
+        "status": "PASS",
+        "detail": "1 emoji, 1.7/100 chars"
+      }
+    ]
+  }
+]

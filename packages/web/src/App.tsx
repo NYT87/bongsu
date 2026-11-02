@@ -1,0 +1,4269 @@
+// The owner's app: see what's scheduled, approve with a passkey, get push notifications.
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  api,
+  type ChannelStats,
+  HttpError,
+  type Item,
+  type MetricPoint,
+  type Metrics,
+  type QueueItem,
+  type Results,
+} from "./api";
+import { type ChartSeries, LineChart } from "./Chart";
+import { dateLocale, type Key, setLocale, t } from "./i18n";
+
+type Me = {
+  signedIn: boolean;
+  /** The workspace's locale: the catalogue the app reads its text from. */
+  locale: string;
+  setupNeeded: boolean;
+  vapidPublicKey: string;
+  dryRun: boolean;
+  /** The zone the app shows and takes times in: the user's own, else the workspace's. */
+  timezone?: string;
+  workspaceTimezone?: string;
+  /** The workspace's active accounts: none yet means the app points at the dashboard's setup. */
+  accounts?: number;
+  /** What the signed-in role may do (the server's ROLE_SCOPES): an action is shown only to someone who can take it. */
+  scopes?: string[];
+};
+type Status = {
+  dry_run: boolean;
+  paused: boolean;
+  today: string;
+  timezone: string;
+  jobs_last_7_days: { state: string; mode: string; n: number }[];
+};
+type Draft = {
+  id: string;
+  kind: string;
+  account: string;
+  source: string;
+  created_by: string;
+  created_at: string;
+  payload: Record<string, string> & { media?: string[] };
+  previews?: { name: string; mime: string; url: string }[];
+};
+
+// Each route change opens the new page at the top; going back/forward to a history entry the app made restores
+// where that page was scrolled (entries are tagged in history.state, their scrollY kept here).
+const scrolls = new Map<number, number>();
+let entry = 0;
+function tagEntry(): number {
+  const k = (history.state as { k?: number } | null)?.k;
+  if (k !== undefined) return k;
+  const n = Date.now() + Math.random();
+  history.replaceState({ ...(history.state as object | null), k: n }, "");
+  return n;
+}
+
+function useHash(): string {
+  const [h, set] = useState(location.hash || "#/");
+  useEffect(() => {
+    history.scrollRestoration = "manual";
+    entry = tagEntry();
+    const f = () => {
+      scrolls.set(entry, scrollY);
+      entry = tagEntry();
+      set(location.hash || "#/");
+    };
+    addEventListener("hashchange", f);
+    return () => removeEventListener("hashchange", f);
+  }, []);
+  useLayoutEffect(() => {
+    scrollTo({ top: scrolls.get(entry) ?? 0, behavior: "instant" });
+  }, [h]);
+  return h;
+}
+
+// A day's cache of what the app last loaded (localStorage, this device only): a page opens with today's cached
+// data at once and is refreshed from the server right after. Entries from other days are dropped; signing out
+// clears it. Storage can be missing or full (private mode): then the app just waits for the network.
+// Each entry keeps the time it was fetched, so a page can say how old it is when the refresh fails.
+const CACHE = "bongsu-cache:";
+const cacheKey = (path: string) => `${CACHE}${zoneShift(0)}:${path}`;
+type Cached<T> = { at: number; data: T };
+function cacheGet<T>(path: string): Cached<T> | null {
+  try {
+    const v = localStorage.getItem(cacheKey(path));
+    if (!v) return null;
+    const o = JSON.parse(v) as Cached<T> | T;
+    return o && typeof o === "object" && "at" in o && "data" in o ? (o as Cached<T>) : { at: 0, data: o as T };
+  } catch {
+    return null;
+  }
+}
+function cachePut(path: string, data: unknown) {
+  try {
+    localStorage.setItem(cacheKey(path), JSON.stringify({ at: Date.now(), data }));
+  } catch {
+    /* full or blocked: skip */
+  }
+}
+export function cachePrune(all = false) {
+  try {
+    const today = `${CACHE}${zoneShift(0)}:`;
+    for (const k of Object.keys(localStorage))
+      if (k.startsWith(CACHE) && (all || !k.startsWith(today))) localStorage.removeItem(k);
+  } catch {
+    /* nothing to prune */
+  }
+}
+
+/** An error as one plain sentence: what happened and what to do. */
+function friendly(e: Error): string {
+  if (!(e instanceof HttpError)) return "Couldn't reach the scheduler: check the connection.";
+  if (e.status === 401) return "You're signed out: reopen the app and sign in.";
+  if (e.status >= 500) return "The scheduler had a problem. Try again in a minute.";
+  return cap(e.message.replace(/\.$/, "")) + ".";
+}
+
+/** Loads `path`, showing today's cached copy first. `stale` is set when the refresh failed and the page is showing
+ *  that cached copy: say so (with its time) instead of passing old data off as live. */
+function useLoad<T>(path: string | null, deps: unknown[] = []) {
+  const [data, setData] = useState<T | null>(() => (path ? (cacheGet<T>(path)?.data ?? null) : null));
+  const [error, setError] = useState<string | null>(null);
+  const [at, setAt] = useState<number | null>(null);
+  const [stale, setStale] = useState<string | null>(null);
+  const [fresh, setFresh] = useState(false); // true once this page has the server's current answer
+  const reload = useCallback(() => {
+    if (!path) return;
+    setError(null);
+    setFresh(false);
+    const hit = cacheGet<T>(path);
+    if (hit) {
+      setData(hit.data);
+      setAt(hit.at || null);
+    }
+    api<T>(path)
+      .then((d) => {
+        setData(d);
+        cachePut(path, d);
+        setAt(Date.now());
+        setStale(null);
+        setFresh(true);
+      })
+      .catch((e: Error) => {
+        if (hit) setStale(friendly(e));
+        else setError(friendly(e));
+      });
+  }, [path]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(reload, [reload, ...deps]);
+  return { data, error, reload, at, stale, fresh };
+}
+
+// ---------------------------------------------------------------- formats
+
+// Times are shown and entered in the user's time zone (from /app-api/me: their own, else the workspace's), not the
+// device's; the server stores UTC.
+let ZONE = "UTC";
+const setZone = (tz: string | undefined) => {
+  if (tz) ZONE = tz;
+};
+const zoneParts = (ms: number) => {
+  const o: Record<string, string> = {};
+  const f = new Intl.DateTimeFormat("en-CA", {
+    timeZone: ZONE,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  for (const p of f.formatToParts(new Date(ms))) o[p.type] = p.value;
+  return o;
+};
+const zoneShift = (days: number) => {
+  const p = zoneParts(Date.now());
+  return new Date(Date.UTC(+p.year, +p.month - 1, +p.day + days)).toISOString().slice(0, 10);
+};
+const zoneToday = () => zoneShift(0);
+const zoneClock = (ms: number) => {
+  const p = zoneParts(ms);
+  return `${p.hour}:${p.minute}`;
+};
+/** The zone's short label, e.g. "GMT+9" or "CET". */
+const zoneLabel = () =>
+  new Intl.DateTimeFormat("en-US", { timeZone: ZONE, timeZoneName: "short" })
+    .formatToParts(new Date())
+    .find((p) => p.type === "timeZoneName")?.value ?? ZONE;
+const shiftMonth = (m: string, by: number) => {
+  const d = new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)) - 1 + by, 1));
+  return d.toISOString().slice(0, 7);
+};
+const DUE = /(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}))?/;
+const dueDate = (due?: string | null) => DUE.exec(due ?? "")?.[1] ?? null;
+const dueTime = (due?: string | null) => DUE.exec(due ?? "")?.[2] ?? null;
+
+/** "Today", "Tomorrow", or "Wed 21 Oct" for a date in the workspace's zone. */
+function dayName(date: string): string {
+  if (date === zoneToday()) return "Today";
+  if (date === zoneShift(1)) return "Tomorrow";
+  if (date === zoneShift(-1)) return "Yesterday";
+  return new Date(`${date}T00:00:00Z`).toLocaleDateString(dateLocale(), {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
+}
+/** A due string ("YYYY-MM-DD HH:MM[ zone]") as "Tomorrow · 18:00 GMT+9". */
+function when(due?: string | null): string {
+  const d = dueDate(due);
+  if (!d) return "No date set";
+  const t = dueTime(due);
+  return t ? `${dayName(d)} · ${t} ${zoneLabel()}` : dayName(d);
+}
+/** An ISO UTC timestamp ("2026-10-21T02:56:18Z") shown in the workspace's zone. */
+function utcToZone(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso;
+  const p = zoneParts(t);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${zoneLabel()}`;
+}
+const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+/** "short5_lisbon_food" → "Lisbon food"; "carousel2_food" → "Food". Anything else is returned as it is. */
+function nice(name: string): string {
+  const last = name.includes(" ") ? name : (name.split("/").pop() ?? name); // titles with spaces are already readable
+  const m = /^(?:(?:short|reel|carousel|post|photo|video)\d*|\d+)_(.+)$/.exec(last);
+  return m
+    ? cap(m[1].replace(/_/g, " "))
+    : last.includes("_") && !last.includes(" ")
+      ? cap(last.replace(/_/g, " "))
+      : last;
+}
+/** "vlogs/CONTENT/20260823_LISBON" → "Lisbon (Aug)"; "20261008_PORTO_RIDE" → "Porto ride (Oct)": the month tells two
+ *  projects with the same name apart. */
+function project(folder: string): string {
+  const last = folder.split("/").pop() ?? folder;
+  const m = /^(\d{4})(\d{2})\d{2}(?:-\d{1,2})?[_ ](.+)$/.exec(last);
+  const name = cap((m ? m[3] : last).replace(/_/g, " ").toLowerCase());
+  return m
+    ? `${name} (${new Date(Date.UTC(+m[1], +m[2] - 1, 1)).toLocaleDateString(dateLocale(), { month: "short", timeZone: "UTC" })})`
+    : name;
+}
+/** An item key ("reel:20260823_LISBON/short5_lisbon_food") as a readable title. */
+const keyTitle = (key: string) =>
+  nice(
+    key
+      .replace(/^(reel|post):/, "")
+      .split("/")
+      .pop() ?? key,
+  );
+/** Notification text without links, and with item keys made readable. */
+const noteText = (s: string) =>
+  s
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\b(reel|post):[\w./-]+/g, (k) => `"${keyTitle(k)}"`)
+    .replace(/\s{2,}/g, " ")
+    .trim();
+
+// ---------------------------------------------------------------- channel code (DESIGN.md: The Channel Code Rule)
+
+// Names come from the server's platform list (/app-api/platforms): the app names no network itself. A channel is a
+// platform and a format: "Instagram Reel", "YouTube Short", "FakeNet Note"…
+type PlatformInfo = {
+  id: string;
+  name: string;
+  accountNoun: string;
+  formats: { format: string; name: string; plural: string }[];
+  post: { name: string; plural: string };
+  features: Record<string, boolean>;
+};
+let PLATFORMS = new Map<string, PlatformInfo>();
+const setPlatforms = (list: PlatformInfo[]) => {
+  PLATFORMS = new Map(list.map((p) => [p.id, p]));
+};
+const platformName = (id: string) => PLATFORMS.get(id)?.name ?? cap(id);
+const feature = (id: string, f: string) => !!PLATFORMS.get(id)?.features[f];
+
+type Channel = { platform: string; format: string | null; label?: string };
+/** What the platform calls a post of this format ("Reel"), or the server's own label for it. */
+const channelShort = (c: Channel) =>
+  c.label ??
+  PLATFORMS.get(c.platform)?.formats.find((f) => f.format === c.format)?.name ??
+  PLATFORMS.get(c.platform)?.post.name ??
+  "Post";
+const channelLabel = (c: Channel) => `${platformName(c.platform)} ${channelShort(c)}`;
+/** The dot's look: one colour per platform, a circle for videos and a square for the rest (styles.css). */
+const dotClass = (c: Channel) => `dot p-${c.platform}${c.format === "video" ? " video" : ""}`;
+const channelKey = (c: Channel) => `${c.platform}:${c.format === "video" ? "video" : "post"}`;
+const itemChannel = (i: { platform?: string; format?: string | null; label?: string }): Channel => ({
+  platform: i.platform ?? "instagram",
+  format: i.format ?? null,
+  label: i.label,
+});
+const Dot = ({ c }: { c: Channel }) => <i className={dotClass(c)} aria-hidden="true" />;
+/** The platform's own icon where the app has one, else a generic "open". */
+const platformIcon = (id: string) =>
+  id === "youtube" ? ICON.youtube : id === "instagram" ? ICON.instagram : ICON.external;
+
+/** What an item needs from the owner, or null when it's set. */
+function needs(i: QueueItem): "approve" | "re-approve" | null {
+  if (i.hold) return null;
+  if (!i.approved) return "approve";
+  return i.approval_matches_schedule ? null : "re-approve";
+}
+
+// ---------------------------------------------------------------- shared state: status, what needs you, drafts
+
+type Shared = {
+  status: ReturnType<typeof useLoad<Status>>;
+  attention: QueueItem[];
+  overdue: QueueItem[];
+  held: QueueItem[];
+  queue: ReturnType<typeof useLoad<{ items: QueueItem[] }>>;
+  drafts: ReturnType<typeof useLoad<{ accounts: string[]; drafts: Draft[] }>>;
+  unseen: ReturnType<typeof useLoad<{ n: number }>>;
+  refresh: () => void;
+};
+const SharedCtx = createContext<Shared | null>(null);
+const useShared = () => useContext(SharedCtx)!;
+const MeCtx = createContext<Me | null>(null);
+/** True once /app-api/me says the workspace has no active account: every list shows the setup note instead. */
+const useNoAccounts = () => useContext(MeCtx)?.accounts === 0;
+/** Whether the signed-in role has a scope, e.g. "reschedule" for moving a YouTube release date. */
+const useCan = (scope: string) => useContext(MeCtx)?.scopes?.includes(scope) ?? false;
+
+/** What an empty list says once accounts exist: where posts come from. */
+const EMPTY = {
+  // getters: read at render time, after the locale is known
+  get scheduled() {
+    return (
+      <>
+        {t("empty.scheduledBefore")} <a href="#/drafts">{t("empty.scheduledLink")}</a>.
+      </>
+    );
+  },
+  get drafts() {
+    return t("empty.drafts");
+  },
+};
+
+/** No account connected yet: the one note every page shows, pointing at the dashboard's setup and the guides. */
+function SetupNote() {
+  return (
+    <div className="notice" role="status">
+      <p>
+        <strong>{t("setup.none")}</strong> {t("setup.connect")}
+      </p>
+      <p className="small">
+        <a href="/dashboard/start">{t("setup.start")}</a> · {t("setup.guides")}{" "}
+        <a href="/dashboard/docs/instagram-graph" target="_blank" rel="noopener">
+          Instagram
+        </a>
+        ,{" "}
+        <a href="/dashboard/docs/youtube" target="_blank" rel="noopener">
+          YouTube
+        </a>
+      </p>
+    </div>
+  );
+}
+
+function useSharedState(): Shared {
+  const status = useLoad<Status>("status");
+  const queue = useLoad<{ items: QueueItem[] }>("queue?days=7");
+  const drafts = useLoad<{ accounts: string[]; drafts: Draft[] }>("drafts");
+  const items = queue.data?.items ?? [];
+  const today = zoneToday();
+  const now = `${today} ${zoneClock(Date.now())}`;
+  // Overdue: its time has passed (today included) and it hasn't gone out; held items are listed on their own.
+  const overdue = items.filter((i) => {
+    const d = dueDate(i.due);
+    return !i.hold && !!d && `${d} ${dueTime(i.due) ?? "23:59"}` < now;
+  });
+  const attention = items.filter((i) => needs(i) && !overdue.includes(i));
+  const held = items.filter((i) => i.hold);
+  const unseen = useLoad<{ n: number }>("comments/unseen");
+  const refresh = () => {
+    status.reload();
+    queue.reload();
+    drafts.reload();
+    unseen.reload();
+  };
+  return { status, attention, overdue, held, queue, drafts, unseen, refresh };
+}
+
+// Icons for the header and the bottom bar (inline, stroke follows the text colour).
+const svg = (d: ReactNode, size = 22) => (
+  <svg
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    aria-hidden="true"
+  >
+    {d}
+  </svg>
+);
+const ICON = {
+  home: svg(
+    <>
+      <path d="M3 10.5 12 3l9 7.5" />
+      <path d="M5 9.5V21h14V9.5" />
+      <path d="M10 21v-6h4v6" />
+    </>,
+  ),
+  stats: svg(
+    <>
+      <path d="M4 20V10M10 20V4M16 20v-8M22 20H2" />
+    </>,
+  ),
+  queue: svg(
+    <>
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <circle cx="3.5" cy="6" r="1" />
+      <circle cx="3.5" cy="12" r="1" />
+      <circle cx="3.5" cy="18" r="1" />
+    </>,
+  ),
+  drafts: svg(
+    <>
+      <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+      <path d="M14 3v6h6M9 14h6M9 18h4" />
+    </>,
+  ),
+  calendar: svg(
+    <>
+      <rect x="3" y="4" width="18" height="18" rx="2" />
+      <path d="M16 2v4M8 2v4M3 10h18" />
+    </>,
+  ),
+  settings: svg(
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </>,
+  ),
+  check: svg(<path d="M20 6 9 17l-5-5" />, 20),
+  back: svg(<path d="M15 18l-6-6 6-6" />, 20),
+  pause: svg(
+    <>
+      <rect x="6" y="5" width="4" height="14" rx="1" />
+      <rect x="14" y="5" width="4" height="14" rx="1" />
+    </>,
+    18,
+  ),
+  plus: svg(<path d="M12 5v14M5 12h14" />, 18),
+  comment: svg(<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z" />, 22),
+  info: svg(
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 11v5" />
+      <circle cx="12" cy="7.8" r="1.1" fill="currentColor" stroke="none" />
+    </>,
+    22,
+  ),
+  pencil: svg(
+    <>
+      <path d="M4 20h4L19 9l-4-4L4 16z" />
+      <path d="M14 6l4 4" />
+    </>,
+    20,
+  ),
+  chevL: svg(<path d="M15 18l-6-6 6-6" />, 22),
+  external: svg(
+    <>
+      <path d="M14 4h6v6" />
+      <path d="M20 4l-9 9" />
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+    </>,
+    20,
+  ),
+  // the platforms, drawn as outlines in the same stroke (not the brands' filled logos)
+  instagram: svg(
+    <>
+      <rect x="3" y="3" width="18" height="18" rx="5" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="17.3" cy="6.7" r="1.2" fill="currentColor" stroke="none" />
+    </>,
+    20,
+  ),
+  youtube: svg(
+    <>
+      <rect x="2.5" y="5.5" width="19" height="13" rx="4" />
+      <path d="M10.2 9.3v5.4l4.6-2.7z" fill="currentColor" />
+    </>,
+    20,
+  ),
+  chevR: svg(<path d="M9 18l6-6-6-6" />, 22),
+};
+
+/** The app's mark at 32 px: the small mark drawn for that size (public/favicon.svg, from mark-small.svg). */
+const LOGO = <img src="/favicon.svg" width={32} height={32} alt="" />;
+
+/** The instance's name (build input BONGSU_APP_NAME, site/docs/configuration.md). */
+const BRAND = __APP_BRAND__;
+
+const TABS = [
+  ["#/", "tabs.today", ICON.home],
+  ["#/calendar", "tabs.calendar", ICON.calendar],
+  ["#/queue", "tabs.queue", ICON.queue],
+  ["#/drafts", "tabs.drafts", ICON.drafts],
+  ["#/stats", "tabs.stats", ICON.stats],
+] as const satisfies readonly (readonly [string, Key, ReactNode])[];
+
+export function App() {
+  const [me, setMe] = useState<Me | null>(null);
+  const hash = useHash();
+  const refreshMe = useCallback(() => {
+    Promise.all([api<Me>("me"), api<{ platforms: PlatformInfo[] }>("platforms").catch(() => ({ platforms: [] }))])
+      .then(([m, p]) => {
+        setZone(m.timezone);
+        setLocale(m.locale);
+        setPlatforms(p.platforms);
+        setMe(m);
+      })
+      .catch(() => setMe(null));
+  }, []);
+  useEffect(refreshMe, [refreshMe]);
+  useEffect(() => cachePrune(), []);
+  if (!me)
+    return (
+      <main className="center">
+        <p className="muted">{t("common.loading")}</p>
+      </main>
+    );
+  if (!me.signedIn) return <SignIn me={me} onDone={refreshMe} />;
+  return <SignedIn me={me} hash={hash} onSignOut={refreshMe} />;
+}
+
+/** Where the item page's back link goes: the last list page the owner was on (Today when unknown). */
+let lastList = "#/";
+
+function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: () => void }) {
+  const shared = useSharedState();
+  const route = hash.replace(/^#/, "");
+  // Needs you and the tab badges come from their own requests: reload them with each page, and when the app comes
+  // back to the foreground, so they never contradict the page under them (e.g. after approving on another device).
+  const sharedRefresh = useRef(shared.refresh);
+  sharedRefresh.current = shared.refresh;
+  const firstRoute = useRef(true);
+  useEffect(() => {
+    if (firstRoute.current) {
+      firstRoute.current = false;
+      return;
+    }
+    sharedRefresh.current();
+  }, [route]);
+  useEffect(() => {
+    const back = () => {
+      if (document.visibilityState === "visible") sharedRefresh.current();
+    };
+    document.addEventListener("visibilitychange", back);
+    return () => document.removeEventListener("visibilitychange", back);
+  }, []);
+  const [named, setNamed] = useState<{ key: string; title: string | null } | null>(null); // the open item's display name
+  const onItem = route.startsWith("/item/");
+  const onVideo = route.startsWith("/video/");
+  if (!onItem && !onVideo && !route.startsWith("/setup") && !route.startsWith("/stats/")) lastList = hash || "#/";
+  // #/item/<key>, or with the view it opens: #/item/<key>/results, #/item/<key>/post
+  const itemRoute = onItem ? /^\/item\/(.+?)(?:\/(results|post))?$/.exec(route) : null;
+  const itemKey = itemRoute ? decodeURIComponent(itemRoute[1]) : "";
+  const itemView = itemRoute?.[2] as ItemView | undefined;
+  const title = onItem
+    ? named?.key === itemKey && named.title
+      ? named.title
+      : keyTitle(itemKey)
+    : onVideo
+      ? t("title.video")
+      : route.startsWith("/calendar")
+        ? t("tabs.calendar")
+        : route.startsWith("/queue")
+          ? t("tabs.queue")
+          : route.startsWith("/drafts")
+            ? t("tabs.drafts")
+            : route.startsWith("/stats/report/")
+              ? t("title.review")
+              : route.startsWith("/stats/")
+                ? t("title.channel")
+                : route.startsWith("/stats")
+                  ? t("tabs.stats")
+                  : route.startsWith("/settings")
+                    ? t("header.settings")
+                    : route.startsWith("/comments")
+                      ? t("header.comments")
+                      : t("tabs.today");
+  const page = onItem ? (
+    <ItemPage keyId={itemKey} view={itemView} onTitle={(t) => setNamed({ key: itemKey, title: t })} />
+  ) : onVideo ? (
+    <VideoPage route={route} />
+  ) : route.startsWith("/calendar") ? (
+    <CalendarPage />
+  ) : route.startsWith("/queue") ? (
+    <QueuePage days={60} filters />
+  ) : route.startsWith("/drafts") ? (
+    <DraftsPage />
+  ) : route.startsWith("/stats/report/") ? (
+    <ReportPage route={route} />
+  ) : route.startsWith("/stats/") ? (
+    <ChannelPage route={route} />
+  ) : route.startsWith("/stats") ? (
+    <StatsPage />
+  ) : route.startsWith("/settings") ? (
+    <SettingsPage me={me} onSignOut={onSignOut} />
+  ) : route.startsWith("/comments") ? (
+    <CommentsPage />
+  ) : (
+    <TodayPage />
+  );
+  const toApprove = shared.attention.length + shared.overdue.length;
+  const openDrafts = shared.drafts.data?.drafts.length ?? 0;
+  const badge: Record<string, number> = { "#/queue": toApprove, "#/drafts": openDrafts };
+  return (
+    <MeCtx.Provider value={me}>
+      <SharedCtx.Provider value={shared}>
+        <div className="top">
+          <header>
+            <a href="#/" className="brand" aria-label={t("header.brandToday", { name: BRAND.name })}>
+              {LOGO}
+            </a>
+            <h1 className="clip">
+              {title}
+              {me.dryRun && <span className="pill warn">{t("header.dryRun")}</span>}
+            </h1>
+            <span className="head-icons">
+              <a
+                href="#/comments"
+                className={`icon${hash.startsWith("#/comments") ? " on" : ""}`}
+                aria-label={
+                  shared.unseen.data?.n ? t("header.commentsNew", { n: shared.unseen.data.n }) : t("header.comments")
+                }
+                aria-current={hash.startsWith("#/comments") ? "page" : undefined}
+              >
+                <span className="tab-icon">
+                  {ICON.comment}
+                  {(shared.unseen.data?.n ?? 0) > 0 && (
+                    <span className="badge">{shared.unseen.data!.n > 9 ? "9+" : shared.unseen.data!.n}</span>
+                  )}
+                </span>
+              </a>
+              <a
+                href="#/settings"
+                className={`icon${hash.startsWith("#/settings") ? " on" : ""}`}
+                aria-label={t("header.settings")}
+                aria-current={hash.startsWith("#/settings") ? "page" : undefined}
+              >
+                {ICON.settings}
+              </a>
+            </span>
+          </header>
+          {shared.status.data?.paused && (
+            <div className="banner bad" role="status">
+              {ICON.pause}
+              <span>
+                <strong>{t("header.paused")}</strong> {t("header.pausedDetail")}
+              </span>
+              <a href="#/settings">{t("header.resume")}</a>
+            </div>
+          )}
+        </div>
+        <main>{page}</main>
+        <nav aria-label={t("tabs.nav")}>
+          {TABS.map(([h, key, icon]) => {
+            const label = t(key);
+            const on = h === "#/" ? hash === "#/" || hash === "" : hash.startsWith(h);
+            const n = badge[h] ?? 0;
+            return (
+              <a
+                key={h}
+                href={h}
+                className={on ? "on" : ""}
+                aria-current={on ? "page" : undefined}
+                aria-label={n ? t(h === "#/drafts" ? "tabs.badgeOpen" : "tabs.badgeApproval", { label, n }) : label}
+              >
+                <span className="tab-icon">
+                  {icon}
+                  {n > 0 && (
+                    <span className="badge" aria-hidden="true">
+                      {n > 9 ? "9+" : n}
+                    </span>
+                  )}
+                </span>
+                <span className="tab-label" aria-hidden="true">
+                  {label}
+                </span>
+              </a>
+            );
+          })}
+        </nav>
+      </SharedCtx.Provider>
+    </MeCtx.Provider>
+  );
+}
+
+// ---------------------------------------------------------------- sign-in
+
+/** A setup code arriving in the link from another device's QR code: #/setup?code=XXXX (never sent to the server). */
+const linkedCode = () => /^#\/setup\?code=([A-Za-z0-9-]+)/.exec(location.hash)?.[1] ?? "";
+
+function SignIn({ me, onDone }: { me: Me; onDone: () => void }) {
+  const [code, setCode] = useState(linkedCode);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      await fn();
+      onDone();
+    } catch (e) {
+      const err = e as Error & { code?: string };
+      // Errors from the browser/passkey provider (not from our server): say so, and that the code still works.
+      const fromDevice = !(e instanceof HttpError);
+      setMsg(
+        fromDevice
+          ? t("sign.deviceError", {
+              detail: `${err.name}${err.code ? ` / ${err.code}` : ""}`,
+              message: err.message,
+            })
+          : err.message,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  const login = () =>
+    run(async () => {
+      const o = await api<{ options: never; challengeId: string }>("login/options", {});
+      const response = await startAuthentication({ optionsJSON: o.options });
+      await api("login/verify", { challengeId: o.challengeId, response });
+    });
+  const setup = () =>
+    run(async () => {
+      const o = await api<{ options: never; challengeId: string }>("setup/options", { code });
+      const response = await startRegistration({ optionsJSON: o.options });
+      await api("setup/verify", {
+        challengeId: o.challengeId,
+        response,
+        name: navigator.userAgent.includes("Android") ? "Android phone" : "device",
+      });
+      if (linkedCode()) location.hash = "#/";
+    });
+  return (
+    <main className="center">
+      <h1 className="brand-title">
+        {LOGO}
+        {BRAND.name}
+      </h1>
+      {!me.setupNeeded && (
+        <button className="primary" disabled={busy} onClick={login}>
+          {t("sign.signIn")}
+        </button>
+      )}
+      <details open={me.setupNeeded || !!linkedCode()}>
+        <summary>{me.setupNeeded ? t("sign.setupThis") : t("sign.addThis")}</summary>
+        <p className="muted small">
+          {linkedCode() ? t("sign.codeFilled") : t("sign.scan")} {t("sign.codeStays")}
+        </p>
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder={t("sign.codeLabel")}
+          autoCapitalize="characters"
+          aria-label={t("sign.codeLabel")}
+        />
+        <button disabled={busy || !code} onClick={setup}>
+          {t("sign.create")}
+        </button>
+      </details>
+      {msg && (
+        <p className="error" role="alert">
+          {msg}
+        </p>
+      )}
+    </main>
+  );
+}
+
+// ---------------------------------------------------------------- rows (one look for every list of items)
+
+/** A row's status: its border colour (green: approved / posted / public; amber: waiting on the owner; red: failed;
+ *  none: neutral), with the word kept for screen readers. */
+type Tone = "ok" | "warn" | "bad" | "";
+function queueStatus(i: QueueItem): { tone: Tone; word: string } {
+  if (i.hold) return { tone: "warn", word: t("status.hold") };
+  const n = needs(i);
+  if (!n) return { tone: "ok", word: t("status.approved") };
+  return { tone: "warn", word: n === "approve" ? t("status.notApproved") : t("status.reApprove") };
+}
+
+/** A row: channel dot and label, title, when, account; the border's colour is the status (no
+ *  label on the row). The row opens the item in the app; a posted or public one also gets the platform's icon, which
+ *  opens the real post or video (only the icon, not the row). */
+function Row({
+  channel,
+  title,
+  time,
+  account,
+  extra,
+  status,
+  href,
+  out,
+}: {
+  channel: Channel;
+  title: string;
+  time: string;
+  account?: string;
+  extra?: string;
+  status: { tone: Tone; word: string };
+  href?: string;
+  out?: string;
+}) {
+  const body = (
+    <>
+      <div className="row">
+        <strong className="clip">{title}</strong>
+        <span className="vh">, {status.word}</span>
+      </div>
+      <div className="meta">
+        <span className="when">{time}</span>
+        <span className="muted">
+          <Dot c={channel} />
+          {channelLabel(channel)}
+          {account ? ` · @${account}` : ""}
+          {extra ? ` · ${extra}` : ""}
+        </span>
+      </div>
+    </>
+  );
+  const where = platformName(channel.platform);
+  return (
+    <li
+      className={
+        [out ? "has-out" : "", status.tone ? `tone-${status.tone}` : ""].filter(Boolean).join(" ") || undefined
+      }
+      title={status.word}
+    >
+      {href ? <a href={href}>{body}</a> : <div>{body}</div>}
+      {out && (
+        <a
+          className="out"
+          href={out}
+          target="_blank"
+          rel="noopener"
+          aria-label={`Open “${title}” on ${where}`}
+          title={`Open on ${where}`}
+        >
+          {platformIcon(channel.platform)}
+        </a>
+      )}
+    </li>
+  );
+}
+
+function QueueList({
+  items,
+  empty = EMPTY.scheduled,
+  timeOnly = false,
+}: {
+  items: QueueItem[];
+  empty?: ReactNode;
+  timeOnly?: boolean;
+}) {
+  if (!items.length) return <p className="muted">{empty}</p>;
+  return (
+    <ul className="list">
+      {items.map((i) => (
+        <Row
+          key={i.key}
+          channel={itemChannel(i)}
+          title={i.title || nice(i.name)}
+          time={timeOnly && dueTime(i.due) ? `${dueTime(i.due)} ${zoneLabel()}` : when(i.due)}
+          account={i.account}
+          extra={project(i.folder)}
+          status={queueStatus(i)}
+          href={`#/item/${encodeURIComponent(i.key)}`}
+        />
+      ))}
+    </ul>
+  );
+}
+
+/** A queue split into one group per day, with the day as a heading. */
+function DayGroups({ items }: { items: QueueItem[] }) {
+  if (!items.length) return <p className="muted">{EMPTY.scheduled}</p>;
+  const by = new Map<string, QueueItem[]>();
+  for (const i of items) {
+    const d = dueDate(i.due) ?? "none";
+    by.set(d, [...(by.get(d) ?? []), i]);
+  }
+  return (
+    <>
+      {[...by].map(([d, list]) => (
+        <section key={d} className="day-group">
+          <h2 className="day-head">
+            {d === "none" ? "No date" : dayName(d)}
+            {d === zoneToday() || d === zoneShift(1) ? (
+              <span className="muted">
+                {" "}
+                ·{" "}
+                {new Date(`${d}T00:00:00Z`).toLocaleDateString(dateLocale(), {
+                  weekday: "short",
+                  day: "numeric",
+                  month: "short",
+                  timeZone: "UTC",
+                })}
+              </span>
+            ) : null}
+          </h2>
+          <QueueList items={list} timeOnly />
+        </section>
+      ))}
+    </>
+  );
+}
+
+/** The plan's channel groups (the repo's channels/<name>/ folders) as the owner calls them. */
+const CHANNEL_NAME: Record<string, string> = { main: "Main", vlogs: "Vlogs", demo_running: "@demo_running" };
+
+const remembered = (k: string) => {
+  try {
+    return localStorage.getItem(k) ?? "";
+  } catch {
+    return "";
+  }
+};
+const remember = (k: string, v: string) => {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    /* private mode */
+  }
+};
+
+function QueuePage({
+  days,
+  title,
+  filters = false,
+  from,
+}: {
+  days: number;
+  title?: string;
+  filters?: boolean;
+  from?: string;
+}) {
+  const noAccounts = useNoAccounts();
+  const [channel, setChannelRaw] = useState(filters ? remembered("queue.channel") : "");
+  const [group, setGroupRaw] = useState(filters ? remembered("queue.group") : "");
+  const [only, setOnlyRaw] = useState(filters ? remembered("queue.only") : "");
+  const setChannel = (v: string) => {
+    setChannelRaw(v);
+    remember("queue.channel", v);
+    setGroup("");
+  };
+  const setGroup = (v: string) => {
+    setGroupRaw(v);
+    remember("queue.group", v);
+  };
+  const setOnly = (v: string) => {
+    setOnlyRaw(v);
+    remember("queue.only", v);
+  };
+  // The server filters: only the chosen channel/group comes back.
+  const qs = new URLSearchParams({
+    days: String(days),
+    ...(from ? { from } : {}),
+    ...(channel ? { channel } : {}),
+    ...(group ? { group } : {}),
+  }).toString();
+  const { data, error, stale, at, reload } = useLoad<{ items: QueueItem[] }>(`queue?${qs}`, [qs]);
+  const facets = useLoad<{
+    channels: { channel: string; n: number }[];
+    groups: { channel: string; group: string; n: number }[];
+  }>(filters ? `queue/groups?days=${days}` : null);
+  const groups = (facets.data?.groups ?? []).filter((g) => !channel || g.channel === channel);
+  const all = data?.items ?? [];
+  const waiting = all.filter((i) => needs(i));
+  const shown = only === "needs" ? waiting : all;
+  return (
+    <section>
+      {title && <h2>{title}</h2>}
+      {filters && (
+        <div className="segmented" role="group" aria-label="Show">
+          <button aria-pressed={only !== "needs"} onClick={() => setOnly("")}>
+            All <span className="muted">{all.length}</span>
+          </button>
+          <button aria-pressed={only === "needs"} onClick={() => setOnly("needs")}>
+            Needs approval <span className="muted">{waiting.length}</span>
+          </button>
+        </div>
+      )}
+      {filters && facets.data && (
+        <div className="filters">
+          <select value={channel} onChange={(e) => setChannel(e.target.value)} aria-label="Channel">
+            <option value="">All channels</option>
+            {facets.data.channels.map((c) => (
+              <option key={c.channel} value={c.channel}>
+                {CHANNEL_NAME[c.channel] ?? cap(c.channel)} ({c.n})
+              </option>
+            ))}
+          </select>
+          <select
+            value={groups.some((g) => g.group === group) ? group : ""}
+            onChange={(e) => setGroup(e.target.value)}
+            aria-label="Project"
+          >
+            <option value="">All projects</option>
+            {groups.map((g) => (
+              <option key={`${g.channel}/${g.group}`} value={g.group}>
+                {project(g.group)} ({g.n})
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {filters && (
+        <p className="muted small">
+          The next {days} days, {zoneLabel()}.
+        </p>
+      )}
+      {stale && <Stale msg={stale} at={at} onRetry={reload} />}
+      {noAccounts ? (
+        <SetupNote />
+      ) : error ? (
+        <ErrorNote msg={error} onRetry={reload} />
+      ) : !data ? (
+        <p className="muted">{t("common.loading")}</p>
+      ) : filters ? (
+        shown.length ? (
+          <DayGroups items={shown} />
+        ) : (
+          <p className="muted">{only === "needs" ? "Nothing needs approval. All set." : EMPTY.scheduled}</p>
+        )
+      ) : (
+        <QueueList items={shown} />
+      )}
+    </section>
+  );
+}
+
+const Stale = ({ msg, at, onRetry }: { msg: string; at?: number | null; onRetry?: () => void }) => (
+  <div className="notice warn row" role="status">
+    <span>
+      Showing what was saved{at ? ` at ${zoneClock(at)} ${zoneLabel()}` : ""}. {msg}
+    </span>
+    {onRetry && <button onClick={onRetry}>Try again</button>}
+  </div>
+);
+const ErrorNote = ({ msg, onRetry }: { msg: string; onRetry?: () => void }) => (
+  <div className="notice bad row" role="alert">
+    <span>{msg}</span>
+    {onRetry && <button onClick={onRetry}>Try again</button>}
+  </div>
+);
+
+// ---------------------------------------------------------------- today
+
+function TodayPage() {
+  const { status, attention, overdue, held, drafts, queue } = useShared();
+  const noAccounts = useNoAccounts();
+  const notes = useLoad<{ notifications: { at: string; title: string; text: string; target: string | null }[] }>(
+    "notifications?limit=8",
+  );
+  const openDrafts = drafts.data?.drafts.length ?? 0;
+  const stale = status.stale || queue.stale;
+  return (
+    <>
+      {stale && (
+        <Stale
+          msg="Offline: couldn't reach the scheduler."
+          at={status.at}
+          onRetry={() => {
+            status.reload();
+            queue.reload();
+          }}
+        />
+      )}
+      <NeedsYou
+        attention={attention}
+        overdue={overdue}
+        held={held}
+        drafts={openDrafts}
+        loading={!queue.data && !queue.error}
+      />
+      {noAccounts ? (
+        <SetupNote />
+      ) : (
+        <>
+          <TodaySection />
+          <QueuePage days={3} from={zoneShift(1)} title="Next 3 days" />
+        </>
+      )}
+
+      <details className="activity">
+        <summary className="tap">
+          Recent activity
+          {notes.data?.notifications.length ? (
+            <span className="muted"> ({notes.data.notifications.length})</span>
+          ) : null}
+        </summary>
+        {notes.data?.notifications.length ? (
+          <ul className="list compact">
+            {notes.data.notifications.map((n, k) => (
+              <li key={k}>
+                {n.target && /^(reel|post):/.test(n.target) ? (
+                  <a href={`#/item/${encodeURIComponent(n.target)}`}>
+                    <Note n={n} />
+                  </a>
+                ) : (
+                  <Note n={n} />
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="muted">None yet.</p>
+        )}
+      </details>
+    </>
+  );
+}
+
+/** The first thing on Today when something waits on the owner (to approve, overdue, open drafts, on hold); nothing otherwise. */
+function NeedsYou({
+  attention,
+  overdue,
+  held,
+  drafts,
+  loading,
+}: {
+  attention: QueueItem[];
+  overdue: QueueItem[];
+  held: QueueItem[];
+  drafts: number;
+  loading: boolean;
+}) {
+  const n = attention.length + overdue.length + (drafts ? 1 : 0);
+  if (loading) return null;
+  const heldLine = held.length > 0 && (
+    <p className="small held-line">
+      <a href={held.length === 1 ? `#/item/${encodeURIComponent(held[0].key)}` : "#/queue"} className="link">
+        {held.length} on hold
+      </a>
+      : won't go out until you release {held.length === 1 ? "it" : "them"}.
+    </p>
+  );
+  // Nothing waiting: no block at all (no "all set" row); items on hold still get their line.
+  if (!n)
+    return held.length ? (
+      <section className="needs" aria-label="Needs you">
+        <h2>Needs you</h2>
+        {heldLine}
+      </section>
+    ) : null;
+  return (
+    <section className="needs" aria-label="Needs you">
+      <h2>Needs you</h2>
+      {overdue.length > 0 && (
+        <>
+          <p className="small bad-text">
+            <strong>{overdue.length} overdue</strong>: its time passed and it hasn't gone out.
+          </p>
+          <QueueList items={overdue} />
+        </>
+      )}
+      {attention.length > 0 && <QueueList items={attention} />}
+      {drafts > 0 && (
+        <p className="small">
+          <a href="#/drafts" className="link">
+            {drafts} open draft{drafts > 1 ? "s" : ""} to schedule or refuse
+          </a>
+        </p>
+      )}
+      {heldLine}
+    </section>
+  );
+}
+
+/** Everything dated today (in the workspace's zone), posted or pending. */
+function TodaySection() {
+  const day = useLoad<{ events: CalEvent[]; warnings: string[] }>("day");
+  const events = day.data?.events ?? [];
+  return (
+    <section>
+      <h2>Today</h2>
+      {day.stale && <Stale msg={day.stale} at={day.at} onRetry={day.reload} />}
+      {day.error ? (
+        <ErrorNote msg={day.error} onRetry={day.reload} />
+      ) : !day.data ? (
+        <p className="muted">{t("common.loading")}</p>
+      ) : (
+        <EventList events={events} empty="Nothing planned for today." />
+      )}
+      {day.data?.warnings.map((w) => (
+        <p key={w} className="notice warn small">
+          {w}
+        </p>
+      ))}
+    </section>
+  );
+}
+
+const Note = ({ n }: { n: { at: string; title: string; text: string } }) => (
+  <div>
+    <div className="row">
+      <strong className="small">{noteText(n.title)}</strong>
+      <span className="muted small">{dueDate(n.at) ? `${dayName(dueDate(n.at)!)} ${dueTime(n.at) ?? ""}` : n.at}</span>
+    </div>
+    {n.text && noteText(n.text) && <div className="muted small clip">{noteText(n.text)}</div>}
+  </div>
+);
+
+// ---------------------------------------------------------------- calendar (like the local dashboard's)
+
+type CalEvent = {
+  date: string;
+  time: string | null;
+  platform: string;
+  format: string | null;
+  label: string;
+  title: string;
+  status: string;
+  key?: string;
+  url?: string;
+  account?: string;
+  /** The YouTube account's name. */
+  account_name?: string;
+  posted_at?: string;
+};
+const STATUS_KEY: Record<string, Key> = {
+  "not approved": "status.notApproved",
+  "re-approve": "status.reApprove",
+  approved: "status.approved",
+  posted: "status.posted",
+  public: "status.public",
+  scheduled: "status.scheduled",
+  private: "status.private",
+  unlisted: "status.unlisted",
+  hold: "status.hold",
+};
+const statusWord = (s: string) => (STATUS_KEY[s] ? t(STATUS_KEY[s]) : cap(s));
+/** Events read from the platform itself (YouTube uploads), not planned here: no item page, nothing to approve. */
+const external = (e: CalEvent) => !e.key;
+const statusTone = (s: string) =>
+  s === "posted" || s === "public" || s === "approved"
+    ? "ok"
+    : s === "not approved" || s === "re-approve" || s === "hold"
+      ? "warn"
+      : s === "failed"
+        ? "bad"
+        : "";
+const waitingEvent = (e: CalEvent) => e.status === "not approved" || e.status === "re-approve";
+
+/** A day's events, posted or pending: every row opens its page in the app (an item, or a YouTube video's page); the
+ *  icon on a posted/public one opens it on Instagram or YouTube. */
+function EventList({ events, empty = "Nothing that day." }: { events: CalEvent[]; empty?: string }) {
+  if (!events.length) return <p className="muted">{empty}</p>;
+  const sorted = [...events].sort((a, b) => (a.time ?? "").localeCompare(b.time ?? "")); // no time known: first
+  return (
+    <ul className="list">
+      {sorted.map((e, k) => {
+        const time = e.posted_at
+          ? `Posted ${dueTime(e.posted_at) ?? dayName(e.posted_at.slice(0, 10))}${dueTime(e.posted_at) ? ` ${zoneLabel()}` : ""}`
+          : e.time
+            ? `${e.time} ${zoneLabel()}`
+            : "Time not set";
+        // YouTube rows are the videos themselves (public / going public), read from YouTube; they need no approval here.
+        const yt = external(e);
+        const title = yt ? e.title.replace(/^Short · /, "") : nice(e.title);
+        const status = { tone: statusTone(e.status) as Tone, word: statusWord(e.status) };
+        const href = e.key
+          ? `#/item/${encodeURIComponent(e.key)}`
+          : yt && e.url
+            ? `#/video/${e.account}/${e.url.split("/").pop()}?d=${e.date}`
+            : undefined;
+        const out = e.url && (e.status === "posted" || e.status === "public") ? e.url : undefined;
+        return (
+          <Row
+            key={k}
+            channel={e}
+            title={title}
+            time={time}
+            account={yt ? e.account_name : e.account}
+            status={status}
+            href={href}
+            out={out}
+          />
+        );
+      })}
+    </ul>
+  );
+}
+
+function CalendarPage() {
+  const noAccounts = useNoAccounts();
+  const [month, setMonth] = useState(zoneToday().slice(0, 7));
+  const [day, setDay] = useState(zoneToday());
+  const [refresh, setRefresh] = useState(0);
+  const { data, error, stale, at, reload } = useLoad<{ events: CalEvent[]; warnings: string[] }>(
+    `calendar?month=${month}${refresh ? "&refresh=1" : ""}`,
+    [month, refresh],
+  );
+  const first = new Date(`${month}-01T00:00:00Z`);
+  const lead = (first.getUTCDay() + 6) % 7; // Monday first
+  const days = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0)).getUTCDate();
+  const cells: (string | null)[] = [
+    ...Array(lead).fill(null),
+    ...Array.from({ length: days }, (_, i) => `${month}-${String(i + 1).padStart(2, "0")}`),
+  ];
+  while (cells.length % 7) cells.push(null);
+  const byDay = new Map<string, CalEvent[]>();
+  for (const e of data?.events ?? []) byDay.set(e.date, [...(byDay.get(e.date) ?? []), e]);
+  const today = zoneToday();
+  const label = first.toLocaleDateString(dateLocale(), { month: "long", year: "numeric", timeZone: "UTC" });
+  const list = byDay.get(day) ?? [];
+  const long = (d: string) =>
+    new Date(`${d}T00:00:00Z`).toLocaleDateString(dateLocale(), {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      timeZone: "UTC",
+    });
+  return (
+    <section>
+      {noAccounts && <SetupNote />}
+      <div className="row month-bar">
+        <button className="icon-btn" onClick={() => setMonth(shiftMonth(month, -1))} aria-label="Previous month">
+          {ICON.chevL}
+        </button>
+        <h2>{label}</h2>
+        <button className="icon-btn" onClick={() => setMonth(shiftMonth(month, 1))} aria-label="Next month">
+          {ICON.chevR}
+        </button>
+      </div>
+      <div className="legend small" aria-hidden="true">
+        {[...new Map((data?.events ?? []).map((e) => [channelKey(e), e])).values()].map((e) => (
+          <span key={channelKey(e)}>
+            <Dot c={e} />
+            {channelLabel(e.format === "video" || external(e) ? e : { platform: e.platform, format: null })}
+          </span>
+        ))}
+        <span>
+          <i className="dot ring" aria-hidden="true" />
+          Needs approval
+        </span>
+      </div>
+      {stale && <Stale msg={stale} at={at} onRetry={reload} />}
+      {error && <ErrorNote msg={error} onRetry={reload} />}
+      <div className="cal" role="group" aria-label={`${label}: pick a day`}>
+        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+          <div key={d} className="cal-head small muted" aria-hidden="true">
+            {d}
+          </div>
+        ))}
+        {cells.map((d, i) => {
+          if (d === null) return <div key={i} className="cal-cell empty" aria-hidden="true" />;
+          const ev = byDay.get(d) ?? [];
+          const waiting = ev.filter(waitingEvent).length;
+          const kinds = [...new Map(ev.map((e) => [channelKey(e), e])).values()].map(
+            (c) => [c, ev.filter((e) => channelKey(e) === channelKey(c)).length] as const,
+          );
+          const name = `${long(d)}${d === today ? ", today" : ""}: ${ev.length ? kinds.map(([c, n]) => `${n} ${channelLabel(c)}`).join(", ") : "nothing"}${waiting ? `; ${waiting} need${waiting > 1 ? "" : "s"} approval` : ""}`;
+          return (
+            <button
+              key={d}
+              className={`cal-cell${d === today ? " today" : ""}${d === day ? " sel" : ""}`}
+              onClick={() => setDay(d)}
+              aria-label={name}
+              aria-pressed={d === day}
+              aria-current={d === today ? "date" : undefined}
+            >
+              <span className="cal-num">{Number(d.slice(8))}</span>
+              <span className="cal-dots">
+                {ev.slice(0, 6).map((e, k) => (
+                  <i key={k} className={`${dotClass(e)}${waitingEvent(e) ? " ring" : ""}`} />
+                ))}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <h3>{long(day)}</h3>
+      {!data ? <p className="muted">{t("common.loading")}</p> : <EventList events={list} />}
+      {data?.warnings.map((w) => (
+        <p key={w} className="notice warn small">
+          {w}
+        </p>
+      ))}
+      <p className="row">
+        <button onClick={() => setRefresh(refresh + 1)}>Check YouTube now</button>{" "}
+        <span className="muted small">YouTube updates on its own every hour.</span>
+      </p>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- one item, and approving it
+
+type ItemView = "results" | "post";
+
+function ItemPage({
+  keyId,
+  view,
+  onTitle,
+}: {
+  keyId: string;
+  view?: ItemView;
+  onTitle?: (title: string | null) => void;
+}) {
+  const { refresh, status } = useShared();
+  const paused = !!status.data?.paused;
+  const {
+    data: item,
+    error,
+    reload,
+    stale,
+    at,
+    fresh,
+  } = useLoad<Item>(`item?key=${encodeURIComponent(keyId)}`, [keyId]);
+  const [holdMsg, setHoldMsg] = useState<string | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [moved, setMoved] = useState<string | null>(null);
+  useEffect(() => {
+    if (item) onTitle?.(item.title ?? null);
+  }, [item?.title]); // eslint-disable-line react-hooks/exhaustive-deps
+  const { approve, busy, done, err, setDone } = useApprove(keyId, item?.fingerprint, () => {
+    reload();
+    refresh();
+  });
+  const hold = async (on: boolean) => {
+    try {
+      await api("item/hold", { key: keyId, hold: on });
+      setHoldMsg(
+        on
+          ? "On hold: it won't go out until you release it. The approval is kept."
+          : "Released: it goes out at its time again.",
+      );
+      setDone(null);
+      reload();
+      refresh();
+    } catch (e) {
+      setHoldMsg((e as Error).message);
+    }
+  };
+  const back = (
+    <p className="back-row">
+      <a className="back" href={lastList}>
+        {ICON.back}
+        {lastList.startsWith("#/calendar")
+          ? "Calendar"
+          : lastList.startsWith("#/queue")
+            ? "Queue"
+            : lastList.startsWith("#/drafts")
+              ? "Drafts"
+              : "Today"}
+      </a>
+    </p>
+  );
+  if (error)
+    return (
+      <>
+        {back}
+        <ErrorNote msg={error} onRetry={reload} />
+      </>
+    );
+  if (!item)
+    return (
+      <>
+        {back}
+        <p className="muted">{t("common.loading")}</p>
+      </>
+    );
+  const ch = itemChannel({ platform: item.platform, format: item.postFormat, label: item.label });
+  const alts = item.alt
+    ? item.alt
+        .split("\n")
+        .map((l) => l.replace(/^\s*\d{1,2}\t/, "").trim())
+        .filter(Boolean)
+    : [];
+  // a failed item that may start over takes a new approval even when nothing changed
+  const canApprove = !item.posted && !item.hold && (!item.approved || !item.approved.matches || !!item.failed?.again);
+  const showBar = (canApprove || !!done) && !editing;
+  const slot = dueTime(item.due)
+    ? `${dayName(dueDate(item.due)!)} ${dueTime(item.due)} ${zoneLabel()}`
+    : "when scheduled";
+  const target = (
+    <>
+      <Dot c={ch} />
+      {channelLabel(ch)} · @{item.account} · <strong>{when(item.due)}</strong>
+    </>
+  );
+  // A published Instagram item opens on its Results (when it has any, unless the link says Post) or on the post.
+  const split = !!item.published && item.platform === "instagram";
+  const shown: ItemView = split ? (view ?? (item.results || item.trial?.results ? "results" : "post")) : "post";
+  const head = (
+    <>
+      {back}
+      <ItemName
+        keyId={keyId}
+        title={item.title ?? null}
+        onSaved={(t) => {
+          onTitle?.(t);
+          reload();
+          refresh();
+        }}
+      />
+      <p className="item-target">
+        {target}
+        {item.format === "story" ? (
+          <>
+            {" "}
+            <span className="pill">Story</span>
+          </>
+        ) : null}
+        {item.hold ? (
+          <>
+            {" "}
+            <span className="pill warn">On hold</span>
+          </>
+        ) : null}
+      </p>
+      {stale && <Stale msg={stale} at={at} onRetry={reload} />}
+      {split && (
+        <Segmented
+          label={t("results.show")}
+          value={shown}
+          options={[
+            { value: "results", text: t("results.results") },
+            { value: "post", text: t("results.post") },
+          ]}
+          // the view is part of the link (a notification opens Results), replaced so Back still leaves the item
+          onChange={(v) => location.replace(`#/item/${encodeURIComponent(keyId)}/${v}`)}
+        />
+      )}
+    </>
+  );
+  if (shown === "results")
+    return (
+      <section>
+        {head}
+        <ResultsView keyId={keyId} item={item} />
+      </section>
+    );
+  return (
+    <section className={showBar ? "has-action" : ""}>
+      {head}
+      {item.published && (
+        <div className="card published">
+          <p className="small">
+            <span className="pill ok">Published</span> {when(item.published.at)}
+          </p>
+          {item.results && <ResultsLine r={item.results} vs="usual" />}
+          {item.published.permalink && (
+            <a className="button-link with-icon" href={item.published.permalink} target="_blank" rel="noopener">
+              {ICON.external}Open on Instagram
+            </a>
+          )}
+        </div>
+      )}
+      {item.trial && item.published && (item.trial.on || item.trial.state !== "planned") && (
+        <div className="card published">
+          <p className="small">
+            <span
+              className={`pill${item.trial.state === "published" ? " ok" : ["failed", "refused", "held"].includes(item.trial.state) ? " bad" : ""}`}
+            >
+              Trial Reel
+            </span>{" "}
+            {item.trial.state === "published" ? (
+              <>{item.trial.at ? when(item.trial.at) : "Published"}: shown to non-followers first</>
+            ) : ["failed", "refused", "held"].includes(item.trial.state) ? (
+              <>not posted{item.trial.error ? `: ${item.trial.error}` : ""}</>
+            ) : (
+              "posting the trial copy…"
+            )}
+          </p>
+          {item.trial.results && <ResultsLine r={item.trial.results} vs="the regular Reel" />}
+          {item.trial.permalink && (
+            <a className="button-link with-icon" href={item.trial.permalink} target="_blank" rel="noopener">
+              {ICON.external}Open the trial
+            </a>
+          )}
+        </div>
+      )}
+
+      {item.format === "story" ? (
+        <p className="muted small">A Story: no caption or comments; it disappears from the profile after 24 h.</p>
+      ) : (
+        <>
+          <h2>Caption</h2>
+          <pre className="text">{item.caption || "(missing)"}</pre>
+          {!item.posted && (item.lint?.length ?? 0) > 0 && (
+            <div className="notice warn small">
+              <strong>Caption check</strong> (worth a look, doesn't block):
+              <ul>
+                {item.lint!.map((c) => (
+                  <li key={c.check}>
+                    {cap(c.check.toLowerCase())}: {c.detail}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <h2>Self-comment</h2>
+          <pre className="text">{item.comment ?? "(none)"}</pre>
+          {item.comment2 && (
+            <>
+              <h2>Second comment</h2>
+              <pre className="text">{item.comment2}</pre>
+            </>
+          )}
+        </>
+      )}
+      {alts.length > 0 && (
+        <>
+          <h2>
+            Alt texts <span className="muted small">({alts.length})</span>
+          </h2>
+          <ol className="small">
+            {alts.map((a, k) => (
+              <li key={k}>{a}</li>
+            ))}
+          </ol>
+        </>
+      )}
+      {item.format !== "story" && <TextsOrigin item={item} />}
+      {item.format !== "story" &&
+        !item.posted &&
+        (editing ? (
+          <TextsForm
+            alt={item.postFormat !== "video" && feature(item.platform, "altText")}
+            initial={{
+              caption: item.caption,
+              comment: item.comment ?? "",
+              comment2: item.comment2 ?? "",
+              alt: item.alt ?? "",
+            }}
+            submit="Save texts"
+            onSubmit={async (t) => {
+              await api("item/texts", { key: keyId, ...t });
+              setEditing(false);
+              reload();
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        ) : (
+          <p className="row">
+            <button onClick={() => setEditing(true)}>Edit texts</button>{" "}
+            {item.approved ? <span className="muted small">Saving changes needs a new approval.</span> : null}
+          </p>
+        ))}
+
+      <h2>{item.media.length > 1 ? `Media (${item.media.length})` : "Media"}</h2>
+      <div className={item.media.length > 1 ? "media carousel" : "media"}>
+        {item.media.map((m, k) =>
+          m.mime.startsWith("video/") ? (
+            <video
+              key={m.id}
+              src={`${m.url}#t=0.1`}
+              controls
+              playsInline
+              preload="metadata"
+              aria-label={`${channelLabel(ch)} video ${k + 1}`}
+            />
+          ) : (
+            <img key={m.id} src={m.url} alt={alts[k] ?? `Image ${k + 1}`} loading="lazy" />
+          ),
+        )}
+        {!item.media.length &&
+          (item.posted ? (
+            <p className="muted small">
+              The media isn't shown here after publishing (it moves to Drive's _posted folder): open it on Instagram.
+            </p>
+          ) : (
+            <p className="notice warn">No media on Drive yet: it can't be approved until the file is there.</p>
+          ))}
+      </div>
+
+      {item.failed && !item.posted && !done && (
+        <p className="notice bad" role="status">
+          Failed{item.failed.error ? `: ${item.failed.error}` : ""}.{" "}
+          {item.failed.again
+            ? "Approve it again to start over."
+            : `${platformName(item.platform)} was asked to publish it, so it may be live: check the account (post it by hand if it isn't there), then record it with record_posted.`}
+        </p>
+      )}
+      {item.approved && !item.failed && !done && (
+        <p className={`notice ${item.approved.matches ? "ok" : "warn"}`}>
+          {item.approved.matches
+            ? `Approved ${utcToZone(item.approved.at)}, exactly as shown.`
+            : item.approved.commentsOnly
+              ? "Only the comments changed since it was approved: approve them (the post itself stays as approved)."
+              : "Approved before, but something changed since: approve again."}
+        </p>
+      )}
+      {!item.posted && item.problems.length > 0 && (
+        <div className="notice bad" role="alert">
+          <strong>Fix before approving:</strong>
+          <ul>
+            {item.problems.map((p) => (
+              <li key={p}>{p}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {!item.posted && (item.approved || item.hold) && (
+        <div className="card" id="hold">
+          <h2>{item.hold ? "On hold" : "Stop just this one"}</h2>
+          {item.hold ? (
+            <>
+              <p className="small muted">
+                It won't go out until you release it.
+                {item.approved?.matches ? " The approval is kept: once released it goes out at its time." : ""}
+              </p>
+              <ConfirmButton
+                tone="go"
+                label="Release hold"
+                confirm="Release this item?"
+                detail={
+                  item.approved?.matches
+                    ? `It goes out ${when(item.due)}.`
+                    : "It still needs approval before it can go out."
+                }
+                onConfirm={() => hold(false)}
+              />
+            </>
+          ) : (
+            <>
+              <p className="small muted">Keeps the approval; nothing else is affected.</p>
+              <ConfirmButton
+                label="Hold this item"
+                confirm="Hold this item?"
+                detail="It won't go out until you release it here."
+                onConfirm={() => hold(true)}
+              />
+            </>
+          )}
+          {holdMsg && (
+            <p className="notice small" role="status">
+              {holdMsg}
+            </p>
+          )}
+        </div>
+      )}
+      {!item.posted && (
+        <Reschedule
+          item={item}
+          onDone={(note) => {
+            setDone(null);
+            setHoldMsg(null);
+            setMoved(note);
+            reload();
+            refresh();
+          }}
+        />
+      )}
+      {!item.posted &&
+        feature(item.platform, "coverFrame") &&
+        item.media.length === 1 &&
+        item.media[0].mime.startsWith("video/") &&
+        item.format !== "story" && (
+          <CoverFrame keyId={keyId} url={item.media[0].url} ms={item.coverMs ?? null} onSaved={reload} />
+        )}
+      {!item.posted && feature(item.platform, "location") && item.format !== "story" && (
+        <LocationCard keyId={keyId} location={item.location ?? null} onSaved={reload} />
+      )}
+      {!item.posted && feature(item.platform, "trial") && item.trial && (
+        <TrialCard keyId={keyId} account={item.account} trial={item.trial} onSaved={reload} />
+      )}
+      {moved && (
+        <p className="notice ok small" role="status">
+          {moved}
+        </p>
+      )}
+      <details className="key-details">
+        <summary className="small muted tap">Item key</summary>
+        <code>{keyId}</code>
+      </details>
+
+      {showBar && done && (
+        <div className="action-bar done" role="status">
+          <div className="confirm-line">
+            <span className="check">{ICON.check}</span>
+            <div>
+              <strong>Approved.</strong>{" "}
+              {paused
+                ? `Goes out when you resume publishing (scheduled ${when(done)}).`
+                : `Goes out ${when(done)} on @${item.account}.`}
+            </div>
+          </div>
+          <div className="row">
+            <button onClick={() => setDone(null)}>Done</button>
+            <button
+              onClick={() => document.getElementById("hold")?.scrollIntoView({ behavior: "smooth", block: "center" })}
+            >
+              Hold it instead…
+            </button>
+          </div>
+        </div>
+      )}
+      {showBar && !done && (
+        <div className="action-bar">
+          {err && (
+            <p className="notice bad small" role="alert">
+              {err}
+            </p>
+          )}
+          {paused && (
+            <p className="notice warn small" role="status">
+              Publishing is paused: approving now keeps it waiting until you resume.
+            </p>
+          )}
+          <p className="small">{target}</p>
+          <button className="primary" disabled={busy || !fresh || item.problems.length > 0} onClick={approve}>
+            {busy
+              ? "Waiting for passkey…"
+              : !fresh
+                ? "Checking for changes…"
+                : item.problems.length
+                  ? `Fix ${item.problems.length} problem${item.problems.length > 1 ? "s" : ""} first`
+                  : item.approved?.commentsOnly
+                    ? "Approve comments"
+                    : paused
+                      ? "Approve (held while paused)"
+                      : `Approve: publish ${slot}`}
+          </button>
+        </div>
+      )}
+      {!showBar && err && (
+        <p className="notice bad" role="alert">
+          {err}
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** The item's display name: what the app, the calendar and the daily summary show. Its file name and key (which the
+ *  approval and history point at) don't change; clearing it goes back to the readable file name. */
+function ItemName({
+  keyId,
+  title,
+  onSaved,
+}: {
+  keyId: string;
+  title: string | null;
+  onSaved: (title: string | null) => void;
+}) {
+  const auto = keyTitle(keyId);
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(title ?? auto);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async (next: string | null) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await api<{ title: string | null }>("item/title", {
+        key: keyId,
+        title: next && next.trim() !== auto ? next : null,
+      });
+      setEditing(false);
+      onSaved(r.title);
+    } catch (e) {
+      setErr(e instanceof HttpError ? friendly(e) : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!editing)
+    return (
+      <div className="item-name">
+        <h2 className="clip">{title ?? auto}</h2>
+        <button
+          className="icon-btn"
+          onClick={() => {
+            setValue(title ?? auto);
+            setEditing(true);
+          }}
+          aria-label="Rename"
+          title="Rename"
+        >
+          {ICON.pencil}
+        </button>
+      </div>
+    );
+  return (
+    <div className="card form">
+      <label>
+        Name
+        <input
+          value={value}
+          maxLength={80}
+          autoFocus
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save(value);
+            if (e.key === "Escape") setEditing(false);
+          }}
+        />
+      </label>
+      <p className="muted small">
+        Only what the app shows. The file name ({keyId.split("/").pop()}) and the approval stay the same.
+      </p>
+      {err && (
+        <p className="notice bad small" role="alert">
+          {err}
+        </p>
+      )}
+      <div className="row actions">
+        {title && (
+          <button onClick={() => save(null)} disabled={busy}>
+            Use the file name
+          </button>
+        )}
+        <button onClick={() => setEditing(false)} disabled={busy}>
+          {t("common.cancel")}
+        </button>
+        <button className="primary inline" onClick={() => save(value)} disabled={busy || !value.trim()}>
+          {busy ? "Saving…" : "Save name"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** A video's cover frame: play or scrub to the frame, then "Use this frame" (Instagram's thumb_offset). */
+function CoverFrame({
+  keyId,
+  url,
+  ms,
+  onSaved,
+}: {
+  keyId: string;
+  url: string;
+  ms: number | null;
+  onSaved: () => void;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [msg, setMsg] = useState<string | null>(null);
+  const save = async (to: number | null) => {
+    try {
+      await api("item/cover", { key: keyId, ms: to });
+      setMsg(to === null ? "Cover back to the default (0.5 s)." : `Cover set to ${(to / 1000).toFixed(1)} s.`);
+      onSaved();
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  };
+  return (
+    <div className="card">
+      <h2>Cover frame</h2>
+      <p className="small">
+        {ms === null ? (
+          "The frame at 0.5 s (default)."
+        ) : (
+          <>
+            The frame at <strong>{(ms / 1000).toFixed(1)} s</strong>.
+          </>
+        )}
+      </p>
+      <div className="media">
+        <video
+          ref={ref}
+          src={`${url}#t=${((ms ?? 500) / 1000).toFixed(1)}`}
+          controls
+          playsInline
+          preload="metadata"
+          aria-label="Video to pick the cover from"
+        />
+      </div>
+      <div className="row actions">
+        {ms !== null && <button onClick={() => save(null)}>Use the default</button>}
+        <button className="primary inline" onClick={() => save(Math.round((ref.current?.currentTime ?? 0.5) * 1000))}>
+          Use this frame
+        </button>
+      </div>
+      {msg && (
+        <p className="notice small" role="status">
+          {msg}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The location tag: paste an Instagram location link (or the place's number). The API can't search places
+ *  by name; find the place on Instagram, open it and copy its link. Not part of the approval. */
+function LocationCard({ keyId, location, onSaved }: { keyId: string; location: string | null; onSaved: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const save = async (v: string) => {
+    setErr(null);
+    try {
+      await api("item/location", { key: keyId, location: v });
+      setOpen(false);
+      setValue("");
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof HttpError ? friendly(e) : (e as Error).message);
+    }
+  };
+  return (
+    <div className="card form">
+      <h2>Location</h2>
+      <p className="small">
+        {location ? (
+          <>
+            Tagged:{" "}
+            <a
+              className="link"
+              href={`https://www.instagram.com/explore/locations/${location}/`}
+              target="_blank"
+              rel="noopener"
+            >
+              place {location}
+            </a>
+          </>
+        ) : (
+          "No location."
+        )}
+      </p>
+      {open ? (
+        <>
+          <label>
+            Instagram location link or place number
+            <input
+              value={value}
+              autoFocus
+              placeholder="https://www.instagram.com/explore/locations/…"
+              onChange={(e) => setValue(e.target.value)}
+            />
+          </label>
+          <p className="muted small">
+            On Instagram, search the place, open it and share or copy its link. Older places can have a different number
+            in the link than the one the API wants; if Instagram refuses it, the post still goes out without the
+            location.
+          </p>
+          {err && (
+            <p className="notice bad small" role="alert">
+              {err}
+            </p>
+          )}
+          <div className="row actions">
+            <button
+              onClick={() => {
+                setOpen(false);
+                setErr(null);
+              }}
+            >
+              {t("common.cancel")}
+            </button>
+            <button className="primary inline" onClick={() => save(value)} disabled={!value.trim()}>
+              Save location
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="row actions">
+          {location && <button onClick={() => save("")}>Remove</button>}
+          <button onClick={() => setOpen(true)}>{location ? "Change" : "Add location"}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** An on/off switch (a button with role="switch"), label beside it. */
+function Switch({
+  on,
+  label,
+  onChange,
+  disabled,
+}: {
+  on: boolean;
+  label: React.ReactNode;
+  onChange: (on: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      className="switch"
+      disabled={disabled}
+      onClick={() => onChange(!on)}
+    >
+      <span className="switch-track" aria-hidden="true">
+        <span className="switch-knob" />
+      </span>
+      <span className="switch-label">{label}</span>
+    </button>
+  );
+}
+
+/** This Reel's Trial Reel switch: its own choice, or the account's default (set on the account's page). */
+function TrialCard({
+  keyId,
+  account,
+  trial,
+  onSaved,
+}: {
+  keyId: string;
+  account: string;
+  trial: NonNullable<Item["trial"]>;
+  onSaved: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async (on: boolean | null) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api("item/trial", { key: keyId, on });
+      onSaved();
+    } catch (e) {
+      setErr(e instanceof HttpError ? friendly(e) : (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card form">
+      <h2>Trial Reel</h2>
+      <Switch on={trial.on} disabled={busy} onChange={(on) => save(on)} label="Also post it as a Trial Reel" />
+      <p className="muted small">
+        Right after the Reel: the same video, shown to non-followers first. It reaches your followers too if it does
+        well.
+      </p>
+      <p className="muted small">
+        {trial.explicit ? (
+          <>
+            Set for this Reel.{" "}
+            <a className="link" href={`#/stats/instagram/${encodeURIComponent(account)}`}>
+              @{account}
+            </a>
+            's default is {trial.byDefault ? "on" : "off"}.{" "}
+            <button className="link-button" disabled={busy} onClick={() => save(null)}>
+              Use the default
+            </button>
+          </>
+        ) : (
+          <>
+            Following{" "}
+            <a className="link" href={`#/stats/instagram/${encodeURIComponent(account)}`}>
+              @{account}
+            </a>
+            's default.
+          </>
+        )}
+      </p>
+      {err && (
+        <p className="notice bad small" role="alert">
+          {err}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Change when an item goes out: date and time (the workspace's zone). One item per account per hour; an approved item then needs
+ *  approving again for the new time (the server says so, and the approve bar comes back). */
+function Reschedule({ item, onDone }: { item: Item; onDone: (note: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(dueDate(item.due) ?? zoneShift(1));
+  const [time, setTime] = useState(dueTime(item.due) ?? (item.postFormat === "video" ? "18:00" : "19:00"));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const save = async (to?: Slot) => {
+    setBusy(true);
+    setErr(null);
+    setSlots([]);
+    try {
+      const r = await api<{ due: string; approved: boolean; note?: string }>("item/reschedule", {
+        key: item.key,
+        date: to?.date ?? date,
+        time: to?.time ?? time,
+      });
+      setOpen(false);
+      onDone(`Moved to ${when(r.due)}.${r.note ? " It needs approving again for the new time." : ""}`);
+    } catch (e) {
+      setErr(e instanceof HttpError ? friendly(e) : (e as Error).message);
+      setSlots(slotsOf(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card form">
+      <h2>Release date</h2>
+      <p className="small">
+        {item.due ? (
+          <>
+            Goes out <strong>{when(item.due)}</strong>.
+          </>
+        ) : (
+          "Not scheduled yet."
+        )}
+      </p>
+      {open ? (
+        <>
+          <div className="row">
+            <label>
+              Date ({zoneLabel()})
+              <input type="date" value={date} min={zoneShift(0)} onChange={(e) => setDate(e.target.value)} />
+            </label>
+            <label>
+              Time
+              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            </label>
+          </div>
+          {item.approved && <p className="muted small">Moving it needs a new approval for the new time.</p>}
+          {err && (
+            <p className="notice bad small" role="alert">
+              {err}
+            </p>
+          )}
+          <FreeSlots
+            slots={slots}
+            onPick={(s) => {
+              setDate(s.date);
+              setTime(s.time);
+              save(s);
+            }}
+          />
+          <div className="row actions">
+            <button
+              onClick={() => {
+                setOpen(false);
+                setErr(null);
+                setSlots([]);
+              }}
+              disabled={busy}
+            >
+              {t("common.cancel")}
+            </button>
+            <button className="primary inline" onClick={() => save()} disabled={busy || !date || !time}>
+              {busy ? t("common.saving") : t("common.saveNewDate")}
+            </button>
+          </div>
+        </>
+      ) : (
+        <button onClick={() => setOpen(true)}>{t("common.changeDate")}</button>
+      )}
+    </div>
+  );
+}
+
+/** A YouTube video from the calendar (public or going public): its page in the app, with a button to open it on
+ *  YouTube. Read from the month's calendar (YouTube uploads, cached by the server for an hour). */
+/** Where the texts shown (the scheduler's copy, what it posts) came from: a repo item's files, copied by an importer, or an
+ *  edit here or by an agent. */
+function TextsOrigin({ item }: { item: Item }) {
+  const t = item.texts;
+  if (!t || (item.content === "db" && (!t.by || t.by === "owner@app"))) return null; // a draft's texts: written here
+  const at = t.at ? utcToZone(new Date(t.at * 1000).toISOString()) : null;
+  if (t.by === "repo") return <p className="muted small">Texts copied from the repo{at ? ` on ${at}` : ""}.</p>;
+  if (!t.by)
+    return (
+      <p className="muted small">
+        Not copied yet: add the texts in the app or with <code>bongsu texts set</code>.
+      </p>
+    );
+  const who = t.by === "owner@app" ? "here" : `by an agent (${t.by.replace(/^key:/, "")})`;
+  return (
+    <p className="muted small">
+      Texts edited {who}
+      {at ? ` on ${at}` : ""}
+      {t.files ? (
+        <>
+          ; the repo files are older (<code>bongsu texts set</code> with those files brings the scheduler in step)
+        </>
+      ) : null}
+      .
+    </p>
+  );
+}
+
+/** One 24 h results line: views (against `vs`), likes, comments, saves, shares, reach. */
+function ResultsLine({ r, vs, label = "24 h:" }: { r: Results; vs: string; label?: string }) {
+  return (
+    <p className="small num results-line">
+      <strong>{label}</strong> {r.views ?? "–"} views
+      {r.median_views && r.views != null ? (
+        <span className={r.views >= r.median_views ? " ok-text" : " muted"}>
+          {" "}
+          ({(r.views / r.median_views).toFixed(1)}× {vs})
+        </span>
+      ) : null}{" "}
+      · {r.likes ?? 0} likes · {r.comments ?? 0} comments · {r.saves ?? 0} saves · {r.shares ?? 0} shares · reach{" "}
+      {r.reach ?? "–"}
+      {r.follows != null && ` · +${r.follows} ${t("results.followersWord")}`}
+      {r.profile_visits != null && ` · ${r.profile_visits} ${t("results.visitsWord")}`}
+    </p>
+  );
+}
+
+// ---------------------------------------------------------------- results
+
+/** A two-way (or more) choice in the Queue's segmented style; `grid` lays six choices out three to a row. */
+function Segmented<T extends string>({
+  label,
+  value,
+  options,
+  onChange,
+  grid,
+}: {
+  label: string;
+  value: T;
+  options: { value: T; text: string }[];
+  onChange: (v: T) => void;
+  grid?: boolean;
+}) {
+  return (
+    <div className={`segmented${grid ? " grid" : ""}`} role="group" aria-label={label}>
+      {options.map((o) => (
+        <button key={o.value} type="button" aria-pressed={o.value === value} onClick={() => onChange(o.value)}>
+          {o.text}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+type Metric = Exclude<keyof MetricPoint, "at">;
+const IG_METRICS: Metric[] = ["views", "reach", "likes", "comments", "saves", "shares", "follows", "profile_visits"];
+const YT_METRICS: Metric[] = ["views", "likes", "comments"];
+// with the analytics scope a video also has the subscribers it gained (its "follows")
+const YT_METRICS_SUBS: Metric[] = [...YT_METRICS, "follows"];
+
+type Loaded = { data: Metrics; at: number };
+const hasSamples = (d?: Metrics | null) => !!d && (d.samples.length > 0 || (d.trial?.samples.length ?? 0) > 0);
+
+/** A metrics series (`base`: the route with its key) in Total or Daily, on the same day's cache as useLoad: a path
+ *  opens on its cached answer, a failed refresh keeps it and says so (`stale`). Each path keeps one answer object
+ *  until the data really changes, so the chart's series (memoised on it) don't start over on an identical refresh. */
+function useMetrics(base: string | null) {
+  const [mode, setMode] = useState<"total" | "daily">("total");
+  const [metric, setMetric] = useState<Metric>("views");
+  const [got, setGot] = useState<Record<string, Loaded>>({});
+  const [failed, setFailed] = useState<Record<string, string>>({});
+  const path = base && `${base}${mode === "daily" ? "&daily=1" : ""}`;
+  const fromCache = (p: string | null): Loaded | undefined => {
+    const hit = p ? cacheGet<Metrics>(p) : null;
+    return hit ? { data: hit.data, at: hit.at } : undefined;
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fromCache only reads storage
+  const cached = useMemo(() => fromCache(path), [path]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: fromCache only reads storage
+  const cachedTotal = useMemo(() => fromCache(base), [base]);
+  const reload = useCallback(() => {
+    if (!path) return;
+    setFailed(({ [path]: _, ...rest }) => rest);
+    api<Metrics>(path)
+      .then((d) => {
+        cachePut(path, d);
+        setGot((g) => {
+          const was = g[path]?.data ?? cached?.data;
+          return { ...g, [path]: { data: was && JSON.stringify(was) === JSON.stringify(d) ? was : d, at: Date.now() } };
+        });
+      })
+      .catch((e: Error) => setFailed((f) => ({ ...f, [path]: friendly(e) })));
+  }, [path, cached]);
+  useEffect(reload, [reload]);
+  const entry = path ? (got[path] ?? cached) : undefined;
+  const failure = path ? failed[path] : undefined;
+  return {
+    mode,
+    setMode,
+    metric,
+    setMetric,
+    data: entry?.data ?? null,
+    at: entry?.at ?? null,
+    error: entry ? null : (failure ?? null),
+    stale: entry && failure ? failure : null,
+    reload,
+    any: hasSamples((base ? (got[base] ?? cachedTotal) : undefined)?.data),
+  };
+}
+
+/** The chart of a metrics series with its Total | Daily switch and metric picker; the Trial Reel copy is series 2. */
+function MetricsPanel({
+  m,
+  metrics,
+  trialPosted = false,
+  names = {},
+}: {
+  m: ReturnType<typeof useMetrics>;
+  metrics: Metric[];
+  trialPosted?: boolean;
+  /** A metric's name where the platform's word differs (a video's "follows" are subscribers). */
+  names?: Partial<Record<Metric, string>>;
+}) {
+  const { data, metric, mode } = m;
+  const series = useMemo((): ChartSeries[] => {
+    if (!data) return [];
+    const points = (rows: MetricPoint[]) => rows.map((r) => ({ at: r.at, value: r[metric] }));
+    const trial = data.trial?.samples ?? [];
+    const own = data.samples.length
+      ? [
+          {
+            label: trial.length ? data.item.label : (names[metric] ?? t(`results.${metric}`)),
+            hue: 1 as const,
+            points: points(data.samples),
+          },
+        ]
+      : [];
+    return trial.length ? [...own, { label: t("results.trial"), hue: 2 as const, points: points(trial) }] : own;
+  }, [data, metric]);
+  // In Total, an answer without samples (or none at all) is the whole panel; Daily keeps its switch to go back.
+  if (mode === "total" && m.error) return <ErrorNote msg={m.error} onRetry={m.reload} />;
+  if (mode === "total" && !data) return <p className="muted">{t("common.loading")}</p>;
+  const stale = m.stale && <Stale msg={m.stale} at={m.at} onRetry={m.reload} />;
+  if (mode === "total" && !series.length)
+    return (
+      <>
+        {stale}
+        <p className="muted">{t("results.empty")}</p>
+      </>
+    );
+  return (
+    <div className="card">
+      {stale}
+      <Segmented
+        label={t("results.range")}
+        value={mode}
+        options={[
+          { value: "total", text: t("results.total") },
+          { value: "daily", text: t("results.daily") },
+        ]}
+        onChange={m.setMode}
+      />
+      <Segmented
+        label={t("results.metric")}
+        value={metric}
+        options={metrics.map((x) => ({ value: x, text: names[x] ?? t(`results.${x}`) }))}
+        onChange={m.setMetric}
+        grid={metrics.length > 3}
+      />
+      {m.error ? (
+        <ErrorNote msg={m.error} onRetry={m.reload} />
+      ) : !data ? (
+        <p className="muted">{t("common.loading")}</p>
+      ) : series.length ? (
+        <LineChart series={series} mode={mode} tz={ZONE} />
+      ) : (
+        <p className="muted">{t("results.empty")}</p>
+      )}
+      {trialPosted && data && !data.trial?.samples.length && <p className="muted small">{t("results.trialEmpty")}</p>}
+    </div>
+  );
+}
+
+const takenAt = (s: number) =>
+  `${new Intl.DateTimeFormat(dateLocale(), {
+    timeZone: ZONE,
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(s * 1000)} ${zoneLabel()}`;
+
+/** A published Instagram item's Results: the 24 h numbers (the Trial Reel copy's too), then the series' chart. */
+function ResultsView({ keyId, item }: { keyId: string; item: Item }) {
+  const m = useMetrics(`item/metrics?key=${encodeURIComponent(keyId)}`);
+  const r = item.results;
+  const tr = item.trial?.results;
+  return (
+    <>
+      {(r || tr) && (
+        <div className="card published">
+          {r && <ResultsLine r={r} vs="usual" />}
+          {tr && <ResultsLine r={tr} vs="the regular Reel" label={t("results.trialNumbers")} />}
+          <p className="muted small">{t("results.taken", { when: takenAt((r ?? tr)!.fetched_at) })}</p>
+        </div>
+      )}
+      <MetricsPanel m={m} metrics={IG_METRICS} trialPosted={item.trial?.state === "published"} />
+    </>
+  );
+}
+
+/** Approving one item (a post, or a Short's comment) with a passkey: the server binds the challenge to what the page
+ *  showed (`fingerprint`) and refuses if it changed since. */
+function useApprove(keyId: string, fingerprint: string | undefined, after: () => void) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const approve = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const o = await api<{ options: never; challengeId: string }>("approve/options", { key: keyId, fingerprint });
+      const response = await startAuthentication({ optionsJSON: o.options });
+      const r = await api<{ due: string | null }>("approve/verify", { challengeId: o.challengeId, response });
+      setDone(r.due ?? "approved");
+      after();
+    } catch (e) {
+      const extra =
+        e instanceof HttpError && Array.isArray(e.body.problems) ? ` ${(e.body.problems as string[]).join("; ")}` : "";
+      const m = (e as Error).message;
+      if (e instanceof HttpError && e.body.changed) after(); // show the new version; approving it needs another tap
+      setErr(
+        e instanceof HttpError
+          ? friendly(e) + extra
+          : /NotAllowed|cancel/i.test(`${(e as Error).name} ${m}`)
+            ? "The passkey prompt was closed or timed out. Nothing was approved: tap Approve to try again."
+            : `${m}${extra}`,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { approve, busy, done, err, setDone };
+}
+
+/** The comment the scheduler posts on a Short once the video is public: its text and approval, approved here. */
+function ShortComment({ video }: { video: string }) {
+  const keyId = `comment:${video}`;
+  const { data: c, error, reload, fresh } = useLoad<Item>(`item?key=${encodeURIComponent(keyId)}`, [video]);
+  const { approve, busy, done, err } = useApprove(keyId, c?.fingerprint, reload);
+  if (error && /isn't in the plan/.test(error)) return null; // no comment listed for this Short
+  if (error) return <ErrorNote msg={error} onRetry={reload} />;
+  if (!c) return null;
+  const state = c.posted
+    ? { tone: "ok", word: "Commented" }
+    : c.approved?.matches
+      ? { tone: "ok", word: "Approved" }
+      : c.approved
+        ? { tone: "warn", word: "Changed since approval" }
+        : { tone: "warn", word: "Waiting for your approval" };
+  return (
+    <>
+      <h2>Comment</h2>
+      <p>
+        <span className={`pill ${state.tone}`}>{state.word}</span>
+      </p>
+      <pre className="text">{c.caption || "(missing)"}</pre>
+      {c.problems.map((p) => (
+        <p key={p} className="notice warn small">
+          {p}
+        </p>
+      ))}
+      {!c.posted && !c.approved?.matches && !done && (
+        <div className="action-bar">
+          {err && (
+            <p className="notice bad small" role="alert">
+              {err}
+            </p>
+          )}
+          <p className="small">It goes out as {c.account} once the video is public.</p>
+          <button className="primary" disabled={busy || !fresh || c.problems.length > 0} onClick={approve}>
+            {busy ? "Waiting for passkey…" : c.problems.length ? "Fix the problem first" : "Approve the comment"}
+          </button>
+        </div>
+      )}
+      {done && <p className="notice ok small">Approved: it's posted once the video is public.</p>}
+    </>
+  );
+}
+
+/** Move when a scheduled YouTube video goes public. Like approving, it needs a fresh passkey: the server binds the
+ *  challenge to this video and time, then changes the release date on YouTube itself. */
+function ReleaseDate({
+  video,
+  event,
+  onDone,
+}: {
+  video: string;
+  event: CalEvent;
+  onDone: (note: string, due: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState(event.date);
+  const [time, setTime] = useState(event.time ?? "18:00");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const o = await api<{ options: never; challengeId: string }>("youtube/release/options", { video, date, time });
+      const response = await startAuthentication({ optionsJSON: o.options });
+      const r = await api<{ due: string }>("youtube/release/verify", { challengeId: o.challengeId, response });
+      setOpen(false);
+      onDone(`Moved to ${when(r.due)}.`, r.due);
+    } catch (e) {
+      const m = (e as Error).message;
+      setErr(
+        e instanceof HttpError
+          ? friendly(e)
+          : /NotAllowed|cancel/i.test(`${(e as Error).name} ${m}`)
+            ? "The passkey prompt was closed or timed out. Nothing was moved: tap Save new date to try again."
+            : m,
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card form">
+      <h2>Release date</h2>
+      <p className="small">
+        Goes public <strong>{event.time ? when(`${event.date} ${event.time}`) : dayName(event.date)}</strong>.
+      </p>
+      {open ? (
+        <>
+          <div className="row">
+            <label>
+              Date ({zoneLabel()})
+              <input type="date" value={date} min={zoneShift(0)} onChange={(e) => setDate(e.target.value)} />
+            </label>
+            <label>
+              Time
+              <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+            </label>
+          </div>
+          {err && (
+            <p className="notice bad small" role="alert">
+              {err}
+            </p>
+          )}
+          <div className="row actions">
+            <button
+              onClick={() => {
+                setOpen(false);
+                setErr(null);
+              }}
+              disabled={busy}
+            >
+              {t("common.cancel")}
+            </button>
+            <button className="primary inline" onClick={save} disabled={busy || !date || !time}>
+              {busy ? t("common.saving") : t("common.saveNewDate")}
+            </button>
+          </div>
+        </>
+      ) : (
+        <button onClick={() => setOpen(true)}>{t("common.changeDate")}</button>
+      )}
+    </div>
+  );
+}
+
+function VideoPage({ route }: { route: string }) {
+  const m = /^\/video\/([^/]+)\/([^?]+)\?d=(\d{4}-\d{2}-\d{2})/.exec(route);
+  const month = m?.[3].slice(0, 7) ?? zoneToday().slice(0, 7);
+  const { data, error, reload } = useLoad<{ events: CalEvent[] }>(`calendar?month=${month}`, [month]);
+  const [moved, setMoved] = useState<string | null>(null);
+  const canReschedule = useCan("reschedule"); // the server refuses other roles anyway; the card is for who can use it
+  const e = m && data?.events.find((x) => external(x) && x.account === m[1] && x.url?.endsWith(`/${m[2]}`));
+  // its metrics series, once the calendar knows the video: Results | Video when it has samples
+  const metrics = useMetrics(e && m ? `video/metrics?video=${encodeURIComponent(m[2])}` : null);
+  // Results first when the series is at hand as the page opens (cached), as an item opens on its Results; when it
+  // arrives after the video's details showed, the split appears with Video kept, so nothing moves under the thumb.
+  const [picked, setPicked] = useState<"results" | "video" | null>(null);
+  const detailsShown = useRef(false);
+  if (e && !metrics.any) detailsShown.current = true;
+  const view = picked ?? (detailsShown.current ? "video" : "results");
+  const back = (
+    <p className="back-row">
+      <a className="back" href={lastList}>
+        {ICON.back}
+        {lastList.startsWith("#/calendar") ? "Calendar" : "Today"}
+      </a>
+    </p>
+  );
+  if (!m)
+    return (
+      <>
+        {back}
+        <p className="muted">Unknown video link.</p>
+      </>
+    );
+  const [, account, id] = m;
+  if (error)
+    return (
+      <>
+        {back}
+        <ErrorNote msg={error} onRetry={reload} />
+      </>
+    );
+  if (!data)
+    return (
+      <>
+        {back}
+        <p className="muted">{t("common.loading")}</p>
+      </>
+    );
+  if (!e)
+    return (
+      <>
+        {back}
+        {moved && (
+          <p className="notice ok small" role="status">
+            {moved}
+          </p>
+        )}
+        <p className="muted">This video isn't in the calendar for {month} any more.</p>
+        <a className="button-link with-icon" href={`https://youtu.be/${id}`} target="_blank" rel="noopener">
+          {ICON.external}
+          {t("common.openOnYoutube")}
+        </a>
+      </>
+    );
+  return (
+    <section>
+      {back}
+      <p className="item-target">
+        <Dot c={e} />
+        {platformName(e.platform)}
+        {e.account_name ? ` ${e.account_name}` : ""} · {e.label} ·{" "}
+        <strong>
+          {dayName(e.date)}
+          {e.time ? ` · ${e.time} ${zoneLabel()}` : ""}
+        </strong>
+      </p>
+      <h2>{e.title.replace(/^Short · /, "")}</h2>
+      {metrics.any && (
+        <Segmented
+          label={t("results.show")}
+          value={view}
+          options={[
+            { value: "results", text: t("results.results") },
+            { value: "video", text: t("results.video") },
+          ]}
+          onChange={setPicked}
+        />
+      )}
+      {metrics.any && view === "results" ? (
+        <>
+          <MetricsPanel
+            m={metrics}
+            metrics={metrics.data?.analytics ? YT_METRICS_SUBS : YT_METRICS}
+            names={{ follows: t("results.subscribers") }}
+          />
+          {metrics.data?.analytics === false && <p className="muted small">{t("results.analyticsMissing")}</p>}
+        </>
+      ) : (
+        <>
+          <p>
+            <span className={`pill ${statusTone(e.status)}`}>{statusWord(e.status)}</span>
+          </p>
+          <p className="muted small">
+            YouTube videos are published by YouTube itself; the scheduler only adds the pinned-comment text to Shorts,
+            once you approve it.
+          </p>
+          {moved && (
+            <p className="notice ok small" role="status">
+              {moved}
+            </p>
+          )}
+          {e.status === "scheduled" && canReschedule && (
+            <ReleaseDate
+              video={id}
+              event={e}
+              onDone={(note, due) => {
+                // a move into another month: the page's own month no longer has the event, so follow it
+                setMoved(note);
+                const to = `/video/${account}/${id}?d=${due.slice(0, 10)}`;
+                if (to === route) reload();
+                else location.hash = `#${to}`;
+              }}
+            />
+          )}
+          <a className="button-link with-icon" href={`https://youtu.be/${id}`} target="_blank" rel="noopener">
+            {ICON.external}
+            {t("common.openOnYoutube")}
+          </a>
+          <ShortComment video={id} />
+        </>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- comments
+
+type CommentRow = {
+  id: string;
+  platform: "ig" | "yt";
+  account: string;
+  media_id: string;
+  item_key: string | null;
+  author: string;
+  text: string;
+  at: number;
+  seen: number;
+  reply_text: string | null;
+  replied_at: number | null;
+  title: string | null;
+  name: string | null;
+  permalink: string | null;
+};
+
+/** Others' comments on recent posts and Shorts, per post, newest first; reply in place. Opening it marks them seen. */
+function CommentsPage() {
+  const { unseen } = useShared();
+  const { data, error, reload } = useLoad<{ comments: CommentRow[] }>("comments");
+  const [open, setOpen] = useState<string | null>(null);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  // Marked seen once the list has loaded, so what was new still shows highlighted this time.
+  const loaded = !!data;
+  useEffect(() => {
+    if (loaded)
+      api("comments/seen", {})
+        .then(() => unseen.reload())
+        .catch(() => {});
+  }, [loaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  const send = async (id: string) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api(`comments/${encodeURIComponent(id)}/reply`, { text });
+      setOpen(null);
+      setText("");
+      reload();
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (error) return <ErrorNote msg={error} onRetry={reload} />;
+  if (!data) return <p className="muted">{t("common.loading")}</p>;
+  if (!data.comments.length)
+    return (
+      <p className="muted">
+        No comments on the last two weeks' posts yet. New ones show up here (checked every 15 minutes).
+      </p>
+    );
+  const groups = new Map<string, CommentRow[]>();
+  for (const c of data.comments) groups.set(c.media_id, [...(groups.get(c.media_id) ?? []), c]);
+  return (
+    <section>
+      {[...groups.values()].map((cs) => {
+        const c0 = cs[0];
+        const yt = c0.platform === "yt";
+        const title = c0.title || (c0.name ? nice(c0.name) : yt ? "YouTube Short" : "Instagram post");
+        const href = c0.item_key && !yt ? `#/item/${encodeURIComponent(c0.item_key)}` : null;
+        const out = yt ? `https://youtu.be/${c0.media_id}` : c0.permalink;
+        return (
+          <div key={c0.media_id} className="comment-group">
+            <h2 className="row">
+              <span className="clip">
+                {href ? (
+                  <a href={href} className="link">
+                    {title}
+                  </a>
+                ) : (
+                  title
+                )}
+              </span>
+              {out && (
+                <a
+                  className="icon-btn out-inline"
+                  href={out}
+                  target="_blank"
+                  rel="noopener"
+                  aria-label={`Open on ${yt ? "YouTube" : "Instagram"}`}
+                >
+                  {yt ? ICON.youtube : ICON.instagram}
+                </a>
+              )}
+            </h2>
+            <p className="muted small">{yt ? `YouTube · ${c0.account}` : `Instagram · @${c0.account}`}</p>
+            <ul className="list">
+              {cs.map((c) => (
+                <li key={c.id} className={c.seen ? undefined : "tone-warn"}>
+                  <div>
+                    <div className="row">
+                      <strong className="small clip">{yt ? c.author : `@${c.author}`}</strong>
+                      <span className="muted small">{utcToZone(new Date(c.at * 1000).toISOString())}</span>
+                    </div>
+                    <p className="comment-text">{c.text}</p>
+                    {c.reply_text && <p className="small muted">↳ You replied: {c.reply_text}</p>}
+                    {open === c.id ? (
+                      <div className="form">
+                        <label className="vh" htmlFor={`r-${c.id}`}>
+                          Reply
+                        </label>
+                        <textarea
+                          id={`r-${c.id}`}
+                          rows={2}
+                          value={text}
+                          autoFocus
+                          onChange={(e) => setText(e.target.value)}
+                          placeholder={`Reply to ${yt ? c.author : `@${c.author}`}`}
+                        />
+                        {err && (
+                          <p className="notice bad small" role="alert">
+                            {err}
+                          </p>
+                        )}
+                        <div className="row actions">
+                          <button
+                            onClick={() => {
+                              setOpen(null);
+                              setErr(null);
+                            }}
+                            disabled={busy}
+                          >
+                            {t("common.cancel")}
+                          </button>
+                          <button className="primary inline" onClick={() => send(c.id)} disabled={busy || !text.trim()}>
+                            {busy ? "Sending…" : "Send reply"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      !c.reply_text && (
+                        <button
+                          onClick={() => {
+                            setOpen(c.id);
+                            setText("");
+                            setErr(null);
+                          }}
+                        >
+                          Reply
+                        </button>
+                      )
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- drafts and settings
+
+type Texts = { caption: string; comment: string; comment2: string; alt: string };
+
+/** Caption / self-comment / alt texts (posts only), as they'll be published. */
+function TextsForm({
+  alt,
+  initial,
+  submit,
+  onSubmit,
+  onCancel,
+  children,
+  noTexts = false,
+}: {
+  /** Show the alt texts field (images on a platform that takes alt texts). */
+  alt: boolean;
+  initial: Texts;
+  submit: string;
+  onSubmit: (t: Texts) => Promise<void>;
+  onCancel: () => void;
+  children?: ReactNode;
+  noTexts?: boolean;
+}) {
+  const [t, setT] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const go = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await onSubmit(t);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="card form">
+      {children}
+      {noTexts ? (
+        <p className="muted small">A Story has no caption or comments.</p>
+      ) : (
+        <>
+          <label>
+            Caption
+            <textarea rows={6} value={t.caption} onChange={(e) => setT({ ...t, caption: e.target.value })} />
+          </label>
+          <span className={`small ${t.caption.length > 2200 ? "bad-text" : "muted"}`}>{t.caption.length} / 2200</span>
+          <label>
+            Self-comment <span className="muted small">(empty: the caption's question line)</span>
+            <textarea rows={2} value={t.comment} onChange={(e) => setT({ ...t, comment: e.target.value })} />
+          </label>
+          <label>
+            Second comment <span className="muted small">(optional: posted right after the first)</span>
+            <textarea rows={2} value={t.comment2} onChange={(e) => setT({ ...t, comment2: e.target.value })} />
+          </label>
+          {alt && (
+            <label>
+              Alt texts <span className="muted small">(one line per image, in order)</span>
+              <textarea rows={3} value={t.alt} onChange={(e) => setT({ ...t, alt: e.target.value })} />
+            </label>
+          )}
+        </>
+      )}
+      {err && (
+        <p className="notice bad small" role="alert">
+          {err}
+        </p>
+      )}
+      <div className="row">
+        <button onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          className="primary"
+          onClick={go}
+          disabled={busy || (!noTexts && (!t.caption.trim() || t.caption.length > 2200))}
+        >
+          {busy ? "Saving…" : submit}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type Slot = { date: string; time: string };
+const slotsOf = (e: unknown): Slot[] =>
+  e instanceof HttpError && Array.isArray(e.body.suggestions) ? (e.body.suggestions as Slot[]) : [];
+
+/** The account's next free hours after a clash, as one-tap choices. */
+function FreeSlots({ slots, onPick }: { slots: Slot[]; onPick: (s: Slot) => void }) {
+  if (!slots.length) return null;
+  return (
+    <div className="slots" role="group" aria-label="Free times">
+      <span className="small muted">Free:</span>
+      {slots.map((s) => (
+        <button key={`${s.date} ${s.time}`} className="chip" onClick={() => onPick(s)}>
+          {dayName(s.date)} · {s.time}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Turn a draft into a scheduled item: account, date, time, name and texts; approval follows on the item page. */
+function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[]; onCancel: () => void }) {
+  const kind = d.kind === "reel" ? "reel" : "post";
+  const [account, setAccount] = useState(accounts.includes(d.account) ? d.account : accounts[0]);
+  const [date, setDate] = useState(zoneShift(1));
+  const [time, setTime] = useState(kind === "reel" ? "18:00" : "19:00");
+  const [name, setName] = useState(d.payload.name ?? d.id);
+  const [slots, setSlots] = useState<Slot[]>([]);
+  const single = (d.payload.media?.length ?? 0) === 1;
+  const [story, setStory] = useState(false);
+  return (
+    <TextsForm
+      alt={kind === "post"}
+      noTexts={story}
+      initial={{
+        caption: d.payload.caption ?? "",
+        comment: d.payload.comment ?? "",
+        comment2: d.payload.comment2 ?? "",
+        alt: d.payload.alt ?? "",
+      }}
+      submit={story ? "Schedule Story" : "Schedule"}
+      onCancel={onCancel}
+      onSubmit={async (t) => {
+        setSlots([]);
+        try {
+          const r = await api<{ key: string }>(`drafts/${d.id}/schedule`, {
+            account,
+            date,
+            time,
+            name,
+            ...(story ? { format: "story" } : t),
+          });
+          location.hash = `#/item/${encodeURIComponent(r.key)}`;
+        } catch (e) {
+          setSlots(slotsOf(e));
+          throw e;
+        }
+      }}
+    >
+      {single && (
+        <div className="segmented" role="group" aria-label="Publish as">
+          <button aria-pressed={!story} onClick={() => setStory(false)}>
+            {kind === "reel" ? "Reel" : "Post"}
+          </button>
+          <button aria-pressed={story} onClick={() => setStory(true)}>
+            Story
+          </button>
+        </div>
+      )}
+      <label>
+        Account
+        <select value={account} onChange={(e) => setAccount(e.target.value)}>
+          {accounts.map((a) => (
+            <option key={a} value={a}>
+              @{a}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="row">
+        <label>
+          Date ({zoneLabel()})
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+        </label>
+        <label>
+          Time ({zoneLabel()})
+          <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
+        </label>
+      </div>
+      <FreeSlots
+        slots={slots}
+        onPick={(s) => {
+          setDate(s.date);
+          setTime(s.time);
+          setSlots([]);
+        }}
+      />
+      <label>
+        Name{" "}
+        <span className="muted small">
+          (item key: {story || kind === "post" ? "post" : "reel"}:{d.payload.folder ?? "drafts"}/{name})
+        </span>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+    </TextsForm>
+  );
+}
+
+const CHUNK = 8 * 1024 * 1024; // a multiple of 256 KiB, as Drive's resumable uploads want
+
+/** Sends one file to a Drive resumable session, reading it once from start to end (file.stream()): files from
+ *  Android's picker often can't be read at an offset (slice → NotReadableError) and may not be the size they claim,
+ *  so nothing seeks and the real total is only given with the last chunk. Chunks are 8 MiB; XHR, for progress.
+ *  Browsers treat Drive's "308 Resume Incomplete" as a redirect and fail, so X-Guploader-No-308 asks for 200 +
+ *  X-HTTP-Status-Code-Override: 308; the next chunk starts after the Range Google confirms. */
+function uploadFile(url: string, file: File, onProgress: (sent: number) => void): Promise<{ id: string }> {
+  const fail = (msg: string, detail: Record<string, unknown>) => {
+    // What the phone saw, kept in the scheduler's audit log (the phone has no console to look at).
+    api("client-error", {
+      msg,
+      detail: {
+        ...detail,
+        name: file.name,
+        type: file.type,
+        size: file.size,
+        online: navigator.onLine,
+        ua: navigator.userAgent,
+      },
+    }).catch(() => {});
+    return new Error(msg);
+  };
+  const reader = file.stream().getReader();
+  let pieces: Uint8Array[] = [],
+    have = 0,
+    eof = false;
+  const fill = async () => {
+    // at least one chunk buffered, or the rest of the file
+    while (have < CHUNK && !eof) {
+      const { done, value } = await reader.read();
+      if (done) eof = true;
+      else {
+        pieces.push(value);
+        have += value.length;
+      }
+    }
+  };
+  const take = (): Uint8Array => {
+    // the buffered bytes as one array (kept: a retry or a short confirm re-sends from it)
+    if (pieces.length !== 1) {
+      const all = new Uint8Array(have);
+      let o = 0;
+      for (const p of pieces) {
+        all.set(p, o);
+        o += p.length;
+      }
+      pieces = [all];
+    }
+    return pieces[0];
+  };
+  const send = (body: Uint8Array, range: string, start: number) =>
+    new Promise<XMLHttpRequest>((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open("PUT", url);
+      x.setRequestHeader("Content-Range", range);
+      x.setRequestHeader("X-Guploader-No-308", "yes");
+      x.upload.onprogress = (e) => onProgress(start + e.loaded);
+      x.onload = () => resolve(x);
+      x.onerror = () => reject(new Error("network"));
+      x.send(body as Uint8Array<ArrayBuffer>); // stream chunks are ArrayBuffer-backed
+    });
+  return (async () => {
+    let offset = 0;
+    for (;;) {
+      try {
+        await fill();
+      } catch (e) {
+        throw fail(
+          `this device couldn't read ${file.name} (${(e as Error).name}): pick it again from the file browser (Videos or DCIM/Camera)`,
+          { start: offset, stage: "read" },
+        );
+      }
+      const buf = take();
+      const last = eof && have <= CHUNK;
+      const n = last ? have : CHUNK;
+      const range = n === 0 ? `bytes */${offset}` : `bytes ${offset}-${offset + n - 1}/${last ? offset + n : "*"}`;
+      let x: XMLHttpRequest | null = null;
+      for (let tries = 0; ; tries++) {
+        try {
+          x = await send(buf.subarray(0, n), range, offset);
+        } catch {
+          x = null;
+        }
+        if (x && !(x.status >= 500)) break;
+        if (tries >= 3)
+          throw fail(
+            x
+              ? `upload of ${file.name} failed (${x.status})`
+              : `upload of ${file.name}: network error at ${file.size ? Math.round((offset / file.size) * 100) : 0}%`,
+            { start: offset, stage: x ? "status" : "network", status: x?.status ?? 0 },
+          );
+        await new Promise((r) => setTimeout(r, 2000 * (tries + 1)));
+      }
+      if (x.status === 308 || x.getResponseHeader("X-HTTP-Status-Code-Override") === "308") {
+        const got = /bytes=0-(\d+)/.exec(x.getResponseHeader("Range") ?? "");
+        const next = got ? Number(got[1]) + 1 : offset + n;
+        pieces = [buf.subarray(next - offset)];
+        have -= next - offset;
+        offset = next; // keep what Google didn't confirm
+        continue;
+      }
+      if (x.status === 200 || x.status === 201) return JSON.parse(x.responseText) as { id: string };
+      throw fail(`upload of ${file.name} failed (${x.status}: ${x.responseText.slice(0, 120)})`, {
+        start: offset,
+        stage: "status",
+        status: x.status,
+      });
+    }
+  })();
+}
+
+/** A new draft from this device: pick the media (slide order = the order picked), the project and the texts. */
+function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel: () => void }) {
+  const groups = useLoad<{ groups: { channel: string; group: string }[] }>("queue/groups?days=120");
+  const [files, setFiles] = useState<File[]>([]);
+  const [project, setProject] = useState(remembered("draft.project"));
+  const [name, setName] = useState("");
+  const [t, setT] = useState<Texts>({ caption: "", comment: "", comment2: "", alt: "" });
+  const [sent, setSent] = useState<number | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const total = files.reduce((s, f) => s + f.size, 0);
+  const images = files.filter((f) => f.type.startsWith("image/")).length;
+  const pick = (list: FileList | null) => {
+    const fs = [...(list ?? [])].filter((f) => /^(image|video)\//.test(f.type)).slice(0, 10);
+    setFiles(fs);
+    if (!name && fs[0])
+      setName(
+        fs[0].name
+          .replace(/\.[^.]+$/, "")
+          .replace(/[^A-Za-z0-9_.-]+/g, "_")
+          .slice(0, 60),
+      );
+  };
+  const go = async () => {
+    setErr(null);
+    setSent(0);
+    try {
+      const ids: string[] = [];
+      let done = 0;
+      for (const f of files) {
+        const { uploadUrl } = await api<{ uploadUrl: string }>("uploads/start", {
+          name: f.name,
+          mimeType: f.type,
+          size: f.size,
+        });
+        ids.push((await uploadFile(uploadUrl, f, (n) => setSent(done + n))).id);
+        done += f.size;
+      }
+      remember("draft.project", project);
+      const r = await api<{ id: string }>("drafts/new", { files: ids, project, name, ...t });
+      onDone(r.id);
+    } catch (e) {
+      setErr((e as Error).message);
+      setSent(null);
+    }
+  };
+  const busy = sent !== null;
+  return (
+    <div className="card form">
+      <div className="row picks">
+        {/* No accept list on purpose: with image/video types Android opens its photo picker, whose copies Chrome can't
+            read (NotReadableError / TypeError, seen on some Android phones); without, it opens the file browser. */}
+        <label className="button">
+          Choose files
+          <input type="file" multiple className="vh" disabled={busy} onChange={(e) => pick(e.target.files)} />
+        </label>
+      </div>
+      <p className="muted small">
+        1 video for a Reel, or up to 10 images/videos for a carousel, in the order picked (on the phone: Videos, Images
+        or DCIM/Camera in the file browser).
+      </p>
+      {files.length > 0 && (
+        <p className="muted small">
+          {files.length > 1 ? `Carousel of ${files.length}` : files[0].type.startsWith("video/") ? "Reel" : "Photo"} ·{" "}
+          {(total / 1024 / 1024).toFixed(1)} MB: {files.map((f) => f.name).join(", ")}
+        </p>
+      )}
+      <div className="row">
+        <label>
+          Project
+          <input
+            list="projects"
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+            placeholder="20260201_RUN"
+            disabled={busy}
+          />
+        </label>
+        <label>
+          Name
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="short3_name" disabled={busy} />
+        </label>
+      </div>
+      <datalist id="projects">
+        {[...new Set((groups.data?.groups ?? []).map((g) => g.group))].map((g) => (
+          <option key={g} value={g} />
+        ))}
+      </datalist>
+      <label>
+        Caption
+        <textarea
+          rows={5}
+          value={t.caption}
+          onChange={(e) => setT({ ...t, caption: e.target.value })}
+          disabled={busy}
+        />
+      </label>
+      <label>
+        Self-comment <span className="muted small">(empty: the caption's question line)</span>
+        <textarea
+          rows={2}
+          value={t.comment}
+          onChange={(e) => setT({ ...t, comment: e.target.value })}
+          disabled={busy}
+        />
+      </label>
+      <label>
+        Second comment <span className="muted small">(optional: posted right after the first)</span>
+        <textarea
+          rows={2}
+          value={t.comment2}
+          onChange={(e) => setT({ ...t, comment2: e.target.value })}
+          disabled={busy}
+        />
+      </label>
+      {images > 0 && files.length > 1 && (
+        <label>
+          Alt texts <span className="muted small">(one line per image)</span>
+          <textarea rows={3} value={t.alt} onChange={(e) => setT({ ...t, alt: e.target.value })} disabled={busy} />
+        </label>
+      )}
+      {busy && (
+        <p className="small">
+          Uploading to Drive… {total ? Math.round((sent! / total) * 100) : 0}% <progress max={total} value={sent!} />
+        </p>
+      )}
+      {err && <p className="error small">{err}</p>}
+      <div className="row">
+        <button onClick={onCancel} disabled={busy}>
+          Cancel
+        </button>
+        <button className="primary" onClick={go} disabled={busy || !files.length || !project || !name}>
+          {busy ? "Uploading…" : "Upload and create draft"}
+        </button>
+      </div>
+      <p className="muted small">
+        The files go straight from this device to Drive ("{"Bongsu app uploads"}"); the texts can still be edited when
+        scheduling.
+      </p>
+    </div>
+  );
+}
+
+/** A destructive button that asks once, in place, before it acts. */
+function ConfirmButton({
+  label,
+  confirm,
+  detail,
+  onConfirm,
+  full = false,
+  tone = "danger",
+}: {
+  label: string;
+  confirm: string;
+  detail: string;
+  onConfirm: () => Promise<unknown> | void;
+  full?: boolean;
+  tone?: "danger" | "go";
+}) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const cls = tone === "danger" ? "danger" : "";
+  if (!asking)
+    return (
+      <button className={`${cls}${full ? " full" : ""}`} onClick={() => setAsking(true)}>
+        {label}
+      </button>
+    );
+  return (
+    <div className={`confirm-ask${tone === "go" ? " go" : ""}`} role="alertdialog" aria-label={confirm}>
+      <p className="small">
+        <strong>{confirm}</strong> {detail}
+      </p>
+      <div className="row">
+        <button onClick={() => setAsking(false)} disabled={busy}>
+          {t("common.cancel")}
+        </button>
+        <button
+          className={tone === "danger" ? "danger" : "primary inline"}
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onConfirm();
+            } finally {
+              setBusy(false);
+              setAsking(false);
+            }
+          }}
+        >
+          {busy ? "…" : label}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DraftsPage() {
+  const {
+    drafts: { data, error, reload, stale, at },
+  } = useShared();
+  const uploads = useLoad<{ enabled: boolean }>("uploads/enabled");
+  const noAccounts = useNoAccounts();
+  const [open, setOpen] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [about, setAbout] = useState(false);
+  const refuse = async (id: string) => {
+    try {
+      await api(`drafts/${id}/refuse`, {});
+      setMsg("Draft refused.");
+      reload();
+    } catch (e) {
+      setMsg((e as Error).message);
+    }
+  };
+  const kindWord = (k: string) =>
+    k === "reel"
+      ? "Reel"
+      : k === "carousel"
+        ? "Carousel"
+        : k === "photo"
+          ? "Photo"
+          : k === "shorts_comment"
+            ? "Shorts comment"
+            : cap(k);
+  return (
+    <section>
+      {!adding && (
+        <div className="drafts-head">
+          {uploads.data?.enabled && (
+            <button onClick={() => setAdding(true)} className="with-icon">
+              {ICON.plus}New draft
+            </button>
+          )}
+          <button
+            className="icon-btn"
+            onClick={() => setAbout(!about)}
+            aria-expanded={about}
+            aria-controls="drafts-about"
+            aria-label="About drafts"
+            title="About drafts"
+          >
+            {ICON.info}
+          </button>
+        </div>
+      )}
+      {about && (
+        <p id="drafts-about" className="notice small">
+          Files dropped in Drive's <code>UPLOADS/inbox/&lt;project&gt;/</code> and proposals from agents. Schedule one,
+          then approve it on its page.
+        </p>
+      )}
+      {adding && (
+        <NewDraft
+          onCancel={() => setAdding(false)}
+          onDone={(id) => {
+            setAdding(false);
+            setOpen(id);
+            reload();
+          }}
+        />
+      )}
+      {stale && <Stale msg={stale} at={at} onRetry={reload} />}
+      {error && <ErrorNote msg={error} onRetry={reload} />}
+      {msg && (
+        <p className="notice small" role="status">
+          {msg}
+        </p>
+      )}
+      {noAccounts && <SetupNote />}
+      {data && !data.drafts.length && !noAccounts && <p className="muted">{EMPTY.drafts}</p>}
+      <ul className="list">
+        {data?.drafts.map((d) => (
+          <li key={d.id}>
+            <div className="row">
+              <strong className="clip">{d.payload.title ?? nice(d.payload.name ?? kindWord(d.kind))}</strong>
+              <span className="muted small">
+                {kindWord(d.kind)} · @{d.account}
+              </span>
+            </div>
+            {d.previews && (
+              <div className={d.previews.length > 1 ? "media carousel" : "media"}>
+                {d.previews.map((m) =>
+                  m.mime.startsWith("video/") ? (
+                    <video
+                      key={m.url}
+                      src={`${m.url}#t=0.1`}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      aria-label={`Video: ${m.name}`}
+                    />
+                  ) : (
+                    <img key={m.url} src={m.url} alt={m.name} loading="lazy" />
+                  ),
+                )}
+              </div>
+            )}
+            {d.payload.caption && <pre className="text small">{d.payload.caption}</pre>}
+            {d.payload.comment && <p className="muted small">Self-comment: {d.payload.comment}</p>}
+            {d.payload.comment2 && <p className="muted small">Second comment: {d.payload.comment2}</p>}
+            {d.payload.note && <p className="small">{d.payload.note}</p>}
+            <p className="muted small">
+              {when(d.created_at)} · {d.source === "drive" ? "Drive inbox" : d.created_by}
+            </p>
+            {open !== d.id && (
+              <div className="row actions">
+                <ConfirmButton
+                  label="Refuse"
+                  confirm="Refuse this draft?"
+                  detail="It can't be brought back."
+                  onConfirm={() => refuse(d.id)}
+                />
+                {(d.payload.media?.length ?? 0) > 0 && d.kind !== "shorts_comment" && (
+                  <button onClick={() => setOpen(d.id)}>Schedule…</button>
+                )}
+              </div>
+            )}
+            {open === d.id && data && <ScheduleForm d={d} accounts={data.accounts} onCancel={() => setOpen(null)} />}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------- performance (the latest analytics snapshot)
+
+type PerfRow = {
+  platform: string;
+  account: string;
+  format?: string;
+  published?: string;
+  title?: string;
+  url?: string;
+  views?: number | null;
+  likes?: number | null;
+  comments?: number | null;
+  shares?: number | null;
+  saves?: number | null;
+  views_vs_median?: number | null;
+};
+type Perf = {
+  taken: string;
+  previous: string | null /** the latest review's name */;
+  report: string | null;
+  recent: PerfRow[];
+  best: PerfRow[];
+  accounts: {
+    platform: string;
+    account: string;
+    title?: string;
+    followers: number | null;
+    change: number | null;
+    url?: string | null;
+    /** From the account series: when the sample the change is counted from was taken. */
+    since?: string | null;
+  }[];
+};
+
+const num = (n?: number | null) => (n == null ? "–" : n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n));
+const count = (n: number | null | undefined, one: string, many = `${one}s`) => `${num(n)} ${n === 1 ? one : many}`;
+
+function PerfList({ rows }: { rows: PerfRow[] }) {
+  if (!rows.length) return <p className="muted">None.</p>;
+  return (
+    <ul className="list">
+      {rows.map((r, k) => {
+        const body = (
+          <div>
+            <div className="row">
+              <strong className="small clip">{r.title || "(untitled)"}</strong>
+              <span className="small num">{count(r.views, "view")}</span>
+            </div>
+            <div className="muted small">
+              {r.platform === "youtube" ? `YouTube · ${r.account}` : `Instagram @${r.account}`}
+              {r.format ? ` · ${r.format}` : ""}
+              {r.published ? ` · ${dayName(r.published.slice(0, 10))}` : ""}
+            </div>
+            <div className="muted small num">
+              {count(r.likes, "like")} · {count(r.comments, "comment")}
+              {r.shares != null ? ` · ${count(r.shares, "share")}` : ""}
+              {r.views_vs_median ? ` · ${r.views_vs_median}× the account's median` : ""}
+            </div>
+          </div>
+        );
+        return (
+          <li key={k}>
+            {r.url ? (
+              <a href={r.url} target="_blank" rel="noopener">
+                {body}
+              </a>
+            ) : (
+              body
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** A performance review (Markdown in `reports`, imported from an earlier collector). */
+function ReportPage({ route }: { route: string }) {
+  const name = decodeURIComponent(route.replace(/^\/stats\/report\//, ""));
+  const { data, error, reload } = useLoad<{ name: string; markdown: string; all: string[] }>(
+    `report?name=${encodeURIComponent(name)}`,
+  );
+  const back = (
+    <p className="back-row">
+      <a className="back" href="#/stats">
+        {ICON.back}Stats
+      </a>
+    </p>
+  );
+  if (error)
+    return (
+      <>
+        {back}
+        <ErrorNote msg={error} onRetry={reload} />
+      </>
+    );
+  if (!data)
+    return (
+      <>
+        {back}
+        <p className="muted">{t("common.loading")}</p>
+      </>
+    );
+  const others = data.all.filter((n) => n !== data.name);
+  return (
+    <section className="report">
+      {back}
+      <Markdown text={data.markdown} />
+      {others.length > 0 && (
+        <details className="key-details">
+          <summary className="small muted tap">Other reviews ({others.length})</summary>
+          <ul className="small">
+            {others.map((n) => (
+              <li key={n}>
+                <a className="link tap" href={`#/stats/report/${encodeURIComponent(n)}`}>
+                  {n}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </section>
+  );
+}
+
+/** Just enough markdown for the reviews: headings, paragraphs, lists (nested by indent), tables, code blocks, and
+ *  inline bold / italic / code / links. Built as React elements, never as HTML, so nothing in the text can inject. */
+function Markdown({ text }: { text: string }) {
+  const inline = (s: string, k = 0): React.ReactNode[] => {
+    const out: React.ReactNode[] = [];
+    const re =
+      /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(?<![\w*])\*([^*\s][^*]*)\*(?!\w)|(?<!\w)_([^_\s][^_]*)_(?!\w))/g;
+    let last = 0,
+      m: RegExpExecArray | null;
+    // biome-ignore lint/suspicious/noAssignInExpressions: the usual RegExp.exec loop
+    while ((m = re.exec(s))) {
+      if (m.index > last) out.push(s.slice(last, m.index));
+      const key = `${k}-${m.index}`;
+      if (m[2]) out.push(<strong key={key}>{inline(m[2], k + 1)}</strong>);
+      else if (m[3]) out.push(<code key={key}>{m[3]}</code>);
+      else if (m[4])
+        out.push(
+          <a key={key} className="link" href={m[5]} target="_blank" rel="noopener">
+            {m[4]}
+          </a>,
+        );
+      else out.push(<em key={key}>{m[6] ?? m[7]}</em>);
+      last = m.index + m[0].length;
+    }
+    if (last < s.length) out.push(s.slice(last));
+    return out;
+  };
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const blocks: React.ReactNode[] = [];
+  let i = 0;
+  const isList = (l: string) => /^\s*([-*+]|\d+\.)\s+/.test(l);
+  const list = (start: number, indent: number): [React.ReactNode, number] => {
+    const items: React.ReactNode[][] = [];
+    const ordered = /^\s*\d+\./.test(lines[start]);
+    let j = start;
+    while (j < lines.length && lines[j].trim()) {
+      const ind = lines[j].match(/^\s*/)![0].length;
+      if (isList(lines[j]) && ind === indent) {
+        items.push([inline(lines[j].replace(/^\s*([-*+]|\d+\.)\s+/, ""), j)]);
+        j++;
+      } else if (isList(lines[j]) && ind > indent && items.length) {
+        const [sub, next] = list(j, ind);
+        items[items.length - 1].push(sub);
+        j = next;
+      } else if (!isList(lines[j]) && ind > indent && items.length) {
+        items[items.length - 1].push(" ", ...inline(lines[j].trim(), j));
+        j++;
+      } else break;
+    }
+    const lis = items.map((c, n) => <li key={n}>{c}</li>);
+    return [ordered ? <ol key={start}>{lis}</ol> : <ul key={start}>{lis}</ul>, j];
+  };
+  while (i < lines.length) {
+    const l = lines[i];
+    if (!l.trim()) {
+      i++;
+      continue;
+    }
+    if (l.startsWith("```")) {
+      const body: string[] = [];
+      for (i++; i < lines.length && !lines[i].startsWith("```"); i++) body.push(lines[i]);
+      blocks.push(
+        <pre key={i} className="text">
+          {body.join("\n")}
+        </pre>,
+      );
+      i++;
+      continue;
+    }
+    const h = /^(#{1,4})\s+(.*)$/.exec(l);
+    if (h) {
+      const level = Math.min(h[1].length + 1, 4);
+      const Tag = `h${level}` as "h2" | "h3" | "h4";
+      blocks.push(<Tag key={i}>{inline(h[2], i)}</Tag>);
+      i++;
+      continue;
+    }
+    if (l.trim().startsWith("|")) {
+      const rows: string[][] = [];
+      for (; i < lines.length && lines[i].trim().startsWith("|"); i++) {
+        if (/^\s*\|[\s:|-]+\|\s*$/.test(lines[i])) continue; // the |---|---| line
+        rows.push(
+          lines[i]
+            .trim()
+            .replace(/^\||\|$/g, "")
+            .split("|")
+            .map((c) => c.trim()),
+        );
+      }
+      const [head, ...body] = rows;
+      blocks.push(
+        <div key={i} className="md-table">
+          <table>
+            <thead>
+              <tr>
+                {head.map((c, n) => (
+                  <th key={n}>{inline(c, i)}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {body.map((r, n) => (
+                <tr key={n}>
+                  {r.map((c, m) => (
+                    <td key={m}>{inline(c, i + n)}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>,
+      );
+      continue;
+    }
+    if (isList(l)) {
+      const [node, next] = list(i, l.match(/^\s*/)![0].length);
+      blocks.push(node);
+      i = next;
+      continue;
+    }
+    const para: string[] = [];
+    for (; i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*\|)/.test(lines[i]) && !isList(lines[i]); i++)
+      para.push(lines[i].trim());
+    blocks.push(<p key={i}>{inline(para.join(" "), i)}</p>);
+  }
+  return <div className="md">{blocks}</div>;
+}
+
+function StatsPage() {
+  const [refresh, setRefresh] = useState(0);
+  const { data, error, stale, at, reload } = useLoad<Perf & { none?: true }>(
+    `performance${refresh ? "?refresh=1" : ""}`,
+    [refresh],
+  );
+  if (error) return <ErrorNote msg={error} onRetry={reload} />;
+  if (!data) return <p className="muted">{t("common.loading")}</p>;
+  if (data.none) return <p className="muted">No analytics snapshot yet.</p>;
+  return (
+    <section>
+      {stale && <Stale msg={stale} at={at} onRetry={reload} />}
+      <p className="muted small">
+        Snapshot of {dayName(data.taken.slice(0, 10))}
+        {data.previous ? `, compared with ${dayName(data.previous.slice(0, 10))}` : ""}. Collected every night.
+      </p>
+      <h2>Audience</h2>
+      <ul className="list">
+        {data.accounts.map((a) => (
+          <li key={`${a.platform}:${a.account}`}>
+            <a className="aud" href={`#/stats/${a.platform}/${encodeURIComponent(a.account)}`}>
+              <div className="clip">
+                <strong className="small">{a.title || `@${a.account}`}</strong>
+                <div className="muted small">
+                  {a.platform === "youtube" ? "YouTube channel" : `Instagram${a.title ? ` · @${a.account}` : ""}`}
+                </div>
+              </div>
+              <div className="small num aud-n">
+                {count(a.followers, a.platform === "youtube" ? "subscriber" : "follower")}
+                {a.change ? (
+                  <div className={a.change > 0 ? "ok-text" : "bad-text"}>
+                    {a.change > 0 ? "+" : ""}
+                    {a.change}{" "}
+                    {a.since
+                      ? t("channel.since", { when: shortDay(a.since) })
+                      : `since ${data.previous ? dayName(data.previous.slice(0, 10)) : "last time"}`}
+                  </div>
+                ) : null}
+              </div>
+            </a>
+          </li>
+        ))}
+      </ul>
+      <h2>Last 7 days, most viewed</h2>
+      <PerfList rows={data.recent} />
+      <h2>Best against their account's median</h2>
+      <PerfList rows={data.best} />
+      <p className="row">
+        {data.report && (
+          <a href={`#/stats/report/${encodeURIComponent(data.report)}`} className="link tap">
+            Latest full review
+          </a>
+        )}
+        <button onClick={() => setRefresh(refresh + 1)}>Check for a newer snapshot</button>
+      </p>
+    </section>
+  );
+}
+
+/** An account's page: its follower count and change, the followers chart and views per day over a period, and
+ *  the posts and videos that brought followers, each opening its Results or video page. */
+function ChannelPage({ route }: { route: string }) {
+  const [, platform, raw] = /^\/stats\/([^/]+)\/(.+)$/.exec(route) ?? [];
+  const account = raw ? decodeURIComponent(raw) : "";
+  const [days, setDays] = useState<"7" | "30" | "90">("30");
+  const [mode, setMode] = useState<"total" | "daily">("total");
+  const { data, error, stale, at, reload } = useLoad<ChannelStats>(
+    account ? `stats/channel?account=${encodeURIComponent(account)}&days=${days}` : null,
+    [account, days],
+  );
+  const yt = platform === "youtube";
+  const word = yt ? t("channel.subscribers") : t("channel.followers");
+  // memoised: the chart keeps its readout while the parent re-renders
+  const followers = useMemo(
+    (): ChartSeries[] =>
+      data ? [{ label: word, hue: 1, points: mode === "total" ? data.followers.total : data.followers.daily }] : [],
+    [data, mode, word],
+  );
+  const views = useMemo(
+    (): ChartSeries[] => (data ? [{ label: t("results.views"), hue: 2, points: data.views }] : []),
+    [data],
+  );
+  const back = (
+    <p className="back-row">
+      <a className="back" href="#/stats">
+        {ICON.back}Stats
+      </a>
+    </p>
+  );
+  if (error)
+    return (
+      <>
+        {back}
+        <ErrorNote msg={error} onRetry={reload} />
+      </>
+    );
+  if (!data)
+    return (
+      <>
+        {back}
+        <p className="muted">{t("common.loading")}</p>
+      </>
+    );
+  const a = data.account;
+  return (
+    <section>
+      {back}
+      {stale && <Stale msg={stale} at={at} onRetry={reload} />}
+      <h2>{a.title || `@${a.id}`}</h2>
+      <p className="muted small">{yt ? "YouTube channel" : `Instagram · @${a.id}`}</p>
+      <div className="card">
+        <p className="stat-big num">{a.followers == null ? "–" : a.followers.toLocaleString("en")}</p>
+        <p className="small">
+          {yt ? "subscribers" : "followers"}
+          {a.change ? (
+            <span className={a.change > 0 ? " ok-text" : " bad-text"}>
+              {" "}
+              · {a.change > 0 ? "+" : ""}
+              {a.change} {a.since ? t("channel.since", { when: shortDay(a.since) }) : ""}
+            </span>
+          ) : null}
+        </p>
+      </div>
+      <Segmented
+        label={t("channel.period")}
+        value={days}
+        options={[
+          { value: "7", text: t("channel.days7") },
+          { value: "30", text: t("channel.days30") },
+          { value: "90", text: t("channel.days90") },
+        ]}
+        onChange={setDays}
+      />
+      <div className="card">
+        <h3>{word}</h3>
+        <Segmented
+          label={t("results.range")}
+          value={mode}
+          options={[
+            { value: "total", text: t("results.total") },
+            { value: "daily", text: t("results.daily") },
+          ]}
+          onChange={setMode}
+        />
+        {followers[0]?.points.length ? (
+          <LineChart series={followers} mode={mode} tz={ZONE} />
+        ) : (
+          <p className="muted">{t("channel.noSamples")}</p>
+        )}
+      </div>
+      <div className="card">
+        <h3>{t("channel.viewsPerDay")}</h3>
+        {data.views.some((p) => p.value !== null) ? (
+          <LineChart series={views} mode="daily" tz={ZONE} />
+        ) : (
+          <p className="muted">{t("channel.noViews")}</p>
+        )}
+      </div>
+      <h3>{t("channel.brought")}</h3>
+      {yt && data.analytics === false ? (
+        <p className="muted small">{t("channel.analyticsMissing")}</p>
+      ) : data.brought.length ? (
+        <ul className="list">
+          {data.brought.map((b) => (
+            <li key={b.key}>
+              <a className="aud" href={b.href}>
+                <div className="clip">
+                  <strong className="small">{b.title}</strong>
+                </div>
+                <div className="small num aud-n">
+                  <span className="ok-text">+{b.follows}</span>
+                  {b.share != null && <div className="muted">{Math.round(b.share * 100)}%</div>}
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted small">{t("channel.broughtNone")}</p>
+      )}
+      {a.url && (
+        <a className="button-link with-icon" href={a.url} target="_blank" rel="noopener">
+          {yt ? ICON.youtube : ICON.instagram}Open on {yt ? "YouTube" : "Instagram"}
+        </a>
+      )}
+    </section>
+  );
+}
+
+/** "Oct 31" on the workspace's clock, for a UTC instant. */
+const shortDay = (iso: string) =>
+  new Intl.DateTimeFormat(dateLocale(), { timeZone: ZONE, month: "short", day: "numeric" }).format(Date.parse(iso));
+
+const b64ToBytes = (s: string) =>
+  Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+
+/** This app's version, and whether the deployed one is newer (an installed PWA can run an older copy). */
+function VersionInfo() {
+  const [live, setLive] = useState<{ commit: string; built: string } | null>(null);
+  useEffect(() => {
+    fetch("/version.json", { cache: "no-store" })
+      .then((r) => r.json())
+      .then(setLive)
+      .catch(() => {});
+  }, []);
+  const v = __APP_VERSION__;
+  const behind = live && live.commit !== v.commit && live.built > v.built; // "YYYY-MM-DD HH:MM UTC" sorts as text
+  return (
+    <div className="card">
+      <h2>{t("settings.version")}</h2>
+      <p className="small">
+        App <code>{v.commit}</code>, built {v.built}.{live && !behind && <span className="muted"> Up to date.</span>}
+      </p>
+      {behind && (
+        <p className="small warn">
+          A newer version is deployed (<code>{live.commit}</code>, {live.built}).{" "}
+          <button
+            onClick={() =>
+              navigator.serviceWorker
+                ?.getRegistration()
+                .then((r) => r?.update())
+                .finally(() => location.reload())
+            }
+          >
+            Update now
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The zone the app shows and takes times in: the user's own or the workspace's. Plans are stored in UTC, so changing
+ *  it moves nothing; the app reloads to show every time in the new zone. */
+function TimeZoneCard({ me }: { me: Me }) {
+  const zones = useMemo((): string[] => {
+    try {
+      return Intl.supportedValuesOf("timeZone");
+    } catch {
+      return [] as string[];
+    }
+  }, []);
+  const current = me.timezone ?? "UTC";
+  const ws = me.workspaceTimezone ?? current;
+  const device = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const [pick, setPick] = useState(current);
+  const [error, setError] = useState<string | null>(null);
+  const save = (tz: string | null) =>
+    api("me/timezone", { timezone: tz })
+      .then(() => location.reload())
+      .catch((e: Error) => setError(e.message));
+  return (
+    <div className="card">
+      <h2>{t("settings.zone")}</h2>
+      <p className="muted small">
+        {t("settings.zoneShown")} <strong>{current}</strong>
+        {current === ws ? ` ${t("settings.zoneWorkspace")}` : ""}. {t("settings.zoneNote")}
+      </p>
+      <div className="row">
+        <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label={t("settings.zone")}>
+          {(zones.includes(pick) ? zones : [pick, ...zones]).map((z) => (
+            <option key={z} value={z}>
+              {z}
+            </option>
+          ))}
+        </select>
+        <button type="button" onClick={() => save(pick)} disabled={pick === current}>
+          {t("settings.zoneUse")}
+        </button>
+      </div>
+      <div className="row">
+        {device && device !== current && (
+          <button type="button" onClick={() => save(device)}>
+            {t("settings.zoneDevice", { zone: device })}
+          </button>
+        )}
+        {current !== ws && (
+          <button type="button" onClick={() => save(null)}>
+            {t("settings.zoneBack", { zone: ws })}
+          </button>
+        )}
+      </div>
+      {error && (
+        <p className="notice small bad" role="status">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** How to unblock notifications once the browser remembers "Block" (it won't ask again by itself). */
+function unblockHelp(): string {
+  const brave = "brave" in navigator;
+  const installed = matchMedia("(display-mode: standalone)").matches;
+  const steps = installed ? t("settings.unblockAndroid", { name: BRAND.name }) : t("settings.unblockBrowser");
+  return t("settings.unblockHelp", { steps, brave: brave ? ` ${t("settings.unblockBrave")}` : "" });
+}
+
+function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
+  const { status, refresh } = useShared();
+  const [msg, setMsg] = useState<{ card: string; text: string; ok: boolean } | null>(null);
+  const [pushOn, setPushOn] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (!("PushManager" in window) || !("Notification" in window)) {
+      setPushOn(false);
+      return;
+    }
+    if (Notification.permission !== "granted") {
+      setPushOn(false);
+      return;
+    }
+    navigator.serviceWorker
+      ?.getRegistration()
+      .then((r) => r?.pushManager.getSubscription())
+      .then((sub) => setPushOn(!!sub))
+      .catch(() => setPushOn(false));
+  }, []);
+  const say = (card: string, p: Promise<unknown>, ok: string) =>
+    p
+      .then(() => {
+        setMsg({ card, text: ok, ok: true });
+        refresh();
+      })
+      .catch((e: Error) => setMsg({ card, text: e.message, ok: false }));
+  const note = (card: string) =>
+    msg?.card === card && (
+      <p className={`notice small ${msg.ok ? "ok" : "bad"}`} role="status">
+        {msg.text}
+      </p>
+    );
+  const enablePush = async () => {
+    try {
+      if (!("PushManager" in window)) throw new Error(t("settings.pushUnsupported"));
+      const perm = await Notification.requestPermission();
+      if (perm === "default") throw new Error(t("settings.pushDismissed"));
+      if (perm !== "granted") throw new Error(unblockHelp());
+      const reg = await navigator.serviceWorker.ready;
+      const sub =
+        (await reg.pushManager.getSubscription()) ??
+        (await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: b64ToBytes(me.vapidPublicKey),
+        }));
+      await api("push/subscribe", {
+        ...sub.toJSON(),
+        device: navigator.userAgent.includes("Android") ? "Android" : "browser",
+      });
+      setPushOn(true);
+      setMsg({ card: "push", text: t("settings.pushEnabled"), ok: true });
+    } catch (e) {
+      setMsg({ card: "push", text: (e as Error).message, ok: false });
+    }
+  };
+  return (
+    <section>
+      <div className="card">
+        <h2>{t("settings.publishing")}</h2>
+        {status.data?.paused ? (
+          <>
+            <p className="small">{t("settings.pausedNote")}</p>
+            <button
+              className="primary"
+              onClick={() =>
+                say(
+                  "pub",
+                  (async () => {
+                    const o = await api<{ options: never; challengeId: string }>("resume/options", {});
+                    const response = await startAuthentication({ optionsJSON: o.options });
+                    await api("resume/verify", { challengeId: o.challengeId, response });
+                  })(),
+                  t("settings.resumed"),
+                )
+              }
+            >
+              {t("settings.resumeWithPasskey")}
+            </button>
+          </>
+        ) : (
+          <>
+            <p className="small muted">{t("settings.pauseNote")}</p>
+            <ConfirmButton
+              full
+              label={t("settings.pauseLabel")}
+              confirm={t("settings.pauseConfirm")}
+              detail={t("settings.pauseDetail")}
+              onConfirm={() => say("pub", api("pause", { reason: "paused from the app" }), t("settings.pausedNote"))}
+            />
+          </>
+        )}
+        {note("pub")}
+      </div>
+      <div className="card">
+        <div className="row">
+          <h2>{t("settings.notifications")}</h2>
+          {pushOn !== null && (
+            <span className={`pill ${pushOn ? "ok" : ""}`}>
+              {pushOn ? t("settings.pushOn") : t("settings.pushOff")}
+            </span>
+          )}
+        </div>
+        <p className="muted small">{t("settings.pushNote")}</p>
+        <div className="row">
+          {!pushOn && <button onClick={enablePush}>{t("settings.pushEnable")}</button>}
+          <button onClick={() => say("push", api("push/test", {}), t("settings.pushTestSent"))}>
+            {t("settings.pushTest")}
+          </button>
+        </div>
+        {note("push")}
+      </div>
+      <TimeZoneCard me={me} />
+      <VersionInfo />
+      <div className="card">
+        <h2>{t("settings.thisDevice")}</h2>
+        <button
+          onClick={() =>
+            api("logout", {}).then(() => {
+              cachePrune(true);
+              onSignOut();
+            })
+          }
+        >
+          {t("settings.signOut")}
+        </button>
+      </div>
+    </section>
+  );
+}
