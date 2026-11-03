@@ -67,9 +67,26 @@ Nothing else changes: the design, the accent and the dashboard keep Bongsu's.
 | `BONGSU_APP_NAME` | `Bongsu` | Install name, `<title>`, manifest `name`/`short_name`, the sign-in title and the Android hint. At most 40 characters |
 | `BONGSU_THEME_COLOR` | `#131f2a` | Manifest `theme_color` and `background_color`, and the `theme-color` meta. `#rrggbb`; anything else falls back to the default |
 
-The icons are files in `packages/web/public`; replace them with your own, same names and sizes: `favicon.svg`,
-`favicon.ico`, `icon-192.png`, `icon-512.png`, `icon-maskable-192.png`, `icon-maskable-512.png` (keep the mark inside the
-central 80%) and `apple-touch-icon.png`.
+The icons are the seven files in `packages/web/public`: `favicon.svg`, `favicon.ico`, `icon-192.png`, `icon-512.png`,
+`icon-maskable-192.png`, `icon-maskable-512.png` and `apple-touch-icon.png`. `pnpm brand` makes all of them from one
+square SVG of your mark, so a fork rebrands in three steps:
+
+1. Set `BONGSU_APP_NAME` and `BONGSU_THEME_COLOR` (below, for Cloudflare or Docker).
+2. Make the icons: `BONGSU_APP_NAME="Lighthouse" BONGSU_THEME_COLOR="#112233" pnpm brand your-mark.svg` (from a
+   subfolder, `pnpm -w brand`). The mark goes on the theme colour, inside the maskable icons' safe zone, and is used
+   at tab sizes too. It needs Python 3 and the Cairo library (`libcairo2` on Debian and Ubuntu, `brew install cairo` on
+   macOS); the Python packages install once into a cache folder, not the repository. Commit the seven files.
+3. Build the app (or the Docker image) with the same two variables.
+
+The app's build checks the seven files and stops with the name of any one that is missing or at the wrong size, so a
+forgotten file can't ship a broken install icon. You can also replace them by hand, same names and sizes (keep the mark
+inside the central 80% of the maskable ones).
+
+The project site (`site/`, `pnpm site`) takes its brand files from `BRAND_DIR` (default `docs/assets/brand`): `mark.svg`,
+`mark-small.svg`, `lockup.svg`, `social-card.png`, `apple-touch-icon-180.png` and `favicon.ico`.
+
+What stays Bongsu's: the design's colours (`tokens.css`), which carry meaning (green means approved and running), and the
+dashboard's mark.
 
 - **Cloudflare:** set the variables in the environment of the app build:
   `BONGSU_APP_NAME="Lighthouse" BONGSU_THEME_COLOR="#112233" pnpm --filter @bongsu/web build` (or `pnpm build`), and

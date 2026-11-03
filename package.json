@@ -14,6 +14,7 @@
     "build": "pnpm -r build",
     "check-personal": "bash scripts/check-personal.sh",
     "site": "sh scripts/build-site.sh",
+    "brand": "sh scripts/brand/brand.sh",
     "screenshots": "node scripts/screenshots/index.mjs",
     "test:site": "node --test scripts/docs-lib.test.mjs scripts/screenshots/seed.test.mjs scripts/screenshots/serve.test.mjs",
     "changeset": "changeset",
