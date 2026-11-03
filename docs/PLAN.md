@@ -727,7 +727,7 @@ of the project (2.6).
       their routes removed, `reports` dropped (0015). `snapshots` stays for the one-time backfill.
 - [x] Squash the private history into one "Initial public release" commit on a new branch (safety net for anything
       scrubbed late), push it to the public repository.
-- [ ] Releases on GitHub: Changesets' GitHub action (Version Packages pull request, tags, GitHub releases) with the
+- [x] Releases on GitHub: Changesets' GitHub action (Version Packages pull request, tags, GitHub releases) with the
       built-in token, replacing the dormant GitLab release jobs and the manual steps; CI publishes the Docker image
       (GHCR) and the CLI (npm).
   - [x] The workflows (`.github/workflows/`: ci, pr-title, release, pages) and `.github/dependabot.yml`, pinned by
@@ -735,15 +735,19 @@ of the project (2.6).
   - [x] The CLI publishable: `bongsu` public with provenance, its own README, no runtime dependencies (the bundle);
         `npm pack` installs and runs on its own. On npm since 2026-11-02 (0.1.0 by hand, to set up trusted publishing);
         the guides use `npx bongsu`.
-  - [ ] Turned on in the public repository (npm trusted publisher, Actions may open pull requests, Pages from Actions, GHCR
-        visibility); the GitLab CI files removed at the switch.
+  - [x] Turned on in the public repository (npm trusted publisher, Actions may open pull requests, Pages from Actions, GHCR
+        visibility); the GitLab CI files removed at the switch. The CLI is published with npm itself
+        (`scripts/release-publish.sh`: `pnpm publish` broke the OIDC exchange), and the trusted publisher's repository
+        must be spelt as GitHub does (`NYT87/bongsu`). The release step marks the CLI's release as Latest.
   - [x] GitHub is the source (2026-11-03): issues and pull requests there, `main` mirrored to the private GitLab
         project (`mirror.yml`), whose `private-history` keeps the earlier history; `.gitlab-ci.yml`, `.gitlab/` and
         `changesets-gitlab` removed.
-- [ ] First public version tagged (the changesets gathered until then).
-- [ ] Repository settings: branch protection, Dependabot/Renovate, topics, description.
-
-**Your go-ahead is needed before this phase's push.**
+- [x] First public version tagged (the changesets gathered until then): 0.2.0 on 2026-11-03, `bongsu` on npm with
+      provenance and `ghcr.io/nyt87/bongsu` (public; the Docker guide can use it through `BONGSU_IMAGE`). 0.1.0, the
+      hand-published one, is deprecated.
+- [x] Repository settings: branch protection, Dependabot/Renovate, topics, description. A ruleset on `main` (pull
+      requests, squash only, `check` and `commitlint` required); Dependabot weekly, majors by hand; private vulnerability
+      reporting, secret scanning with push protection, CodeQL.
 
 ### Phase 11: Updating a running instance (1–2 sessions)
 

@@ -36,6 +36,17 @@ Fill in `.env` ([configuration.md](configuration.md) explains each setting; the 
 docker compose --profile https up -d --build
 ```
 
+This builds the image from your checkout. To run a published release instead, set `BONGSU_IMAGE` in `.env` to
+`ghcr.io/nyt87/bongsu:<version>` (`0.2`, `0.2.0` or `latest`, for amd64 and arm64), then:
+
+```sh
+docker compose pull bongsu
+docker compose --profile https up -d
+```
+
+The published image has the default name and colours: branding (`BONGSU_APP_NAME`, `BONGSU_THEME_COLOR`) needs your
+own build.
+
 The first start creates the database (`bongsu-data` volume) and applies the migrations; every later start applies
 new ones. Check `https://<DOMAIN>/health` (`ok: true`, no missing secrets): Docker's health check uses it too
 (`docker compose ps` shows `healthy`).
@@ -74,7 +85,9 @@ Its web page is on `http://localhost:8025` (on the server only). For real email,
 
 ## Updating
 
-`git pull && docker compose --profile https up -d --build`; migrations run at start. More in [Updating](updating.md).
+`git pull && docker compose --profile https up -d --build`; with the published image, change `BONGSU_IMAGE` to the new
+version (or keep `latest`) and run `docker compose pull bongsu && docker compose --profile https up -d`. Migrations run
+at start. More in [Updating](updating.md).
 
 ## Backups
 

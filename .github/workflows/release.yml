@@ -50,6 +50,16 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
+      # One GitHub release per package, and GitHub marks the one created last as Latest (often @bongsu/schema): point
+      # it at the CLI's release, else the product's (@bongsu/core).
+      - if: steps.changesets.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PACKAGES: ${{ steps.changesets.outputs.published-packages }}
+        run: |
+          tag="$(jq -r 'map(select(.name == "bongsu" or .name == "@bongsu/core")) | sort_by(.name != "bongsu") | first
+            | if . then "\(.name)@\(.version)" else empty end' <<<"$PACKAGES")"
+          if [ -n "$tag" ]; then gh release edit "$tag" --latest -R "$GITHUB_REPOSITORY"; fi
 
   # The Node image (Dockerfile) at the product's version, when any package of the fixed group (.changeset/config.json)
   # got its tag in this run; they share @bongsu/core's version.
