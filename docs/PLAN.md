@@ -637,7 +637,8 @@ of the project (2.6).
       and generated icons, #75.)
 - [x] i18n scaffold (English first; the Spanish/Korean caption checks stay as lint rules, not UI languages). (Done
       2026-10-31: `i18n.ts` with an English catalogue, `t()` and the workspace locale on `/app-api/me`, #76.)
-- [ ] i18n: the rest of the app's strings through t() (#144).
+- [x] i18n: the rest of the app's strings through t() (#144). (Done 2026-11-03, #37: every screen's text in
+      `i18n.ts`, plurals as `{ one, other }`; `test/i18n.test.ts` fails on JSX text left in `App.tsx` and on unknown keys.)
 - [x] Caption lint (`formats/caption-lint.ts`): rules configurable per account (hashtag cap, fold length, language
       checks on/off). (Done 2026-10-31: `LintRules` with the platform's defaults, `accounts.settings.captionRules`
       overrides, edited in the dashboard's Accounts page, #77.)

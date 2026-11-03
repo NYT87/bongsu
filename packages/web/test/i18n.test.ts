@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { dateLocale, type Key, setLocale, t } from "../src/i18n";
+import appSource from "../src/App.tsx?raw";
+import chartSource from "../src/Chart.tsx?raw";
+import { dateLocale, en, type Key, setLocale, t } from "../src/i18n";
 
 afterEach(() => setLocale("en"));
 
@@ -33,5 +35,20 @@ describe("setLocale", () => {
 
   it("keeps a known locale", () => {
     expect(setLocale("en")).toBe("en");
+  });
+});
+
+// Every string of the app goes through t() (#37): what is left in the sources is code, example values and names.
+
+describe("the app's text", () => {
+  it("has no JSX text of plain English words left in App.tsx", () => {
+    const left = [...appSource.matchAll(/>\s*([A-Z][a-z]+(?:\s+[a-z]+)+[.:…]?)\s*</g)].map((m) => m[1]);
+    expect(left).toEqual([]);
+  });
+
+  it("uses only keys the English catalogue has", () => {
+    const used = [...`${appSource}\n${chartSource}`.matchAll(/\bt\("([a-zA-Z0-9_.]+)"/g)].map((m) => m[1]);
+    expect(used.length).toBeGreaterThan(300);
+    expect(used.filter((k) => !(k in en))).toEqual([]);
   });
 });
