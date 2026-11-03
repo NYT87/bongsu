@@ -753,8 +753,10 @@ of the project (2.6).
 
 ### Phase 11: Updating a running instance (1–2 sessions)
 
-- [ ] `site/docs/updating.md` covers moving a running instance onto a release: a backup, the migrations, a rehearsal on
-      a copy of the database with `DRY_RUN=1`, a quiet window, and the way back.
+- [x] `site/docs/updating.md` covers moving a running instance onto a release: a backup, the migrations, a rehearsal on
+      a copy of the database with `DRY_RUN=1`, a quiet window, and the way back. (Done 2026-11-03: "The careful route";
+      the rehearsal runs with no schedules (`SCHEDULES=off`, or the web Worker alone with `--persist-to .rehearsal`),
+      since `DRY_RUN` alone still lets the other schedules act outside the copy. Both recipes were run end to end.)
 
 ---
 
