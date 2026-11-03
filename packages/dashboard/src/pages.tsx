@@ -1748,6 +1748,20 @@ const HOURS = Array.from({ length: 24 }, (_, h) => h);
 
 /** The first run, step by step: each step's state comes from the data (overview's `setup`), so the page is right
  *  whatever was done elsewhere, and there's nothing to dismiss. */
+
+// One numbered step of Get started. At module level: defined inside the page, it would be a new component on every
+// render and remount its fields (losing focus while typing).
+function Step({ n, title, done, children }: { n: number; title: string; done: boolean; children: ReactNode }) {
+  return (
+    <Card
+      title={`${n}. ${title}`}
+      actions={done ? <Pill status="ok" label="Done" /> : <Pill status="waiting" label="To do" />}
+    >
+      {children}
+    </Card>
+  );
+}
+
 export function GetStarted({ go }: Props) {
   const { data, error, reload } = useLoad<Overview>("overview");
   const settings = useLoad<{ timezone: string; digestHour: number }>("settings");
@@ -1774,14 +1788,6 @@ export function GetStarted({ go }: Props) {
       setErr(errorText(e));
     }
   };
-  const Step = ({ n, title, done, children }: { n: number; title: string; done: boolean; children: ReactNode }) => (
-    <Card
-      title={`${n}. ${title}`}
-      actions={done ? <Pill status="ok" label="Done" /> : <Pill status="waiting" label="To do" />}
-    >
-      {children}
-    </Card>
-  );
   return (
     <Page
       title="Get started"
