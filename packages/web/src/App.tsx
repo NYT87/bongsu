@@ -591,17 +591,15 @@ function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: ()
           ? t("tabs.queue")
           : route.startsWith("/drafts")
             ? t("tabs.drafts")
-            : route.startsWith("/stats/report/")
-              ? t("title.review")
-              : route.startsWith("/stats/")
-                ? t("title.channel")
-                : route.startsWith("/stats")
-                  ? t("tabs.stats")
-                  : route.startsWith("/settings")
-                    ? t("header.settings")
-                    : route.startsWith("/comments")
-                      ? t("header.comments")
-                      : t("tabs.today");
+            : route.startsWith("/stats/")
+              ? t("title.channel")
+              : route.startsWith("/stats")
+                ? t("tabs.stats")
+                : route.startsWith("/settings")
+                  ? t("header.settings")
+                  : route.startsWith("/comments")
+                    ? t("header.comments")
+                    : t("tabs.today");
   const page = onItem ? (
     <ItemPage keyId={itemKey} view={itemView} onTitle={(t) => setNamed({ key: itemKey, title: t })} />
   ) : onVideo ? (
@@ -612,8 +610,6 @@ function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: ()
     <QueuePage days={60} filters />
   ) : route.startsWith("/drafts") ? (
     <DraftsPage />
-  ) : route.startsWith("/stats/report/") ? (
-    <ReportPage route={route} />
   ) : route.startsWith("/stats/") ? (
     <ChannelPage route={route} />
   ) : route.startsWith("/stats") ? (
@@ -3585,315 +3581,100 @@ function DraftsPage() {
   );
 }
 
-// ---------------------------------------------------------------- performance (the latest analytics snapshot)
+// ---------------------------------------------------------------- stats (the accounts and the last week's posts)
 
-type PerfRow = {
-  platform: string;
-  account: string;
-  format?: string;
-  published?: string;
-  title?: string;
-  url?: string;
-  views?: number | null;
-  likes?: number | null;
-  comments?: number | null;
-  shares?: number | null;
-  saves?: number | null;
-  views_vs_median?: number | null;
-};
-type Perf = {
-  taken: string;
-  previous: string | null /** the latest review's name */;
-  report: string | null;
-  recent: PerfRow[];
-  best: PerfRow[];
+type StatsOverview = {
+  days: number;
   accounts: {
+    id: string;
     platform: string;
-    account: string;
-    title?: string;
+    handle: string;
+    title: string;
     followers: number | null;
     change: number | null;
-    url?: string | null;
-    /** From the account series: when the sample the change is counted from was taken. */
-    since?: string | null;
+    /** When the sample the change is counted from was taken. */
+    since: string | null;
+  }[];
+  recent: {
+    key: string;
+    platform: string;
+    title: string;
+    label: string | null;
+    published_at: string | null;
+    views: number | null;
+    likes: number | null;
+    comments: number | null;
+    /** The post's Results or the video's page. */
+    href: string;
   }[];
 };
 
 const num = (n?: number | null) => (n == null ? "–" : n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n));
 const count = (n: number | null | undefined, one: string, many = `${one}s`) => `${num(n)} ${n === 1 ? one : many}`;
 
-function PerfList({ rows }: { rows: PerfRow[] }) {
-  if (!rows.length) return <p className="muted">None.</p>;
-  return (
-    <ul className="list">
-      {rows.map((r, k) => {
-        const body = (
-          <div>
-            <div className="row">
-              <strong className="small clip">{r.title || "(untitled)"}</strong>
-              <span className="small num">{count(r.views, "view")}</span>
-            </div>
-            <div className="muted small">
-              {r.platform === "youtube" ? `YouTube · ${r.account}` : `Instagram @${r.account}`}
-              {r.format ? ` · ${r.format}` : ""}
-              {r.published ? ` · ${dayName(r.published.slice(0, 10))}` : ""}
-            </div>
-            <div className="muted small num">
-              {count(r.likes, "like")} · {count(r.comments, "comment")}
-              {r.shares != null ? ` · ${count(r.shares, "share")}` : ""}
-              {r.views_vs_median ? ` · ${r.views_vs_median}× the account's median` : ""}
-            </div>
-          </div>
-        );
-        return (
-          <li key={k}>
-            {r.url ? (
-              <a href={r.url} target="_blank" rel="noopener">
-                {body}
-              </a>
-            ) : (
-              body
-            )}
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
-
-/** A performance review (Markdown in `reports`, imported from an earlier collector). */
-function ReportPage({ route }: { route: string }) {
-  const name = decodeURIComponent(route.replace(/^\/stats\/report\//, ""));
-  const { data, error, reload } = useLoad<{ name: string; markdown: string; all: string[] }>(
-    `report?name=${encodeURIComponent(name)}`,
-  );
-  const back = (
-    <p className="back-row">
-      <a className="back" href="#/stats">
-        {ICON.back}Stats
-      </a>
-    </p>
-  );
-  if (error)
-    return (
-      <>
-        {back}
-        <ErrorNote msg={error} onRetry={reload} />
-      </>
-    );
-  if (!data)
-    return (
-      <>
-        {back}
-        <p className="muted">{t("common.loading")}</p>
-      </>
-    );
-  const others = data.all.filter((n) => n !== data.name);
-  return (
-    <section className="report">
-      {back}
-      <Markdown text={data.markdown} />
-      {others.length > 0 && (
-        <details className="key-details">
-          <summary className="small muted tap">Other reviews ({others.length})</summary>
-          <ul className="small">
-            {others.map((n) => (
-              <li key={n}>
-                <a className="link tap" href={`#/stats/report/${encodeURIComponent(n)}`}>
-                  {n}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
-    </section>
-  );
-}
-
-/** Just enough markdown for the reviews: headings, paragraphs, lists (nested by indent), tables, code blocks, and
- *  inline bold / italic / code / links. Built as React elements, never as HTML, so nothing in the text can inject. */
-function Markdown({ text }: { text: string }) {
-  const inline = (s: string, k = 0): React.ReactNode[] => {
-    const out: React.ReactNode[] = [];
-    const re =
-      /(\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)|(?<![\w*])\*([^*\s][^*]*)\*(?!\w)|(?<!\w)_([^_\s][^_]*)_(?!\w))/g;
-    let last = 0,
-      m: RegExpExecArray | null;
-    // biome-ignore lint/suspicious/noAssignInExpressions: the usual RegExp.exec loop
-    while ((m = re.exec(s))) {
-      if (m.index > last) out.push(s.slice(last, m.index));
-      const key = `${k}-${m.index}`;
-      if (m[2]) out.push(<strong key={key}>{inline(m[2], k + 1)}</strong>);
-      else if (m[3]) out.push(<code key={key}>{m[3]}</code>);
-      else if (m[4])
-        out.push(
-          <a key={key} className="link" href={m[5]} target="_blank" rel="noopener">
-            {m[4]}
-          </a>,
-        );
-      else out.push(<em key={key}>{m[6] ?? m[7]}</em>);
-      last = m.index + m[0].length;
-    }
-    if (last < s.length) out.push(s.slice(last));
-    return out;
-  };
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
-  const blocks: React.ReactNode[] = [];
-  let i = 0;
-  const isList = (l: string) => /^\s*([-*+]|\d+\.)\s+/.test(l);
-  const list = (start: number, indent: number): [React.ReactNode, number] => {
-    const items: React.ReactNode[][] = [];
-    const ordered = /^\s*\d+\./.test(lines[start]);
-    let j = start;
-    while (j < lines.length && lines[j].trim()) {
-      const ind = lines[j].match(/^\s*/)![0].length;
-      if (isList(lines[j]) && ind === indent) {
-        items.push([inline(lines[j].replace(/^\s*([-*+]|\d+\.)\s+/, ""), j)]);
-        j++;
-      } else if (isList(lines[j]) && ind > indent && items.length) {
-        const [sub, next] = list(j, ind);
-        items[items.length - 1].push(sub);
-        j = next;
-      } else if (!isList(lines[j]) && ind > indent && items.length) {
-        items[items.length - 1].push(" ", ...inline(lines[j].trim(), j));
-        j++;
-      } else break;
-    }
-    const lis = items.map((c, n) => <li key={n}>{c}</li>);
-    return [ordered ? <ol key={start}>{lis}</ol> : <ul key={start}>{lis}</ul>, j];
-  };
-  while (i < lines.length) {
-    const l = lines[i];
-    if (!l.trim()) {
-      i++;
-      continue;
-    }
-    if (l.startsWith("```")) {
-      const body: string[] = [];
-      for (i++; i < lines.length && !lines[i].startsWith("```"); i++) body.push(lines[i]);
-      blocks.push(
-        <pre key={i} className="text">
-          {body.join("\n")}
-        </pre>,
-      );
-      i++;
-      continue;
-    }
-    const h = /^(#{1,4})\s+(.*)$/.exec(l);
-    if (h) {
-      const level = Math.min(h[1].length + 1, 4);
-      const Tag = `h${level}` as "h2" | "h3" | "h4";
-      blocks.push(<Tag key={i}>{inline(h[2], i)}</Tag>);
-      i++;
-      continue;
-    }
-    if (l.trim().startsWith("|")) {
-      const rows: string[][] = [];
-      for (; i < lines.length && lines[i].trim().startsWith("|"); i++) {
-        if (/^\s*\|[\s:|-]+\|\s*$/.test(lines[i])) continue; // the |---|---| line
-        rows.push(
-          lines[i]
-            .trim()
-            .replace(/^\||\|$/g, "")
-            .split("|")
-            .map((c) => c.trim()),
-        );
-      }
-      const [head, ...body] = rows;
-      blocks.push(
-        <div key={i} className="md-table">
-          <table>
-            <thead>
-              <tr>
-                {head.map((c, n) => (
-                  <th key={n}>{inline(c, i)}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {body.map((r, n) => (
-                <tr key={n}>
-                  {r.map((c, m) => (
-                    <td key={m}>{inline(c, i + n)}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>,
-      );
-      continue;
-    }
-    if (isList(l)) {
-      const [node, next] = list(i, l.match(/^\s*/)![0].length);
-      blocks.push(node);
-      i = next;
-      continue;
-    }
-    const para: string[] = [];
-    for (; i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*\|)/.test(lines[i]) && !isList(lines[i]); i++)
-      para.push(lines[i].trim());
-    blocks.push(<p key={i}>{inline(para.join(" "), i)}</p>);
-  }
-  return <div className="md">{blocks}</div>;
-}
-
+/** The Stats tab: each account with its followers and the change since a day before, opening its page; then the
+ *  posts and videos of the last 7 days, most viewed first, each opening its Results or video page. */
 function StatsPage() {
-  const [refresh, setRefresh] = useState(0);
-  const { data, error, stale, at, reload } = useLoad<Perf & { none?: true }>(
-    `performance${refresh ? "?refresh=1" : ""}`,
-    [refresh],
-  );
+  const { data, error, stale, at, reload } = useLoad<StatsOverview>("stats");
   if (error) return <ErrorNote msg={error} onRetry={reload} />;
   if (!data) return <p className="muted">{t("common.loading")}</p>;
-  if (data.none) return <p className="muted">No analytics snapshot yet.</p>;
   return (
     <section>
       {stale && <Stale msg={stale} at={at} onRetry={reload} />}
-      <p className="muted small">
-        Snapshot of {dayName(data.taken.slice(0, 10))}
-        {data.previous ? `, compared with ${dayName(data.previous.slice(0, 10))}` : ""}. Collected every night.
-      </p>
       <h2>Audience</h2>
-      <ul className="list">
-        {data.accounts.map((a) => (
-          <li key={`${a.platform}:${a.account}`}>
-            <a className="aud" href={`#/stats/${a.platform}/${encodeURIComponent(a.account)}`}>
-              <div className="clip">
-                <strong className="small">{a.title || `@${a.account}`}</strong>
-                <div className="muted small">
-                  {a.platform === "youtube" ? "YouTube channel" : `Instagram${a.title ? ` · @${a.account}` : ""}`}
-                </div>
-              </div>
-              <div className="small num aud-n">
-                {count(a.followers, a.platform === "youtube" ? "subscriber" : "follower")}
-                {a.change ? (
-                  <div className={a.change > 0 ? "ok-text" : "bad-text"}>
-                    {a.change > 0 ? "+" : ""}
-                    {a.change}{" "}
-                    {a.since
-                      ? t("channel.since", { when: shortDay(a.since) })
-                      : `since ${data.previous ? dayName(data.previous.slice(0, 10)) : "last time"}`}
+      {data.accounts.length ? (
+        <ul className="list">
+          {data.accounts.map((a) => (
+            <li key={a.id}>
+              <a className="aud" href={`#/stats/${a.platform}/${encodeURIComponent(a.id)}`}>
+                <div className="clip">
+                  <strong className="small">{a.title}</strong>
+                  <div className="muted small">
+                    {a.platform === "youtube"
+                      ? "YouTube channel"
+                      : `Instagram${a.title !== a.handle ? ` · @${a.handle}` : ""}`}
                   </div>
-                ) : null}
-              </div>
-            </a>
-          </li>
-        ))}
-      </ul>
-      <h2>Last 7 days, most viewed</h2>
-      <PerfList rows={data.recent} />
-      <h2>Best against their account's median</h2>
-      <PerfList rows={data.best} />
-      <p className="row">
-        {data.report && (
-          <a href={`#/stats/report/${encodeURIComponent(data.report)}`} className="link tap">
-            Latest full review
-          </a>
-        )}
-        <button onClick={() => setRefresh(refresh + 1)}>Check for a newer snapshot</button>
-      </p>
+                </div>
+                <div className="small num aud-n">
+                  {count(a.followers, a.platform === "youtube" ? "subscriber" : "follower")}
+                  {a.change ? (
+                    <div className={a.change > 0 ? "ok-text" : "bad-text"}>
+                      {a.change > 0 ? "+" : ""}
+                      {a.change} {a.since ? t("channel.since", { when: shortDay(a.since) }) : ""}
+                    </div>
+                  ) : null}
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">No accounts yet.</p>
+      )}
+      <h2>Last {data.days} days, most viewed</h2>
+      {data.recent.length ? (
+        <ul className="list">
+          {data.recent.map((r) => (
+            <li key={r.key}>
+              <a href={r.href}>
+                <div className="row">
+                  <strong className="small clip">{r.title}</strong>
+                  <span className="small num">{count(r.views, "view")}</span>
+                </div>
+                <div className="muted small">
+                  {r.label ?? (r.platform === "youtube" ? "Video" : "Post")}
+                  {r.published_at ? ` · ${shortDay(r.published_at)}` : ""}
+                </div>
+                <div className="muted small num">
+                  {count(r.likes, "like")} · {count(r.comments, "comment")}
+                </div>
+              </a>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted">Nothing published in the last {data.days} days has numbers yet.</p>
+      )}
     </section>
   );
 }

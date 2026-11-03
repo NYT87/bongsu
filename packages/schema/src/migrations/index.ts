@@ -8,6 +8,7 @@ import { steps as postMetrics } from "./0011_post_metrics";
 import { steps as postMetricsFollowers } from "./0012_post_metrics_followers";
 import { steps as accountMetrics } from "./0013_account_metrics";
 import { steps as dropOldStats } from "./0014_drop_labels_manual_stats";
+import { steps as dropReports } from "./0015_drop_reports";
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -26,4 +27,5 @@ export const MIGRATIONS: Migration[] = [
   { name: "0012_post_metrics_followers", steps: postMetricsFollowers },
   { name: "0013_account_metrics", steps: accountMetrics },
   { name: "0014_drop_labels_manual_stats", steps: dropOldStats },
+  { name: "0015_drop_reports", steps: dropReports },
 ];

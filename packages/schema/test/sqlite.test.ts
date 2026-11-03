@@ -225,3 +225,14 @@ describe("0014_drop_labels_manual_stats", () => {
     expect(tables).not.toContain("manual_stats");
   });
 });
+
+describe("0015_drop_reports", () => {
+  it("on SQLite: the reviews table is gone, the snapshots kept for the backfill", () => {
+    const db = fromMigrations();
+    const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all() as { name: string }[]).map(
+      (t) => t.name,
+    );
+    expect(tables).not.toContain("reports");
+    expect(tables).toContain("snapshots");
+  });
+});

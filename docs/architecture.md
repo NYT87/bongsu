@@ -54,6 +54,6 @@ when showing and entering them). The main tables:
 | Drafts and inbox | `drafts`, `inbox_seen`, `media_cleanup` (keyed by store and file id) |
 | Shorts | `shorts_comments`, `shorts_commented` |
 | Owner and agents | `passkeys`, `sessions`, `challenges`, `setup_codes`, `api_keys` (agent keys and CLI tokens), `rate_limits`, `push_subs` |
-| Results | `post_metrics` (the series), `account_metrics`, `post_results`, `comments`, `comment_polls`, `snapshots`, `reports` |
+| Results | `post_metrics` (the series), `account_metrics`, `post_results`, `comments`, `comment_polls`, `snapshots` (imported; they backfill `account_metrics` once) |
 
 The database is the only source of the plan and its texts; nothing is read from a repository at publish time.

@@ -147,9 +147,10 @@ until the channel is reconnected with analytics" instead: see [YouTube](youtube.
 
 ## Stats and the channel page
 
-The **Stats** tab lists each account with its follower (or subscriber) count and the change since a day before.
-Bongsu samples every account's count once a day; an instance that imported the nightly snapshots of an earlier
-collector starts with their history. Tap an account for its page: the big count, then a period (**7 days**,
+The **Stats** tab lists each account with its follower (or subscriber) count and the change since a day before, then
+**Last 7 days, most viewed**: the posts and videos published in the last week with their views, likes and comments,
+each opening its Results or video page. Bongsu samples every account's count once a day; an instance that imported
+the nightly snapshots of an earlier collector starts with their history. Tap an account for its page: the big count, then a period (**7 days**,
 **30 days** or **90 days**), a chart of its followers (**Total | Daily**), a chart of the views its posts added per
 day, and **What brought followers**: its posts and videos ranked by the followers they brought in the period, with
 each one's share of the period's gain. A row opens the post's Results or the video's page. YouTube's subscriber count

@@ -1166,56 +1166,6 @@ a.aud {
   color: var(--fg);
 }
 
-/* A performance review (#/stats/report/…): readable prose, tables scroll sideways inside their own box. */
-.md {
-  overflow-wrap: anywhere;
-}
-.md h2 {
-  margin: 18px 0 8px;
-}
-.md h3,
-.md h4 {
-  margin: 16px 0 6px;
-}
-.md ul,
-.md ol {
-  padding-left: 22px;
-  margin: 6px 0 10px;
-}
-.md li {
-  margin: 3px 0;
-}
-.md code {
-  font-size: 0.92em;
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--fg) 7%, var(--card));
-}
-.md-table {
-  overflow-x: auto;
-  margin: 8px 0 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-.md-table table {
-  border-collapse: collapse;
-  min-width: 100%;
-  font-size: 14px;
-}
-.md-table th,
-.md-table td {
-  padding: 7px 10px;
-  text-align: left;
-  border-bottom: 1px solid var(--line);
-  white-space: nowrap;
-}
-.md-table tr:last-child td {
-  border-bottom: 0;
-}
-.md-table th {
-  font-weight: 700;
-  background: color-mix(in srgb, var(--fg) 4%, var(--card));
-}
 /* the Results view's metric picker: six choices, three to a row (the hairlines are the gaps over the line colour) */
 .segmented.grid {
   display: grid;

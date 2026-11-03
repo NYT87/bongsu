@@ -1093,6 +1093,60 @@ export async function channelStats(c: OpCtx, o: { account: string; days?: string
   };
 }
 
+const OVERVIEW_DAYS = 7;
+const OVERVIEW_MAX = 10;
+
+/**
+ * The app's Stats tab: each active account of the workspace with its follower count and change (the account
+ * series), and the posts and videos published in the last 7 days on the caller's clock, most viewed first
+ * (list_performance), each with the page it opens: a post's Results, a video's page.
+ */
+export async function statsOverview(c: OpCtx) {
+  const ws = c.caller.workspaceId;
+  const tz = await zoneOf(c);
+  const accounts = [];
+  for (const a of await listAccounts(c.env.DB, { workspaceId: ws })) {
+    const rows = await c.env.DB.prepare(
+      "SELECT taken_at, followers FROM account_metrics WHERE account = ?1 AND workspace_id = ?2 ORDER BY taken_at",
+    )
+      .bind(a.id, ws)
+      .all<{ taken_at: number; followers: number | null }>();
+    accounts.push({
+      id: a.id,
+      platform: a.platform,
+      handle: a.handle,
+      title: a.displayName ?? a.handle,
+      ...followerChange(rows.results),
+    });
+  }
+  const today = zoneDate(c.now, tz);
+  const perf = await performanceList(c, {
+    from: shiftDate(today, 1 - OVERVIEW_DAYS),
+    to: today,
+    sort: "views",
+    limit: OVERVIEW_MAX,
+  });
+  const recent = perf.rows.map((r) => {
+    const pub = typeof r.published_at === "string" ? r.published_at : null;
+    const href = r.key.startsWith("video:")
+      ? `#/video/${r.account}/${r.key.slice(6)}${pub ? `?d=${zoneDate(new Date(pub), tz)}` : ""}`
+      : `#/item/${encodeURIComponent(r.key.replace(/^trial:/, ""))}/results`;
+    return {
+      key: r.key,
+      platform: r.platform as string,
+      account: r.account as string,
+      title: r.title as string,
+      label: r.label as string | null,
+      published_at: pub,
+      views: r.views as number | null,
+      likes: r.likes as number | null,
+      comments: r.comments as number | null,
+      href,
+    };
+  });
+  return { days: OVERVIEW_DAYS, accounts, recent };
+}
+
 /** When each of an account's posts went out (a Trial copy's under its `trial:` key, a video's under `video:`). */
 async function publishedTimes(c: OpCtx, accountId: string, uploads: { id: string; when: string | null }[]) {
   const out = new Map<string, number>();

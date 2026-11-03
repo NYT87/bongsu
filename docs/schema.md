@@ -455,17 +455,6 @@ One-time recovery codes (sha256), for signing in after every passkey is lost.
 
 Index `recovery_codes_user`: (user_id).
 
-## `reports`
-
-Performance reviews, as Markdown.
-
-| Column | Type | Null | Default | Notes |
-|---|---|---|---|---|
-| `name` | id | no |  | primary key; the file's name without .md, e.g. 2026-10-21 or 2026-10-10_vlogs-shorts |
-| `markdown` | text | no |  |  |
-| `saved_at` | timestamp | no | now |  |
-| `workspace_id` | text | no | "default" |  |
-
 ## `sessions`
 
 Signed-in sessions of the app and the dashboard (the token's sha256).
