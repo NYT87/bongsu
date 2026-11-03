@@ -6,8 +6,14 @@ export const CATCH_UP_S = 6 * 3600;
 export const MAX_POLLS = 24;
 /** Lifetime of the signed media links Instagram fetches. */
 export const LINK_TTL_S = 6 * 3600;
-/** Jobs advanced per tick (each costs a few subrequests; the free plan allows 50 per invocation). */
+/** Jobs advanced per tick, all accounts and workspaces together, the oldest due first; a video Instagram is still
+ *  processing keeps its slot until it is ready, so items due at the same minute go out over a few ticks. The default
+ *  fits Cloudflare's free plan (each job costs a few subrequests, 50 per invocation); Node, with no such limit,
+ *  defaults to NODE_JOBS_PER_TICK. The JOBS_PER_TICK variable overrides either, up to JOBS_PER_TICK_MAX. */
 export const JOBS_PER_TICK = 4;
+export const NODE_JOBS_PER_TICK = 20;
+/** The most one tick advances whatever the setting: a tick holds its lock for 4 minutes, and the next one is 5 away. */
+export const JOBS_PER_TICK_MAX = 100;
 /** The cron triggers (wrangler.toml): Instagram every 5 minutes; Shorts comments twice an hour, in their own
  *  invocation, so neither run gets near the free plan's 10 ms CPU limit. */
 export const CRON_INSTAGRAM = "*/5 * * * *";

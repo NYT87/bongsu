@@ -45,4 +45,6 @@ export interface Env {
   SMTP_PASS?: string;
   /** The owner's Google OAuth, scope drive.file. Optional. */
   DRIVE_OWNER_OAUTH?: string;
+  /** Publishing jobs advanced per tick (constants.ts JOBS_PER_TICK): unset, 4 on Cloudflare and 20 on Node. */
+  JOBS_PER_TICK?: string;
 }

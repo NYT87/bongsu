@@ -22,8 +22,9 @@ and what stays with you.
   one each. Bongsu stays well under it for normal planning.
 - **YouTube** gives a Google project 10,000 quota units a day. A comment or a reply costs 50, reading a video's
   comments 1, checking up to 50 videos' privacy 1 and moving a release date 51. See [YouTube](youtube.md#quota).
-- **Bongsu's own caps** are lower: each run advances at most 4 jobs (`JOBS_PER_TICK`) and posts at most two Shorts
-  comments. The [configuration](configuration.md) page lists what you can tune.
+- **Bongsu's own caps** are lower: each run advances at most `JOBS_PER_TICK` jobs (4 on Cloudflare, 20 on Node) and
+  posts at most two Shorts comments. The [configuration](configuration.md#how-many-go-out-at-once) page explains them
+  and what you can tune.
 
 ## No scraping
 

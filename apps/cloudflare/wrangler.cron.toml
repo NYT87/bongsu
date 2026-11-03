@@ -12,6 +12,7 @@ PUBLIC_URL = "https://bongsu.example.com"
 RP_ID = "bongsu.example.com"
 VAPID_PUBLIC_KEY = "REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY"
 VAPID_SUBJECT = "mailto:owner@example.com"
+# JOBS_PER_TICK = "4"   # publishing jobs advanced per run: 4 fits the free plan's 50 subrequests; raise it on the paid plan
 
 [[d1_databases]]
 binding = "DB"

@@ -154,6 +154,20 @@ describe("what an approval allows", () => {
     ).toBe(3);
   });
 
+  it("advances JOBS_PER_TICK jobs a tick when it is set, the oldest due first", async () => {
+    const a = await seedReel(w, { base: "short1_first", time: "18:00" });
+    const b = await seedReel(w, { base: "short2_second", time: "18:10" });
+    const c = await seedReel(w, { base: "short3_third", time: "18:20" });
+    await tick({ ...e, JOBS_PER_TICK: "1" }, { fetch: w.fetch, now: AT });
+    expect((await job(a.key))?.state).toBe("container_created");
+    for (const k of [b.key, c.key]) expect((await job(k))?.state).toBe("pending");
+    // the first one takes a slot again (its container is checked, then published): with two, only the second starts
+    await tick({ ...e, JOBS_PER_TICK: "2" }, { fetch: w.fetch, now: later(5) });
+    expect((await job(a.key))?.state).not.toBe("container_created");
+    expect((await job(b.key))?.state).not.toBe("pending");
+    expect((await job(c.key))?.state).toBe("pending");
+  });
+
   it("publishes nothing once dry run is switched on, even with a container waiting", async () => {
     const { key } = await seedReel(w);
     await tick(e, { fetch: w.fetch, now: AT });

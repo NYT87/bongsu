@@ -12,7 +12,7 @@
 // dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
 
 import { type Account, DEFAULT_WORKSPACE, findAccount, listAccounts } from "./accounts";
-import { AUDIT_KEEP_S, CATCH_UP_S, JOBS_PER_TICK, LINK_TTL_S, MAX_POLLS } from "./constants";
+import { AUDIT_KEEP_S, CATCH_UP_S, JOBS_PER_TICK, JOBS_PER_TICK_MAX, LINK_TTL_S, MAX_POLLS } from "./constants";
 import {
   contentPaths,
   dueItems,
@@ -235,13 +235,20 @@ export async function tick(
     const active = await env.DB.prepare(
       "SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1 ORDER BY due_at LIMIT ?2",
     )
-      .bind(nowS, JOBS_PER_TICK)
+      .bind(nowS, jobsPerTick(env))
       .all<JobRow>();
     for (const job of active.results) await advance(c, job);
     return { status: "ok", detail: { part, advanced: active.results.length, dry_run: c.dry } };
   } finally {
     await release(env.DB, lock, holder);
   }
+}
+
+/** The jobs a tick advances: the JOBS_PER_TICK variable when it is a whole number from 1 (at most
+ *  JOBS_PER_TICK_MAX), else the default for Cloudflare's free plan. Node sets its own default (apps/node/src/env.ts). */
+export function jobsPerTick(env: Pick<Env, "JOBS_PER_TICK">): number {
+  const n = Number(env.JOBS_PER_TICK);
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, JOBS_PER_TICK_MAX) : JOBS_PER_TICK;
 }
 
 // ---------------------------------------------------------------- discovery
