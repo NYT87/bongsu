@@ -11,7 +11,9 @@ services:
         # branding, read at build time (site/docs/configuration.md); empty means the defaults
         BONGSU_APP_NAME: ${BONGSU_APP_NAME:-}
         BONGSU_THEME_COLOR: ${BONGSU_THEME_COLOR:-}
-    image: bongsu:local
+    # bongsu:local is built from this checkout; BONGSU_IMAGE=ghcr.io/nyt87/bongsu:<version> uses a published release
+    # instead (`docker compose pull bongsu`, then `up -d` without --build)
+    image: ${BONGSU_IMAGE:-bongsu:local}
     restart: unless-stopped
     stop_grace_period: 35s # the server waits up to 30 s for a run in progress; Docker's default would kill it at 10 s
     env_file: .env
