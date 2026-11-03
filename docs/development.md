@@ -167,11 +167,11 @@ The repository releases with `.github/workflows/release.yml` (Changesets' GitHub
 
 1. With pending changesets it opens or updates the **Version Packages** pull request
    (`chore(release): version packages`): new versions, each package's `CHANGELOG.md`, the changesets removed.
-2. Merging it runs `pnpm changeset publish`: a git tag and a GitHub release per new version; packages that aren't
-   private (the CLI, `bongsu`) go to npm with provenance through trusted publishing
-   (GitHub's OIDC token, no npm token stored; set on npmjs.com for `release.yml`); when the product's version moved
-   (`@bongsu/core` and its fixed group), the Docker image from the `Dockerfile` goes to
-   `ghcr.io/<owner>/<repo>` as `<version>`, `<major>.<minor>` and `latest` (amd64 and arm64).
+2. Merging it runs `scripts/release-publish.sh`: the CLI, `bongsu` (the only public package), goes to npm with npm
+   itself, through trusted publishing (GitHub's OIDC token, no npm token stored; set on npmjs.com for `release.yml`)
+   and with provenance; then `changeset git-tag` tags each new version and the action creates a GitHub release per
+   tag. When the product's version moved (`@bongsu/core` and its fixed group), the Docker image from the
+   `Dockerfile` goes to `ghcr.io/<owner>/<repo>` as `<version>`, `<major>.<minor>` and `latest` (amd64 and arm64).
 
 Pull requests opened with `GITHUB_TOKEN` don't trigger other workflows, so CI doesn't run on the Version Packages pull
 request by itself: close and reopen it, or push to its branch. Dependabot (`.github/dependabot.yml`) opens grouped,
