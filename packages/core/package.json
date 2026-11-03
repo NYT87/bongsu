@@ -16,8 +16,8 @@
     "@block65/webcrypto-web-push": "2.0.0"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.10",
-    "@types/node": "22.20.4",
+    "@electric-sql/pglite": "0.5.13",
+    "@types/node": "22.20.5",
     "typescript": "7.0.2",
     "vitest": "4.1.12"
   }

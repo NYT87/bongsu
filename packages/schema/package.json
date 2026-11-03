@@ -14,11 +14,11 @@
     "generate": "esbuild src/generate.ts --bundle --platform=node --format=esm --outfile=dist/generate.mjs --log-level=warning && node dist/generate.mjs"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.10",
+    "@electric-sql/pglite": "0.5.13",
     "@types/better-sqlite3": "9.6.0",
-    "@types/node": "22.20.4",
+    "@types/node": "22.20.5",
     "better-sqlite3": "13.0.3",
-    "esbuild": "0.28.1",
+    "esbuild": "0.28.2",
     "typescript": "7.0.2",
     "vitest": "4.1.12"
   },
