@@ -1191,32 +1191,6 @@
         }
       ]
     },
-    "reports": {
-      "description": "Performance reviews, as Markdown.",
-      "columns": {
-        "name": {
-          "type": "id",
-          "primaryKey": true,
-          "description": "the file's name without .md, e.g. 2026-10-21 or 2026-10-10_vlogs-shorts"
-        },
-        "markdown": {
-          "type": "text",
-          "notNull": true
-        },
-        "saved_at": {
-          "type": "timestamp",
-          "notNull": true,
-          "default": {
-            "now": true
-          }
-        },
-        "workspace_id": {
-          "type": "text",
-          "notNull": true,
-          "default": "default"
-        }
-      }
-    },
     "sessions": {
       "description": "Signed-in sessions of the app and the dashboard (the token's sha256).",
       "columns": {

@@ -285,6 +285,14 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect((await as("bea", "pwa", "/app-api/stats/channel?account=b_shop")).status).toBe(200);
   });
 
+  it("the Stats tab lists only the user's workspace's accounts", async () => {
+    const ids = async (who: string) =>
+      ((await as(who, "pwa", "/app-api/stats")).json.accounts as { id: string }[]).map((a) => a.id);
+    expect(await ids("owner")).toContain("demo_travel");
+    expect(await ids("owner")).not.toContain("b_shop");
+    expect(await ids("bea")).toEqual(["b_shop"]);
+  });
+
   it("the metrics routes answer only for the user's workspace: its items and its channels' videos", async () => {
     await env.DB.prepare("DELETE FROM post_metrics").run();
     const { key } = await seedReel(w, { date: "2026-10-30" }); // the default workspace's

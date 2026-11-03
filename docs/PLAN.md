@@ -721,7 +721,10 @@ of the project (2.6).
       notes (reworded) and in early commit messages and GitLab merge commits (gone with the squash). Audit: clean after
       patch bumps and `pnpm.overrides` for the Workers test pool's undici, sharp and zod.
 - [x] `PLAN.md`: a generic roadmap, with nothing about any one deployment.
-- [ ] Squash the private history into one "Initial public release" commit on a new branch (safety net for anything
+- [x] Stats from what Bongsu collects only (#152): the Stats tab lists the accounts' followers (account series) and the
+      last 7 days' posts, most viewed first (`list_performance`); the snapshot Performance page, the review pages and
+      their routes removed, `reports` dropped (0015). `snapshots` stays for the one-time backfill.
+- [x] Squash the private history into one "Initial public release" commit on a new branch (safety net for anything
       scrubbed late), push it to the public repository.
 - [ ] Releases on GitHub: Changesets' GitHub action (Version Packages pull request, tags, GitHub releases) with the
       built-in token, replacing the dormant GitLab release jobs and the manual steps; CI publishes the Docker image

@@ -32,7 +32,6 @@ import { type Context, Hono } from "hono";
 import { type Caller, ROLE_SCOPES, type Scope } from "../agent/auth";
 import * as ops from "../agent/ops";
 import { resolveItem, type Snapshot, sameSnapshot, snapshot, writeApproval } from "./approve";
-import { performance, report } from "./performance";
 import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
 import { createSession, endSession, readCookie, sessionCookie, validSession } from "./session";
 import { draftFromUploads, startUpload, UploadError } from "./uploads";
@@ -343,19 +342,16 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     });
   });
 
-  // The latest analytics snapshot (repo) against the previous one; &refresh=1 skips the hour cache.
-  app.get("/app-api/performance", async (c) =>
-    c.json(await performance(c.env, me(c).workspaceId, Math.floor(opctx(c).now.getTime() / 1000))),
+  // The Stats tab: the accounts' followers and the last 7 days' posts, most viewed first.
+  app.get(
+    "/app-api/stats",
+    wrap((c) => ops.statsOverview(opctx(c))),
   );
   // An account's page: followers over a period, views per day, what brought followers (#140 reuses the op).
   app.get(
     "/app-api/stats/channel",
     wrap((c) => ops.channelStats(opctx(c), { account: c.req.query("account") ?? "", days: c.req.query("days") })),
   );
-  app.get("/app-api/report", async (c) => {
-    const r = await report(c.env, c.req.query("name") ?? "", me(c).workspaceId);
-    return r ? c.json(r) : c.json({ error: "no such review" }, 404);
-  });
 
   // One day's events, posted or pending (Instagram + YouTube): ?date=YYYY-MM-DD (the workspace's zone, default today).
   app.get("/app-api/day", async (c) => {

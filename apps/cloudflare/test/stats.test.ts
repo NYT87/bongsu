@@ -1,5 +1,5 @@
 // The channel page's route (Phase 9): an account's followers over a period, views per day across its posts, and the
-// posts and videos ranked by the followers they brought; the Stats page's audience from the account series.
+// posts and videos ranked by the followers they brought; the Stats tab's accounts and last week's posts (#152).
 import { env } from "cloudflare:workers";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
@@ -206,35 +206,58 @@ describe("the channel route", () => {
   });
 });
 
-describe("the Stats page's audience", () => {
-  it("reads the account series, with the time of the sample it compares with", async () => {
+type Overview = {
+  days: number;
+  accounts: { id: string; followers: number | null; change: number | null; since: string | null }[];
+  recent: { key: string; title: string; views: number | null; published_at: string | null; href: string }[];
+};
+
+describe("the Stats tab", () => {
+  it("reads the accounts' followers from the account series, with the time of the sample it compares with", async () => {
     await followers("demo_travel", now - D - H, 90);
     await followers("demo_travel", now - H, 97);
-    const r = await get<{ accounts: { account: string; followers: number; change: number; since: string }[] }>(
-      "/app-api/performance",
-    );
-    expect(r.json.accounts.find((a) => a.account === "demo_travel")).toMatchObject({
+    const r = await get<Overview>("/app-api/stats");
+    expect(r.status).toBe(200);
+    expect(r.json.accounts.find((a) => a.id === "demo_travel")).toMatchObject({
       followers: 97,
       change: 7,
       since: utcIso(now - D - H),
     });
+    // an account without samples is listed with nothing to show yet
+    expect(r.json.accounts.find((a) => a.id === "demo_running")).toMatchObject({ followers: null, change: null });
   });
 
-  it("doesn't show another workspace's snapshot", async () => {
+  it("lists the last 7 days' posts most viewed first, each opening its Results; older ones stay out", async () => {
+    await post("reel:20261001_X/short1_a", "demo_travel", now - 2 * D, 300, null);
+    await post("reel:20261001_X/short2_b", "demo_travel", now - D, 900, null);
+    await post("reel:20261001_X/short0_old", "demo_travel", now - 10 * D, 5000, null);
+    const r = await get<Overview>("/app-api/stats");
+    expect(r.json.days).toBe(7);
+    expect(r.json.recent.map((x) => [x.key, x.views, x.href])).toEqual([
+      ["reel:20261001_X/short2_b", 900, `#/item/${encodeURIComponent("reel:20261001_X/short2_b")}/results`],
+      ["reel:20261001_X/short1_a", 300, `#/item/${encodeURIComponent("reel:20261001_X/short1_a")}/results`],
+    ]);
+  });
+
+  it("shows nothing of another workspace", async () => {
     await env.DB.prepare(
       "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO NOTHING",
     ).run();
+    await followers("b_x", now - H, 3, "instagram", "b");
     await env.DB.prepare(
-      "INSERT INTO snapshots (day, taken, source, data, workspace_id) VALUES ('2026-10-14', 'x', 'ci', ?1, 'b')",
+      "INSERT INTO post_metrics (item_key, account, platform, media_id, taken_at, views, workspace_id) VALUES ('reel:B/x', 'b_x', 'instagram', 'm', ?1, 50, 'b')",
     )
-      .bind(
-        JSON.stringify({
-          taken: "2026-10-14T10:00:00",
-          accounts: [{ platform: "instagram", account: "b_x", followers: 3 }],
-          rows: [],
-        }),
-      )
+      .bind(now - D)
       .run();
-    expect((await get("/app-api/performance")).json).toEqual({ none: true });
+    const r = await get<Overview>("/app-api/stats");
+    expect(r.json.accounts.map((a) => a.id)).not.toContain("b_x");
+    expect(r.json.recent).toEqual([]);
+  });
+
+  it("the old snapshot and review routes are gone", async () => {
+    for (const path of ["/app-api/performance", "/app-api/report?name=x"]) {
+      const r = await appRoutes(w.fetch).request(`https://bongsu.test${path}`, { headers: { Cookie: cookie } }, e);
+      expect(r.status).toBe(404);
+    }
   });
 });

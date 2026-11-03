@@ -149,3 +149,14 @@ describe("0014_drop_labels_manual_stats", () => {
     await pg.close();
   });
 });
+
+describe("0015_drop_reports", () => {
+  it("on Postgres: the reviews table is gone", async () => {
+    const pg = await fresh();
+    const r = await pg.query<{ table_name: string }>(
+      "SELECT table_name FROM information_schema.tables WHERE table_name = 'reports'",
+    );
+    expect(r.rows).toEqual([]);
+    await pg.close();
+  });
+});

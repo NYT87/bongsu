@@ -23,7 +23,6 @@ export const en = {
   "tabs.badgeOpen": "{label}, {n} open",
   "tabs.badgeApproval": "{label}, {n} need approval",
   "title.video": "Video",
-  "title.review": "Review",
   "title.channel": "Channel",
 
   // the header

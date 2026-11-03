@@ -42,7 +42,8 @@ and it covers both YouTube (Shorts comments) and Instagram in one queue.
   once its series has samples (views, likes, comments, and the subscribers it gained when the channel was connected
   with the analytics scope; otherwise a line says to reconnect it).
 - **Stats and the channel page:** the Stats page lists each account with its follower count and the change since a
-  day before (from the account series, sampled once a day). An account's page charts its followers (Total | Daily) and
+  day before (from the account series, sampled once a day), then the posts and videos of the last 7 days, most viewed
+  first, each opening its Results or video page. An account's page charts its followers (Total | Daily) and
   the views its posts added per day over 7, 30 or 90 days, and ranks the posts and videos that brought followers, each
   opening its Results or video page.
 - **Accounts:** a few Instagram accounts (Reels, posts, stories) and YouTube channels (Shorts comments, and moving a scheduled video's release date), configured

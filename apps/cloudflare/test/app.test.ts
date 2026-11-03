@@ -442,70 +442,6 @@ describe("the day view and the queue from tomorrow", () => {
   });
 });
 
-const putSnap = (day: string, data: string) =>
-  env.DB.prepare("INSERT INTO snapshots (day, taken, source, data) VALUES (?1, ?2, 'ci', ?3)")
-    .bind(day, JSON.parse(data).taken, data)
-    .run();
-
-describe("the performance screen", () => {
-  it("reads the latest snapshot against the previous one", async () => {
-    await signUp();
-    await env.DB.batch(["DELETE FROM snapshots", "DELETE FROM reports"].map((q) => env.DB.prepare(q)));
-    expect(await (await call("/app-api/performance")).json()).toEqual({ none: true });
-    const snap = (taken: string, followers: number, rows: unknown[]) =>
-      JSON.stringify({
-        taken,
-        since: "2026-07-20",
-        accounts: [{ platform: "instagram", account: "demo_travel", followers }],
-        rows,
-      });
-    await putSnap("2026-10-14", snap("2026-10-14T10:00:00", 90, []));
-    await putSnap(
-      "2026-10-18",
-      snap("2026-10-18T11:00:00", 97, [
-        {
-          platform: "instagram",
-          account: "demo_travel",
-          title: "new",
-          published: "2026-10-16T10:40:56+0000",
-          views: 500,
-          views_vs_median: 2.1,
-        },
-        {
-          platform: "instagram",
-          account: "demo_travel",
-          title: "old",
-          published: "2026-09-01T10:00:00+0000",
-          views: 900,
-          views_vs_median: 0.8,
-        },
-      ]),
-    );
-    await env.DB.batch(
-      [
-        ["2026-10-10_vlogs-shorts", "# Vlogs Shorts"],
-        ["2026-10-18", "# Review\n\n- one"],
-      ].map(([n, m]) => env.DB.prepare("INSERT INTO reports (name, markdown) VALUES (?1, ?2)").bind(n, m)),
-    );
-    const p = (await (await call("/app-api/performance")).json()) as {
-      accounts: { followers: number; change: number }[];
-      recent: { title: string }[];
-      best: { title: string }[];
-      report: string;
-    };
-    expect(p.accounts).toMatchObject([{ followers: 97, change: 7 }]);
-    expect(p.recent.map((r) => r.title)).toEqual(["new"]);
-    expect(p.best.map((r) => r.title)).toEqual(["new"]);
-    expect(p.report).toBe("2026-10-18");
-    expect(await (await call("/app-api/report?name=2026-10-18")).json()).toEqual({
-      name: "2026-10-18",
-      markdown: "# Review\n\n- one",
-      all: ["2026-10-18", "2026-10-10_vlogs-shorts"],
-    });
-    expect((await call("/app-api/report?name=nope")).status).toBe(404);
-  });
-});
-
 describe("a draft becomes a scheduled item (texts in D1)", () => {
   it("schedules, approves with the passkey, publishes from the draft's media; editing a text needs a new approval", async () => {
     await signUp();
@@ -714,37 +650,6 @@ describe("an item's display name", () => {
     expect(day.events.find((e) => e.key === key)?.title).toBe("Turbines at sunset");
     expect(await (await post("/app-api/item/title", { key, title: "" })).json()).toEqual({ key, title: null });
     expect((await post("/app-api/item/title", { key: "reel:X/nope", title: "x" })).status).toBe(404);
-  });
-});
-
-describe("the performance screen compares with the day before", () => {
-  it("takes the latest snapshot and the one of the day before; accounts link to the channel", async () => {
-    await signUp();
-    await env.DB.batch(["DELETE FROM snapshots", "DELETE FROM reports"].map((q) => env.DB.prepare(q)));
-    const snap = (taken: string, followers: number) =>
-      JSON.stringify({
-        taken,
-        since: "2026-07-20",
-        rows: [],
-        accounts: [
-          { platform: "youtube", account: "main", followers },
-          { platform: "instagram", account: "demo_travel", followers: followers * 10 },
-        ],
-      });
-    await putSnap("2026-10-18", snap("2026-10-18T11:00:00", 15));
-    await putSnap("2026-10-19", snap("2026-10-19T06:08:00", 16));
-    await putSnap("2026-10-20", snap("2026-10-20T06:08:00", 17));
-    await putSnap("2026-10-21", snap("2026-10-21T06:08:00", 18));
-    const p = (await (await call("/app-api/performance")).json()) as {
-      taken: string;
-      previous: string;
-      accounts: { followers: number; change: number; url: string }[];
-    };
-    expect([p.taken, p.previous]).toEqual(["2026-10-21T06:08:00", "2026-10-20T06:08:00"]);
-    expect(p.accounts).toMatchObject([
-      { followers: 18, change: 1, url: "https://www.youtube.com/@demo-main" },
-      { followers: 180, change: 10, url: "https://www.instagram.com/demo_travel/" },
-    ]);
   });
 });
 
