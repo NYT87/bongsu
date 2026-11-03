@@ -14,10 +14,16 @@ tree_url="${TREE_URL:-$repo_url/tree/main}"
 owner="$(echo "${repo%%/*}" | tr '[:upper:]' '[:lower:]')"
 site_url="${SITE_URL:-https://$owner.github.io/${repo#*/}}"
 
+# BRAND_DIR: a fork's own brand files, the names site/index.html uses (site/docs/configuration.md "Branding")
+brand_dir="${BRAND_DIR:-docs/assets/brand}"
+for f in mark.svg mark-small.svg lockup.svg social-card.png apple-touch-icon-180.png favicon.ico; do
+  [ -f "$brand_dir/$f" ] || { echo "build-site: $brand_dir/$f is missing (BRAND_DIR needs it)" >&2; exit 1; }
+done
+
 rm -rf "$out"
 mkdir -p "$out/brand"
 cp site/site.css "$out/"
-cp docs/assets/brand/*.svg docs/assets/brand/*.png docs/assets/brand/favicon.ico "$out/brand/"
+cp "$brand_dir"/*.svg "$brand_dir"/*.png "$brand_dir/favicon.ico" "$out/brand/"
 # The docs pages (site/docs/*.md) are rendered first with their links, then every page gets the same placeholders filled.
 node scripts/build-docs.mjs "$out" "$blob_url" "$site_url"
 

@@ -651,8 +651,9 @@ of the project (2.6).
 - [x] YouTube: move a scheduled Short or video's release date (private with `publishAt`, to a future time) from the
       PWA and the dashboard with the passkey, and from the API and MCP with the opt-in `reschedule` scope (#134).
       (Done 2026-10-31: `youtube_reschedule` with a 1-hour lead, the PWA and the dashboard's Videos page, #134.)
-- [ ] `pnpm brand <mark.svg>`: every PWA icon from one SVG, the site's brand folder from `BRAND_DIR`, so a fork
-      rebrands in one step after #75's variables (#143).
+- [x] `pnpm brand <mark.svg>`: every PWA icon from one SVG, the site's brand folder from `BRAND_DIR`, so a fork
+      rebrands in one step after #75's variables (#143). (Done 2026-11-03, #36: `build_icons.py --out`, the app build
+      checks the seven icons, `BRAND_DIR` for `pnpm site`.)
 
 ### Phase 8: Documentation (1–2 sessions)
 

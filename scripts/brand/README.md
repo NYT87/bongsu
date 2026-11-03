@@ -3,6 +3,9 @@
 Regenerates the vector mark, every icon (`docs/assets/brand/`, `packages/web/public/`) and the artwork (see `docs/brand-guidelines.md`). Run them only
 when the mark or the lettering changes; the outputs are committed.
 
+A fork's icons come from `pnpm brand <mark.svg>` instead (`brand.sh`, which runs `build_icons.py --out`: the PWA's seven
+files only, on `BONGSU_THEME_COLOR`; site/docs/configuration.md "Branding").
+
 ```sh
 python3 -m venv /tmp/brand-venv
 /tmp/brand-venv/bin/pip install potracer numpy pillow cairosvg fonttools uharfbuzz
