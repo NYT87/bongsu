@@ -1,5 +1,14 @@
 # @bongsu/node
 
+## 0.2.1
+
+### Patch Changes
+
+- eb0fd38: The Docker guide can run the published image: set `BONGSU_IMAGE=ghcr.io/nyt87/bongsu:<version>` in `.env`, then `docker compose pull bongsu` and `up -d`. Without it, compose builds from the checkout as before.
+- @bongsu/api@0.3.0
+  - @bongsu/core@0.3.0
+  - @bongsu/schema@0.2.1
+
 ## 0.2.0
 
 ### Minor Changes

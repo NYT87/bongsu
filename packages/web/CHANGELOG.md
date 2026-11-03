@@ -1,5 +1,15 @@
 # @bongsu/web
 
+## 0.3.0
+
+### Minor Changes
+
+- 67038ba: `pnpm brand <mark.svg>` makes the app's seven icons from one SVG on `BONGSU_THEME_COLOR`, and the app's build stops with the name of any icon that is missing or at the wrong size. The project site reads its brand files from `BRAND_DIR`.
+
+### Patch Changes
+
+- ff958db: Every string in the app goes through the translation catalogue (`i18n.ts`), with no wording change; a test fails on English text left in the app's JSX or on a key the catalogue doesn't have.
+
 ## 0.2.0
 
 ### Minor Changes
