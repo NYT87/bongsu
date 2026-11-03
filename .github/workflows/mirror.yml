@@ -1,7 +1,8 @@
 # Mirrors main and the tags to the GitLab project, a private backup that also keeps the history from before the public
 # squash (its `private-history` branch and tag). GitHub is the source: nothing is ever pushed to GitLab by hand.
-# Needs the GITLAB_TOKEN secret (a GitLab project access token, role Maintainer, scope write_repository); without it,
-# or in a fork, the job does nothing.
+# Needs the GITLAB_DEPLOY_KEY secret: the private half of an SSH key added to the GitLab project as a deploy key with
+# write access (Settings → Repository → Deploy keys; free, and limited to that one project). Without it, or in a
+# fork, the job does nothing.
 name: Mirror
 
 on:
@@ -27,8 +28,13 @@ jobs:
           persist-credentials: false
       # main only ever moves forward (squash merges, no force pushes), so a plain push is enough
       - env:
-          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          GITLAB_DEPLOY_KEY: ${{ secrets.GITLAB_DEPLOY_KEY }}
         run: |
-          if [ -z "$GITLAB_TOKEN" ]; then echo "No GITLAB_TOKEN: nothing mirrored."; exit 0; fi
-          git push "https://oauth2:${GITLAB_TOKEN}@gitlab.com/nyt87/bongsu.git" \
-            refs/remotes/origin/main:refs/heads/main 'refs/tags/*:refs/tags/*'
+          if [ -z "$GITLAB_DEPLOY_KEY" ]; then echo "No GITLAB_DEPLOY_KEY: nothing mirrored."; exit 0; fi
+          key="$RUNNER_TEMP/gitlab_key"
+          printf '%s\n' "$GITLAB_DEPLOY_KEY" >"$key"
+          chmod 600 "$key"
+          # GitLab.com's published host key (docs.gitlab.com/user/gitlab_com), so the connection is checked
+          echo "gitlab.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAfuCHKVTjquxvt6CM6tdG4SLp1Btn/nOeHHE5UOzRdf" >"$RUNNER_TEMP/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          git push git@gitlab.com:nyt87/bongsu.git refs/remotes/origin/main:refs/heads/main 'refs/tags/*:refs/tags/*'

@@ -182,8 +182,8 @@ weekly updates for npm, the workflows' actions and the Docker base image.
 `.github/workflows/`: `ci.yml` runs `biome ci`, `pnpm typecheck`, `pnpm test`, `pnpm test:site`, `pnpm site`,
 `pnpm build` and commitlint over the commits of every pull request and push; `pr-title.yml` lints the pull request
 title (again when it's edited), since it becomes the squashed commit's message; `release.yml` (above); `pages.yml`
-(the site on GitHub Pages); `mirror.yml` (main and the tags to the private GitLab backup, with the `GITLAB_TOKEN`
-secret). None of them deploys an instance.
+(the site on GitHub Pages); `mirror.yml` (main and the tags to the private GitLab backup, with the
+`GITLAB_DEPLOY_KEY` secret: an SSH deploy key with write access on the GitLab project). None of them deploys an instance.
 
 GitHub is the only source: `main` takes squash merges of pull requests, with the `check` and `commitlint` checks
 required (a ruleset), and nothing is pushed to GitLab by hand. The GitLab project keeps the history from before the
