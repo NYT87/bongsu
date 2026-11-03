@@ -77,6 +77,7 @@ export async function moveRelease(env: Env, fetcher: typeof fetch, req: ReleaseR
   const by = actor.kind === "owner" ? "you" : actor.name;
   await notifier(env.DB, fetcher, env.NOTIFY_URL, nowS, env).send(
     releaseMoved(upload.title, stamp(fromS), stamp(at), by),
+    req.workspaceId,
   );
   return {
     video: videoId,

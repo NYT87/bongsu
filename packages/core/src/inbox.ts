@@ -146,7 +146,7 @@ export async function scanInbox(
   }
   if (drafted.length) {
     const note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env);
-    await note.send(newDrafts(drafted));
+    await note.send(newDrafts(drafted), DEFAULT_WORKSPACE); // the inbox feeds the default workspace
   }
   return { drafted, waiting: fresh.length - drafted.length };
 }

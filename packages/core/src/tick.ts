@@ -395,7 +395,7 @@ async function create(c: Ctx, cand: Candidate, a: Approval | undefined) {
     )
     .first<{ id: number }>();
   if (r && v.state !== "pending") {
-    await c.note.send(N.jobVerdict(cand.key, v.state, v.reason));
+    await c.note.send(N.jobVerdict(cand.key, v.state, v.reason), cand.payload.workspaceId ?? DEFAULT_WORKSPACE);
     await c.setJob(r.id, { notified: true });
   }
 }
@@ -423,7 +423,7 @@ async function advance(c: Ctx, job: JobRow) {
     const msg = String((e as Error).message ?? e).slice(0, 500);
     if (attempts >= 3) {
       await c.setJob(job.id, { state: "failed", attempts, last_error: msg });
-      await c.note.send(N.jobFailed(job.item_key, msg));
+      await c.note.send(N.jobFailed(job.item_key, msg), job.workspace_id);
     } else {
       await c.setJob(job.id, { attempts, last_error: msg });
     }
@@ -432,7 +432,7 @@ async function advance(c: Ctx, job: JobRow) {
 
 async function refuse(c: Ctx, job: JobRow, reason: string) {
   await c.setJob(job.id, { state: "refused", last_error: reason, notified: true });
-  await c.note.send(N.jobRefused(job.item_key, reason));
+  await c.note.send(N.jobRefused(job.item_key, reason), job.workspace_id);
 }
 
 /** The plan's current word on a queued job, asked before each step that reaches the platform: the item is still
@@ -538,7 +538,7 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   if (p.trial) return stepTrialPending(c, job, p);
   if (c.nowS - job.due_at > CATCH_UP_S) {
     await c.setJob(job.id, { state: "held", last_error: "missed the catch-up window", notified: true });
-    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600));
+    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600), job.workspace_id);
     return;
   }
   const r = await recheck(c, job, p);
@@ -563,6 +563,7 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
         p.account,
         `${media.length} media, caption ${v.caption.length} chars${v.comment ? ", with self-comment" : ""}`,
       ),
+      job.workspace_id,
     );
     return;
   }
@@ -685,7 +686,7 @@ async function stepContainer(c: Ctx, job: JobRow, p: Payload) {
 
 async function failStep(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step) {
   await c.setJob(job.id, { state: "failed", last_error: step.error ?? "failed", payload: { ...p, step } });
-  await c.note.send(N.providerFailed(job.item_key, platformName(pr), step.error ?? "failed"));
+  await c.note.send(N.providerFailed(job.item_key, platformName(pr), step.error ?? "failed"), job.workspace_id);
 }
 
 /** The provider's last step: the post goes live; comments and the record follow on the next run. In dry run (switched
@@ -699,7 +700,7 @@ async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step
       payload: { ...p, step },
     });
     await audit(c.env.DB, c.nowS, "would_publish", job.item_key, { kind: job.kind, account: p.account });
-    await c.note.send(N.dryRunPublish(job.item_key, job.kind, p.account));
+    await c.note.send(N.dryRunPublish(job.item_key, job.kind, p.account), job.workspace_id);
     return;
   }
   // From here the post may go live even if the call fails: a failed job never reopens after this (reopens()).
@@ -741,7 +742,7 @@ async function pollWait(c: Ctx, job: JobRow, pr: Provider) {
   if (attempts > MAX_POLLS) {
     const name = platformName(pr);
     await c.setJob(job.id, { state: "failed", attempts, last_error: `${name} never finished processing` });
-    await c.note.send(N.processingTimeout(job.item_key, name));
+    await c.note.send(N.processingTimeout(job.item_key, name), job.workspace_id);
   } else {
     await c.setJob(job.id, { attempts });
   }
@@ -796,7 +797,7 @@ async function stepPublished(c: Ctx, job: JobRow, p: Payload) {
       )
       .run();
     await c.setJob(job.id, { state: "done" });
-    await c.note.send(N.publishedTrial(job.item_key.replace(/^trial:/, ""), p.permalink ?? null));
+    await c.note.send(N.publishedTrial(job.item_key.replace(/^trial:/, ""), p.permalink ?? null), job.workspace_id);
     return;
   }
   await recordPosted(c.env.DB, {
@@ -816,6 +817,7 @@ async function stepPublished(c: Ctx, job: JobRow, p: Payload) {
   }
   await c.note.send(
     N.published(job.item_key, p.permalink ?? null, { story: !!p.story, locationDropped: !!p.locationDropped }),
+    job.workspace_id,
   );
 }
 
@@ -860,7 +862,7 @@ async function shortsComments(c: Ctx) {
     if (!todo.length) continue;
     const pr = await providerFor(c.env, c.deps.fetch, s);
     if (!pr?.comment) {
-      await c.note.send(N.shortsWaiting(s.handle, s.id));
+      await c.note.send(N.shortsWaiting(s.handle, s.id), s.workspaceId);
       continue;
     }
     const ready = todo.filter((t) => t.why === null).map((t) => t.r.video_id);
@@ -898,13 +900,13 @@ async function shortsComments(c: Ctx) {
       if (!ins) continue;
       if (why !== null) {
         await c.setJob(ins.id, { state: "refused", last_error: why });
-        await c.note.send(N.jobRefused(key, why));
+        await c.note.send(N.jobRefused(key, why), s.workspaceId);
         continue;
       }
       budget--;
       if (c.dry) {
         await c.setJob(ins.id, { state: "done", last_error: "dry run: nothing posted" });
-        await c.note.send(N.dryRunComment(label || r.video_id, text.slice(0, 200), key));
+        await c.note.send(N.dryRunComment(label || r.video_id, text.slice(0, 200), key), s.workspaceId);
         continue;
       }
       try {
@@ -919,10 +921,10 @@ async function shortsComments(c: Ctx) {
           source: "scheduler",
         });
         await c.setJob(ins.id, { state: "done" });
-        await c.note.send(N.commented(label || r.video_id, key));
+        await c.note.send(N.commented(label || r.video_id, key), s.workspaceId);
       } catch (e) {
         await c.setJob(ins.id, { state: "failed", last_error: String((e as Error).message).slice(0, 500) });
-        await c.note.send(N.jobFailed(key, String((e as Error).message).slice(0, 300)));
+        await c.note.send(N.jobFailed(key, String((e as Error).message).slice(0, 300)), s.workspaceId);
       }
     }
   }
