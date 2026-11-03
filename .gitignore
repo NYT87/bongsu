@@ -22,5 +22,10 @@ lefthook-local.yml
 # per-plan scratch of the coding agents (ledgers, briefs, review packages)
 .superpowers/
 
+# a rehearsal's local D1 and the backups site/docs/updating.md and backups.md make in a checkout
+.rehearsal/
+backup*.sql
+backup*.db
+
 # the screenshot pipeline's demo instance
 scripts/screenshots/.scratch/
