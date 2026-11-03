@@ -5,11 +5,12 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "@bongsu/api/app";
-import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS } from "@bongsu/core/constants";
+import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS, NODE_JOBS_PER_TICK } from "@bongsu/core/constants";
 import { dbCases } from "@bongsu/core/db-conformance";
 import { mediaStoreCases } from "@bongsu/core/media/conformance";
 import { registerStore } from "@bongsu/core/media/index";
 import { runSchedule } from "@bongsu/core/schedules";
+import { jobsPerTick } from "@bongsu/core/tick";
 import Database from "better-sqlite3";
 import { afterAll, describe, expect, it } from "vitest";
 import { staticAssets } from "../src/assets";
@@ -117,6 +118,11 @@ describe("the HTTP app and the schedules on Node", () => {
     const e = nodeEnv({ PUBLIC_URL: "https://x.test", YT_MAIN_OAUTH: "{}" }, db);
     expect([e.RP_ID, e.DRY_RUN, (e as unknown as Record<string, string>).YT_MAIN_OAUTH]).toEqual(["x.test", "1", "{}"]);
     expect(() => nodeEnv({}, db)).toThrow(/PUBLIC_URL/);
+  });
+
+  it("advances more jobs a tick than Cloudflare by default, and takes JOBS_PER_TICK", () => {
+    expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(NODE_JOBS_PER_TICK);
+    expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test", JOBS_PER_TICK: "8" }, db))).toBe(8);
   });
 
   it("answers /health: migrated, local store, nothing missing", async () => {

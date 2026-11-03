@@ -1,6 +1,7 @@
 // The Env (core/env.ts) on Node: the database and the static files from here, everything else from process.env (or a
 // .env file docker-compose passes in). The names are the Cloudflare ones, so site/docs/configuration.md covers both.
 
+import { NODE_JOBS_PER_TICK } from "@bongsu/core/constants";
 import type { Db } from "@bongsu/core/db";
 import type { Env } from "@bongsu/core/env";
 
@@ -21,6 +22,8 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
     VAPID_SUBJECT: vars.VAPID_SUBJECT ?? "",
     DRIVE_SA_JSON: vars.DRIVE_SA_JSON ?? "",
     MEDIA_SIGNING_KEY: vars.MEDIA_SIGNING_KEY ?? "",
+    // no per-invocation subrequest limit here, unlike Cloudflare's free plan: more jobs a tick
+    JOBS_PER_TICK: vars.JOBS_PER_TICK ?? String(NODE_JOBS_PER_TICK),
   };
   // the optional ones, only when set
   for (const k of [

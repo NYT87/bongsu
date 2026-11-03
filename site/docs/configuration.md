@@ -85,6 +85,7 @@ central 80%) and `apple-touch-icon.png`.
 | `PUBLIC_URL` | the `bongsu` Worker's URL (signed media links, notification links) |
 | `RP_ID` | passkey relying-party id: the app's hostname |
 | `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` | Web Push |
+| `JOBS_PER_TICK` | optional, on the cron Worker: publishing jobs advanced per run (default `4`, at most `100`). See [How many go out at once](#how-many-go-out-at-once) |
 
 ## Secrets
 
@@ -123,6 +124,22 @@ The same names, from the environment (`.env` with docker-compose; [self-hosting.
 | `PORT`, `HOST` | `8787`, `0.0.0.0` | where it listens |
 | `MIGRATIONS_DIR`, `WEB_DIR` | set in the image | the folder holding `sqlite/` and `postgres/` migrations, and the built app |
 | `RP_ID` | `PUBLIC_URL`'s host | the passkeys' relying party |
+| `JOBS_PER_TICK` | `20` | publishing jobs advanced per run, at most `100` ([How many go out at once](#how-many-go-out-at-once)) |
+
+## How many go out at once
+
+Every 5 minutes the scheduler advances at most `JOBS_PER_TICK` publishing jobs, all accounts and workspaces together,
+the oldest due first. A video takes a few runs (Instagram processes it, then Bongsu publishes it) and holds its place
+until it's out, so items due at the same minute beyond that number go out over the next runs. Nothing is dropped,
+but a job more than 6 hours late waits for you instead (`CATCH_UP_S`).
+
+- **Cloudflare: 4.** Each job costs a few subrequests and the free plan allows 50 per invocation. On the paid plan
+  (1,000 subrequests) you can raise it: set `JOBS_PER_TICK` in `[vars]` of `wrangler.cron.toml`, the Worker that runs
+  the schedules.
+- **Node and Docker: 20.** No such limit there; set `JOBS_PER_TICK` in `.env` to change it.
+
+Bongsu has no limit of its own per account. Instagram allows 100 posts per account per 24 hours through the API
+([Instagram](instagram-graph.md#limits)); YouTube releases scheduled videos itself, so any number go public together.
 
 ## Drive layout
 
@@ -140,7 +157,7 @@ The same names, from the environment (`.env` with docker-compose; [self-hosting.
 | `CATCH_UP_S` | 6 h | a job later than this waits for the owner |
 | `MAX_POLLS` | 24 | ticks to wait for an Instagram container |
 | `LINK_TTL_S` | 6 h | lifetime of a signed media link |
-| `JOBS_PER_TICK` | 4 | jobs advanced per run (free plan: 50 subrequests per invocation) |
+| `JOBS_PER_TICK` | 4 | the default jobs advanced per run on Cloudflare (free plan: 50 subrequests per invocation); Node's is `NODE_JOBS_PER_TICK` (20), and the `JOBS_PER_TICK` variable overrides both, up to `JOBS_PER_TICK_MAX` (100) |
 | `AUDIT_KEEP_S` | 180 days | audit log retention |
 | `METRICS_DENSE_S` | 6 h | time between a post's results samples while it is young… |
 | `METRICS_DENSE_UNTIL_S` | 3 days | …until this age |

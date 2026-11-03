@@ -22,7 +22,7 @@ as Workers assets.
 
 | Schedule | Run |
 |---|---|
-| `*/5 * * * *` | Instagram: create jobs for due approved items, advance up to 4 jobs (`packages/core/src/tick.ts`) |
+| `*/5 * * * *` | Instagram: create jobs for due approved items, advance up to `JOBS_PER_TICK` jobs: 4 on Cloudflare, 20 on Node (`packages/core/src/tick.ts`) |
 | `2,32 * * * *` | YouTube Shorts comments |
 | `7,22,37,52 * * * *` | Drive inbox scan, moving posted media aside, daily digest, 24 h results, new comments |
 
