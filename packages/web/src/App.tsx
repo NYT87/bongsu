@@ -124,9 +124,9 @@ export function cachePrune(all = false) {
 
 /** An error as one plain sentence: what happened and what to do. */
 function friendly(e: Error): string {
-  if (!(e instanceof HttpError)) return "Couldn't reach the scheduler: check the connection.";
-  if (e.status === 401) return "You're signed out: reopen the app and sign in.";
-  if (e.status >= 500) return "The scheduler had a problem. Try again in a minute.";
+  if (!(e instanceof HttpError)) return t("error.offline");
+  if (e.status === 401) return t("error.signedOut");
+  if (e.status >= 500) return t("error.server");
   return cap(e.message.replace(/\.$/, "")) + ".";
 }
 
@@ -210,9 +210,9 @@ const dueTime = (due?: string | null) => DUE.exec(due ?? "")?.[2] ?? null;
 
 /** "Today", "Tomorrow", or "Wed 21 Oct" for a date in the workspace's zone. */
 function dayName(date: string): string {
-  if (date === zoneToday()) return "Today";
-  if (date === zoneShift(1)) return "Tomorrow";
-  if (date === zoneShift(-1)) return "Yesterday";
+  if (date === zoneToday()) return t("day.today");
+  if (date === zoneShift(1)) return t("day.tomorrow");
+  if (date === zoneShift(-1)) return t("day.yesterday");
   return new Date(`${date}T00:00:00Z`).toLocaleDateString(dateLocale(), {
     weekday: "short",
     day: "numeric",
@@ -223,15 +223,15 @@ function dayName(date: string): string {
 /** A due string ("YYYY-MM-DD HH:MM[ zone]") as "Tomorrow · 18:00 GMT+9". */
 function when(due?: string | null): string {
   const d = dueDate(due);
-  if (!d) return "No date set";
-  const t = dueTime(due);
-  return t ? `${dayName(d)} · ${t} ${zoneLabel()}` : dayName(d);
+  if (!d) return t("day.noDate");
+  const time = dueTime(due);
+  return time ? `${dayName(d)} · ${time} ${zoneLabel()}` : dayName(d);
 }
 /** An ISO UTC timestamp ("2026-10-21T02:56:18Z") shown in the workspace's zone. */
 function utcToZone(iso: string): string {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  const p = zoneParts(t);
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return iso;
+  const p = zoneParts(ms);
   return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute} ${zoneLabel()}`;
 }
 const cap = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
@@ -296,7 +296,7 @@ const channelShort = (c: Channel) =>
   c.label ??
   PLATFORMS.get(c.platform)?.formats.find((f) => f.format === c.format)?.name ??
   PLATFORMS.get(c.platform)?.post.name ??
-  "Post";
+  t("channel.post");
 const channelLabel = (c: Channel) => `${platformName(c.platform)} ${channelShort(c)}`;
 /** The dot's look: one colour per platform, a circle for videos and a square for the rest (styles.css). */
 const dotClass = (c: Channel) => `dot p-${c.platform}${c.format === "video" ? " video" : ""}`;
@@ -856,8 +856,8 @@ function Row({
           href={out}
           target="_blank"
           rel="noopener"
-          aria-label={`Open “${title}” on ${where}`}
-          title={`Open on ${where}`}
+          aria-label={t("row.openTitleOn", { title, where })}
+          title={t("row.openOn", { where })}
         >
           {platformIcon(channel.platform)}
         </a>
@@ -907,7 +907,7 @@ function DayGroups({ items }: { items: QueueItem[] }) {
       {[...by].map(([d, list]) => (
         <section key={d} className="day-group">
           <h2 className="day-head">
-            {d === "none" ? "No date" : dayName(d)}
+            {d === "none" ? t("day.none") : dayName(d)}
             {d === zoneToday() || d === zoneShift(1) ? (
               <span className="muted">
                 {" "}
@@ -994,19 +994,19 @@ function QueuePage({
     <section>
       {title && <h2>{title}</h2>}
       {filters && (
-        <div className="segmented" role="group" aria-label="Show">
+        <div className="segmented" role="group" aria-label={t("results.show")}>
           <button aria-pressed={only !== "needs"} onClick={() => setOnly("")}>
-            All <span className="muted">{all.length}</span>
+            {t("queue.all")} <span className="muted">{all.length}</span>
           </button>
           <button aria-pressed={only === "needs"} onClick={() => setOnly("needs")}>
-            Needs approval <span className="muted">{waiting.length}</span>
+            {t("status.notApproved")} <span className="muted">{waiting.length}</span>
           </button>
         </div>
       )}
       {filters && facets.data && (
         <div className="filters">
-          <select value={channel} onChange={(e) => setChannel(e.target.value)} aria-label="Channel">
-            <option value="">All channels</option>
+          <select value={channel} onChange={(e) => setChannel(e.target.value)} aria-label={t("queue.channel")}>
+            <option value="">{t("queue.allChannels")}</option>
             {facets.data.channels.map((c) => (
               <option key={c.channel} value={c.channel}>
                 {CHANNEL_NAME[c.channel] ?? cap(c.channel)} ({c.n})
@@ -1016,9 +1016,9 @@ function QueuePage({
           <select
             value={groups.some((g) => g.group === group) ? group : ""}
             onChange={(e) => setGroup(e.target.value)}
-            aria-label="Project"
+            aria-label={t("queue.project")}
           >
-            <option value="">All projects</option>
+            <option value="">{t("queue.allProjects")}</option>
             {groups.map((g) => (
               <option key={`${g.channel}/${g.group}`} value={g.group}>
                 {project(g.group)} ({g.n})
@@ -1027,11 +1027,7 @@ function QueuePage({
           </select>
         </div>
       )}
-      {filters && (
-        <p className="muted small">
-          The next {days} days, {zoneLabel()}.
-        </p>
-      )}
+      {filters && <p className="muted small">{t("queue.nextDays", { n: days, zone: zoneLabel() })}</p>}
       {stale && <Stale msg={stale} at={at} onRetry={reload} />}
       {noAccounts ? (
         <SetupNote />
@@ -1043,7 +1039,7 @@ function QueuePage({
         shown.length ? (
           <DayGroups items={shown} />
         ) : (
-          <p className="muted">{only === "needs" ? "Nothing needs approval. All set." : EMPTY.scheduled}</p>
+          <p className="muted">{only === "needs" ? t("queue.noneNeeds") : EMPTY.scheduled}</p>
         )
       ) : (
         <QueueList items={shown} />
@@ -1055,15 +1051,15 @@ function QueuePage({
 const Stale = ({ msg, at, onRetry }: { msg: string; at?: number | null; onRetry?: () => void }) => (
   <div className="notice warn row" role="status">
     <span>
-      Showing what was saved{at ? ` at ${zoneClock(at)} ${zoneLabel()}` : ""}. {msg}
+      {at ? t("stale.savedAt", { time: `${zoneClock(at)} ${zoneLabel()}` }) : t("stale.saved")} {msg}
     </span>
-    {onRetry && <button onClick={onRetry}>Try again</button>}
+    {onRetry && <button onClick={onRetry}>{t("common.tryAgain")}</button>}
   </div>
 );
 const ErrorNote = ({ msg, onRetry }: { msg: string; onRetry?: () => void }) => (
   <div className="notice bad row" role="alert">
     <span>{msg}</span>
-    {onRetry && <button onClick={onRetry}>Try again</button>}
+    {onRetry && <button onClick={onRetry}>{t("common.tryAgain")}</button>}
   </div>
 );
 
@@ -1081,7 +1077,7 @@ function TodayPage() {
     <>
       {stale && (
         <Stale
-          msg="Offline: couldn't reach the scheduler."
+          msg={t("today.offline")}
           at={status.at}
           onRetry={() => {
             status.reload();
@@ -1101,13 +1097,13 @@ function TodayPage() {
       ) : (
         <>
           <TodaySection />
-          <QueuePage days={3} from={zoneShift(1)} title="Next 3 days" />
+          <QueuePage days={3} from={zoneShift(1)} title={t("today.next3")} />
         </>
       )}
 
       <details className="activity">
         <summary className="tap">
-          Recent activity
+          {t("today.activity")}
           {notes.data?.notifications.length ? (
             <span className="muted"> ({notes.data.notifications.length})</span>
           ) : null}
@@ -1127,7 +1123,7 @@ function TodayPage() {
             ))}
           </ul>
         ) : (
-          <p className="muted">None yet.</p>
+          <p className="muted">{t("today.activityNone")}</p>
         )}
       </details>
     </>
@@ -1153,26 +1149,27 @@ function NeedsYou({
   const heldLine = held.length > 0 && (
     <p className="small held-line">
       <a href={held.length === 1 ? `#/item/${encodeURIComponent(held[0].key)}` : "#/queue"} className="link">
-        {held.length} on hold
+        {t("today.held", { n: held.length })}
       </a>
-      : won't go out until you release {held.length === 1 ? "it" : "them"}.
+      {t("today.heldDetail", { n: held.length })}
     </p>
   );
   // Nothing waiting: no block at all (no "all set" row); items on hold still get their line.
   if (!n)
     return held.length ? (
-      <section className="needs" aria-label="Needs you">
-        <h2>Needs you</h2>
+      <section className="needs" aria-label={t("today.needsYou")}>
+        <h2>{t("today.needsYou")}</h2>
         {heldLine}
       </section>
     ) : null;
   return (
-    <section className="needs" aria-label="Needs you">
-      <h2>Needs you</h2>
+    <section className="needs" aria-label={t("today.needsYou")}>
+      <h2>{t("today.needsYou")}</h2>
       {overdue.length > 0 && (
         <>
           <p className="small bad-text">
-            <strong>{overdue.length} overdue</strong>: its time passed and it hasn't gone out.
+            <strong>{t("today.overdue", { n: overdue.length })}</strong>
+            {t("today.overdueDetail")}
           </p>
           <QueueList items={overdue} />
         </>
@@ -1181,7 +1178,7 @@ function NeedsYou({
       {drafts > 0 && (
         <p className="small">
           <a href="#/drafts" className="link">
-            {drafts} open draft{drafts > 1 ? "s" : ""} to schedule or refuse
+            {t("today.drafts", { n: drafts })}
           </a>
         </p>
       )}
@@ -1196,14 +1193,14 @@ function TodaySection() {
   const events = day.data?.events ?? [];
   return (
     <section>
-      <h2>Today</h2>
+      <h2>{t("day.today")}</h2>
       {day.stale && <Stale msg={day.stale} at={day.at} onRetry={day.reload} />}
       {day.error ? (
         <ErrorNote msg={day.error} onRetry={day.reload} />
       ) : !day.data ? (
         <p className="muted">{t("common.loading")}</p>
       ) : (
-        <EventList events={events} empty="Nothing planned for today." />
+        <EventList events={events} empty={t("today.nothing")} />
       )}
       {day.data?.warnings.map((w) => (
         <p key={w} className="notice warn small">
@@ -1267,17 +1264,19 @@ const waitingEvent = (e: CalEvent) => e.status === "not approved" || e.status ==
 
 /** A day's events, posted or pending: every row opens its page in the app (an item, or a YouTube video's page); the
  *  icon on a posted/public one opens it on Instagram or YouTube. */
-function EventList({ events, empty = "Nothing that day." }: { events: CalEvent[]; empty?: string }) {
-  if (!events.length) return <p className="muted">{empty}</p>;
+function EventList({ events, empty }: { events: CalEvent[]; empty?: string }) {
+  if (!events.length) return <p className="muted">{empty ?? t("calendar.nothingThatDay")}</p>;
   const sorted = [...events].sort((a, b) => (a.time ?? "").localeCompare(b.time ?? "")); // no time known: first
   return (
     <ul className="list">
       {sorted.map((e, k) => {
         const time = e.posted_at
-          ? `Posted ${dueTime(e.posted_at) ?? dayName(e.posted_at.slice(0, 10))}${dueTime(e.posted_at) ? ` ${zoneLabel()}` : ""}`
+          ? t("calendar.posted", {
+              when: `${dueTime(e.posted_at) ?? dayName(e.posted_at.slice(0, 10))}${dueTime(e.posted_at) ? ` ${zoneLabel()}` : ""}`,
+            })
           : e.time
             ? `${e.time} ${zoneLabel()}`
-            : "Time not set";
+            : t("calendar.noTime");
         // YouTube rows are the videos themselves (public / going public), read from YouTube; they need no approval here.
         const yt = external(e);
         const title = yt ? e.title.replace(/^Short · /, "") : nice(e.title);
@@ -1304,6 +1303,16 @@ function EventList({ events, empty = "Nothing that day." }: { events: CalEvent[]
     </ul>
   );
 }
+
+const WEEKDAYS = [
+  "calendar.mon",
+  "calendar.tue",
+  "calendar.wed",
+  "calendar.thu",
+  "calendar.fri",
+  "calendar.sat",
+  "calendar.sun",
+] as const satisfies readonly Key[];
 
 function CalendarPage() {
   const noAccounts = useNoAccounts();
@@ -1338,11 +1347,19 @@ function CalendarPage() {
     <section>
       {noAccounts && <SetupNote />}
       <div className="row month-bar">
-        <button className="icon-btn" onClick={() => setMonth(shiftMonth(month, -1))} aria-label="Previous month">
+        <button
+          className="icon-btn"
+          onClick={() => setMonth(shiftMonth(month, -1))}
+          aria-label={t("calendar.prevMonth")}
+        >
           {ICON.chevL}
         </button>
         <h2>{label}</h2>
-        <button className="icon-btn" onClick={() => setMonth(shiftMonth(month, 1))} aria-label="Next month">
+        <button
+          className="icon-btn"
+          onClick={() => setMonth(shiftMonth(month, 1))}
+          aria-label={t("calendar.nextMonth")}
+        >
           {ICON.chevR}
         </button>
       </div>
@@ -1355,15 +1372,15 @@ function CalendarPage() {
         ))}
         <span>
           <i className="dot ring" aria-hidden="true" />
-          Needs approval
+          {t("status.notApproved")}
         </span>
       </div>
       {stale && <Stale msg={stale} at={at} onRetry={reload} />}
       {error && <ErrorNote msg={error} onRetry={reload} />}
-      <div className="cal" role="group" aria-label={`${label}: pick a day`}>
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+      <div className="cal" role="group" aria-label={t("calendar.pickDay", { month: label })}>
+        {WEEKDAYS.map((d) => (
           <div key={d} className="cal-head small muted" aria-hidden="true">
-            {d}
+            {t(d)}
           </div>
         ))}
         {cells.map((d, i) => {
@@ -1373,7 +1390,7 @@ function CalendarPage() {
           const kinds = [...new Map(ev.map((e) => [channelKey(e), e])).values()].map(
             (c) => [c, ev.filter((e) => channelKey(e) === channelKey(c)).length] as const,
           );
-          const name = `${long(d)}${d === today ? ", today" : ""}: ${ev.length ? kinds.map(([c, n]) => `${n} ${channelLabel(c)}`).join(", ") : "nothing"}${waiting ? `; ${waiting} need${waiting > 1 ? "" : "s"} approval` : ""}`;
+          const name = `${long(d)}${d === today ? t("calendar.todaySuffix") : ""}: ${ev.length ? kinds.map(([c, n]) => `${n} ${channelLabel(c)}`).join(", ") : t("calendar.nothing")}${waiting ? t("calendar.cellWaiting", { n: waiting }) : ""}`;
           return (
             <button
               key={d}
@@ -1401,8 +1418,8 @@ function CalendarPage() {
         </p>
       ))}
       <p className="row">
-        <button onClick={() => setRefresh(refresh + 1)}>Check YouTube now</button>{" "}
-        <span className="muted small">YouTube updates on its own every hour.</span>
+        <button onClick={() => setRefresh(refresh + 1)}>{t("calendar.checkYoutube")}</button>{" "}
+        <span className="muted small">{t("calendar.youtubeHourly")}</span>
       </p>
     </section>
   );
@@ -1444,11 +1461,7 @@ function ItemPage({
   const hold = async (on: boolean) => {
     try {
       await api("item/hold", { key: keyId, hold: on });
-      setHoldMsg(
-        on
-          ? "On hold: it won't go out until you release it. The approval is kept."
-          : "Released: it goes out at its time again.",
-      );
+      setHoldMsg(on ? t("item.heldMsg") : t("item.releasedMsg"));
       setDone(null);
       reload();
       refresh();
@@ -1461,12 +1474,12 @@ function ItemPage({
       <a className="back" href={lastList}>
         {ICON.back}
         {lastList.startsWith("#/calendar")
-          ? "Calendar"
+          ? t("tabs.calendar")
           : lastList.startsWith("#/queue")
-            ? "Queue"
+            ? t("tabs.queue")
             : lastList.startsWith("#/drafts")
-              ? "Drafts"
-              : "Today"}
+              ? t("tabs.drafts")
+              : t("tabs.today")}
       </a>
     </p>
   );
@@ -1496,7 +1509,7 @@ function ItemPage({
   const showBar = (canApprove || !!done) && !editing;
   const slot = dueTime(item.due)
     ? `${dayName(dueDate(item.due)!)} ${dueTime(item.due)} ${zoneLabel()}`
-    : "when scheduled";
+    : t("item.whenScheduled");
   const target = (
     <>
       <Dot c={ch} />
@@ -1512,8 +1525,8 @@ function ItemPage({
       <ItemName
         keyId={keyId}
         title={item.title ?? null}
-        onSaved={(t) => {
-          onTitle?.(t);
+        onSaved={(title) => {
+          onTitle?.(title);
           reload();
           refresh();
         }}
@@ -1523,13 +1536,13 @@ function ItemPage({
         {item.format === "story" ? (
           <>
             {" "}
-            <span className="pill">Story</span>
+            <span className="pill">{t("item.story")}</span>
           </>
         ) : null}
         {item.hold ? (
           <>
             {" "}
-            <span className="pill warn">On hold</span>
+            <span className="pill warn">{t("status.hold")}</span>
           </>
         ) : null}
       </p>
@@ -1561,12 +1574,13 @@ function ItemPage({
       {item.published && (
         <div className="card published">
           <p className="small">
-            <span className="pill ok">Published</span> {when(item.published.at)}
+            <span className="pill ok">{t("item.published")}</span> {when(item.published.at)}
           </p>
-          {item.results && <ResultsLine r={item.results} vs="usual" />}
+          {item.results && <ResultsLine r={item.results} vs={t("results.vsUsual")} />}
           {item.published.permalink && (
             <a className="button-link with-icon" href={item.published.permalink} target="_blank" rel="noopener">
-              {ICON.external}Open on Instagram
+              {ICON.external}
+              {t("row.openOn", { where: "Instagram" })}
             </a>
           )}
         </div>
@@ -1577,34 +1591,35 @@ function ItemPage({
             <span
               className={`pill${item.trial.state === "published" ? " ok" : ["failed", "refused", "held"].includes(item.trial.state) ? " bad" : ""}`}
             >
-              Trial Reel
+              {t("results.trial")}
             </span>{" "}
-            {item.trial.state === "published" ? (
-              <>{item.trial.at ? when(item.trial.at) : "Published"}: shown to non-followers first</>
-            ) : ["failed", "refused", "held"].includes(item.trial.state) ? (
-              <>not posted{item.trial.error ? `: ${item.trial.error}` : ""}</>
-            ) : (
-              "posting the trial copy…"
-            )}
+            {item.trial.state === "published"
+              ? t("item.trialShown", { when: item.trial.at ? when(item.trial.at) : t("item.published") })
+              : ["failed", "refused", "held"].includes(item.trial.state)
+                ? item.trial.error
+                  ? t("item.trialNotPostedError", { error: item.trial.error })
+                  : t("item.trialNotPosted")
+                : t("item.trialPosting")}
           </p>
-          {item.trial.results && <ResultsLine r={item.trial.results} vs="the regular Reel" />}
+          {item.trial.results && <ResultsLine r={item.trial.results} vs={t("results.vsRegular")} />}
           {item.trial.permalink && (
             <a className="button-link with-icon" href={item.trial.permalink} target="_blank" rel="noopener">
-              {ICON.external}Open the trial
+              {ICON.external}
+              {t("item.openTrial")}
             </a>
           )}
         </div>
       )}
 
       {item.format === "story" ? (
-        <p className="muted small">A Story: no caption or comments; it disappears from the profile after 24 h.</p>
+        <p className="muted small">{t("item.storyNote")}</p>
       ) : (
         <>
-          <h2>Caption</h2>
-          <pre className="text">{item.caption || "(missing)"}</pre>
+          <h2>{t("item.caption")}</h2>
+          <pre className="text">{item.caption || t("item.missing")}</pre>
           {!item.posted && (item.lint?.length ?? 0) > 0 && (
             <div className="notice warn small">
-              <strong>Caption check</strong> (worth a look, doesn't block):
+              <strong>{t("item.captionCheck")}</strong> {t("item.captionCheckNote")}
               <ul>
                 {item.lint!.map((c) => (
                   <li key={c.check}>
@@ -1614,11 +1629,11 @@ function ItemPage({
               </ul>
             </div>
           )}
-          <h2>Self-comment</h2>
-          <pre className="text">{item.comment ?? "(none)"}</pre>
+          <h2>{t("item.selfComment")}</h2>
+          <pre className="text">{item.comment ?? t("item.none")}</pre>
           {item.comment2 && (
             <>
-              <h2>Second comment</h2>
+              <h2>{t("item.secondComment")}</h2>
               <pre className="text">{item.comment2}</pre>
             </>
           )}
@@ -1627,7 +1642,7 @@ function ItemPage({
       {alts.length > 0 && (
         <>
           <h2>
-            Alt texts <span className="muted small">({alts.length})</span>
+            {t("item.altTexts")} <span className="muted small">({alts.length})</span>
           </h2>
           <ol className="small">
             {alts.map((a, k) => (
@@ -1648,9 +1663,9 @@ function ItemPage({
               comment2: item.comment2 ?? "",
               alt: item.alt ?? "",
             }}
-            submit="Save texts"
-            onSubmit={async (t) => {
-              await api("item/texts", { key: keyId, ...t });
+            submit={t("item.saveTexts")}
+            onSubmit={async (texts) => {
+              await api("item/texts", { key: keyId, ...texts });
               setEditing(false);
               reload();
             }}
@@ -1658,12 +1673,12 @@ function ItemPage({
           />
         ) : (
           <p className="row">
-            <button onClick={() => setEditing(true)}>Edit texts</button>{" "}
-            {item.approved ? <span className="muted small">Saving changes needs a new approval.</span> : null}
+            <button onClick={() => setEditing(true)}>{t("item.editTexts")}</button>{" "}
+            {item.approved ? <span className="muted small">{t("item.editNeedsApproval")}</span> : null}
           </p>
         ))}
 
-      <h2>{item.media.length > 1 ? `Media (${item.media.length})` : "Media"}</h2>
+      <h2>{item.media.length > 1 ? t("item.mediaCount", { n: item.media.length }) : t("item.media")}</h2>
       <div className={item.media.length > 1 ? "media carousel" : "media"}>
         {item.media.map((m, k) =>
           m.mime.startsWith("video/") ? (
@@ -1673,42 +1688,40 @@ function ItemPage({
               controls
               playsInline
               preload="metadata"
-              aria-label={`${channelLabel(ch)} video ${k + 1}`}
+              aria-label={t("item.videoN", { label: channelLabel(ch), n: k + 1 })}
             />
           ) : (
-            <img key={m.id} src={m.url} alt={alts[k] ?? `Image ${k + 1}`} loading="lazy" />
+            <img key={m.id} src={m.url} alt={alts[k] ?? t("item.imageN", { n: k + 1 })} loading="lazy" />
           ),
         )}
         {!item.media.length &&
           (item.posted ? (
-            <p className="muted small">
-              The media isn't shown here after publishing (it moves to Drive's _posted folder): open it on Instagram.
-            </p>
+            <p className="muted small">{t("item.mediaPosted")}</p>
           ) : (
-            <p className="notice warn">No media on Drive yet: it can't be approved until the file is there.</p>
+            <p className="notice warn">{t("item.mediaMissing")}</p>
           ))}
       </div>
 
       {item.failed && !item.posted && !done && (
         <p className="notice bad" role="status">
-          Failed{item.failed.error ? `: ${item.failed.error}` : ""}.{" "}
+          {item.failed.error ? t("item.failedWith", { error: item.failed.error }) : t("item.failed")}{" "}
           {item.failed.again
-            ? "Approve it again to start over."
-            : `${platformName(item.platform)} was asked to publish it, so it may be live: check the account (post it by hand if it isn't there), then record it with record_posted.`}
+            ? t("item.failedAgain")
+            : t("item.failedMayBeLive", { platform: platformName(item.platform) })}
         </p>
       )}
       {item.approved && !item.failed && !done && (
         <p className={`notice ${item.approved.matches ? "ok" : "warn"}`}>
           {item.approved.matches
-            ? `Approved ${utcToZone(item.approved.at)}, exactly as shown.`
+            ? t("item.approvedAt", { when: utcToZone(item.approved.at) })
             : item.approved.commentsOnly
-              ? "Only the comments changed since it was approved: approve them (the post itself stays as approved)."
-              : "Approved before, but something changed since: approve again."}
+              ? t("item.commentsChanged")
+              : t("item.changed")}
         </p>
       )}
       {!item.posted && item.problems.length > 0 && (
         <div className="notice bad" role="alert">
-          <strong>Fix before approving:</strong>
+          <strong>{t("item.fixFirst")}</strong>
           <ul>
             {item.problems.map((p) => (
               <li key={p}>{p}</li>
@@ -1719,32 +1732,28 @@ function ItemPage({
 
       {!item.posted && (item.approved || item.hold) && (
         <div className="card" id="hold">
-          <h2>{item.hold ? "On hold" : "Stop just this one"}</h2>
+          <h2>{item.hold ? t("status.hold") : t("item.stopOne")}</h2>
           {item.hold ? (
             <>
               <p className="small muted">
-                It won't go out until you release it.
-                {item.approved?.matches ? " The approval is kept: once released it goes out at its time." : ""}
+                {t("item.heldNote")}
+                {item.approved?.matches ? ` ${t("item.heldKept")}` : ""}
               </p>
               <ConfirmButton
                 tone="go"
-                label="Release hold"
-                confirm="Release this item?"
-                detail={
-                  item.approved?.matches
-                    ? `It goes out ${when(item.due)}.`
-                    : "It still needs approval before it can go out."
-                }
+                label={t("item.release")}
+                confirm={t("item.releaseConfirm")}
+                detail={item.approved?.matches ? t("item.goesOut", { when: when(item.due) }) : t("item.stillNeeds")}
                 onConfirm={() => hold(false)}
               />
             </>
           ) : (
             <>
-              <p className="small muted">Keeps the approval; nothing else is affected.</p>
+              <p className="small muted">{t("item.holdNote")}</p>
               <ConfirmButton
-                label="Hold this item"
-                confirm="Hold this item?"
-                detail="It won't go out until you release it here."
+                label={t("item.hold")}
+                confirm={t("item.holdConfirm")}
+                detail={t("item.holdDetail")}
                 onConfirm={() => hold(true)}
               />
             </>
@@ -1787,7 +1796,7 @@ function ItemPage({
         </p>
       )}
       <details className="key-details">
-        <summary className="small muted tap">Item key</summary>
+        <summary className="small muted tap">{t("item.key")}</summary>
         <code>{keyId}</code>
       </details>
 
@@ -1796,18 +1805,18 @@ function ItemPage({
           <div className="confirm-line">
             <span className="check">{ICON.check}</span>
             <div>
-              <strong>Approved.</strong>{" "}
+              <strong>{t("item.approvedDone")}</strong>{" "}
               {paused
-                ? `Goes out when you resume publishing (scheduled ${when(done)}).`
-                : `Goes out ${when(done)} on @${item.account}.`}
+                ? t("item.goesOutResumed", { when: when(done) })
+                : t("item.goesOutOn", { when: when(done), account: item.account })}
             </div>
           </div>
           <div className="row">
-            <button onClick={() => setDone(null)}>Done</button>
+            <button onClick={() => setDone(null)}>{t("common.done")}</button>
             <button
               onClick={() => document.getElementById("hold")?.scrollIntoView({ behavior: "smooth", block: "center" })}
             >
-              Hold it instead…
+              {t("item.holdInstead")}
             </button>
           </div>
         </div>
@@ -1821,22 +1830,22 @@ function ItemPage({
           )}
           {paused && (
             <p className="notice warn small" role="status">
-              Publishing is paused: approving now keeps it waiting until you resume.
+              {t("item.pausedNote")}
             </p>
           )}
           <p className="small">{target}</p>
           <button className="primary" disabled={busy || !fresh || item.problems.length > 0} onClick={approve}>
             {busy
-              ? "Waiting for passkey…"
+              ? t("common.waitingPasskey")
               : !fresh
-                ? "Checking for changes…"
+                ? t("item.checking")
                 : item.problems.length
-                  ? `Fix ${item.problems.length} problem${item.problems.length > 1 ? "s" : ""} first`
+                  ? t("item.fixN", { n: item.problems.length })
                   : item.approved?.commentsOnly
-                    ? "Approve comments"
+                    ? t("item.approveComments")
                     : paused
-                      ? "Approve (held while paused)"
-                      : `Approve: publish ${slot}`}
+                      ? t("item.approvePaused")
+                      : t("item.approve", { slot })}
           </button>
         </div>
       )}
@@ -1891,8 +1900,8 @@ function ItemName({
             setValue(title ?? auto);
             setEditing(true);
           }}
-          aria-label="Rename"
-          title="Rename"
+          aria-label={t("name.rename")}
+          title={t("name.rename")}
         >
           {ICON.pencil}
         </button>
@@ -1901,7 +1910,7 @@ function ItemName({
   return (
     <div className="card form">
       <label>
-        Name
+        {t("name.name")}
         <input
           value={value}
           maxLength={80}
@@ -1913,9 +1922,7 @@ function ItemName({
           }}
         />
       </label>
-      <p className="muted small">
-        Only what the app shows. The file name ({keyId.split("/").pop()}) and the approval stay the same.
-      </p>
+      <p className="muted small">{t("name.note", { file: keyId.split("/").pop() ?? keyId })}</p>
       {err && (
         <p className="notice bad small" role="alert">
           {err}
@@ -1924,14 +1931,14 @@ function ItemName({
       <div className="row actions">
         {title && (
           <button onClick={() => save(null)} disabled={busy}>
-            Use the file name
+            {t("name.useFile")}
           </button>
         )}
         <button onClick={() => setEditing(false)} disabled={busy}>
           {t("common.cancel")}
         </button>
         <button className="primary inline" onClick={() => save(value)} disabled={busy || !value.trim()}>
-          {busy ? "Saving…" : "Save name"}
+          {busy ? t("common.saving") : t("name.save")}
         </button>
       </div>
     </div>
@@ -1955,7 +1962,7 @@ function CoverFrame({
   const save = async (to: number | null) => {
     try {
       await api("item/cover", { key: keyId, ms: to });
-      setMsg(to === null ? "Cover back to the default (0.5 s)." : `Cover set to ${(to / 1000).toFixed(1)} s.`);
+      setMsg(to === null ? t("cover.reset") : t("cover.set", { s: (to / 1000).toFixed(1) }));
       onSaved();
     } catch (e) {
       setMsg((e as Error).message);
@@ -1963,13 +1970,13 @@ function CoverFrame({
   };
   return (
     <div className="card">
-      <h2>Cover frame</h2>
+      <h2>{t("cover.title")}</h2>
       <p className="small">
         {ms === null ? (
-          "The frame at 0.5 s (default)."
+          t("cover.default")
         ) : (
           <>
-            The frame at <strong>{(ms / 1000).toFixed(1)} s</strong>.
+            {t("cover.frameAt")} <strong>{t("cover.seconds", { s: (ms / 1000).toFixed(1) })}</strong>.
           </>
         )}
       </p>
@@ -1980,13 +1987,13 @@ function CoverFrame({
           controls
           playsInline
           preload="metadata"
-          aria-label="Video to pick the cover from"
+          aria-label={t("cover.video")}
         />
       </div>
       <div className="row actions">
-        {ms !== null && <button onClick={() => save(null)}>Use the default</button>}
+        {ms !== null && <button onClick={() => save(null)}>{t("common.useDefault")}</button>}
         <button className="primary inline" onClick={() => save(Math.round((ref.current?.currentTime ?? 0.5) * 1000))}>
-          Use this frame
+          {t("cover.use")}
         </button>
       </div>
       {msg && (
@@ -2017,28 +2024,28 @@ function LocationCard({ keyId, location, onSaved }: { keyId: string; location: s
   };
   return (
     <div className="card form">
-      <h2>Location</h2>
+      <h2>{t("location.title")}</h2>
       <p className="small">
         {location ? (
           <>
-            Tagged:{" "}
+            {t("location.tagged")}{" "}
             <a
               className="link"
               href={`https://www.instagram.com/explore/locations/${location}/`}
               target="_blank"
               rel="noopener"
             >
-              place {location}
+              {t("location.place", { id: location })}
             </a>
           </>
         ) : (
-          "No location."
+          t("location.none")
         )}
       </p>
       {open ? (
         <>
           <label>
-            Instagram location link or place number
+            {t("location.label")}
             <input
               value={value}
               autoFocus
@@ -2046,11 +2053,7 @@ function LocationCard({ keyId, location, onSaved }: { keyId: string; location: s
               onChange={(e) => setValue(e.target.value)}
             />
           </label>
-          <p className="muted small">
-            On Instagram, search the place, open it and share or copy its link. Older places can have a different number
-            in the link than the one the API wants; if Instagram refuses it, the post still goes out without the
-            location.
-          </p>
+          <p className="muted small">{t("location.help")}</p>
           {err && (
             <p className="notice bad small" role="alert">
               {err}
@@ -2066,14 +2069,14 @@ function LocationCard({ keyId, location, onSaved }: { keyId: string; location: s
               {t("common.cancel")}
             </button>
             <button className="primary inline" onClick={() => save(value)} disabled={!value.trim()}>
-              Save location
+              {t("location.save")}
             </button>
           </div>
         </>
       ) : (
         <div className="row actions">
-          {location && <button onClick={() => save("")}>Remove</button>}
-          <button onClick={() => setOpen(true)}>{location ? "Change" : "Add location"}</button>
+          {location && <button onClick={() => save("")}>{t("common.remove")}</button>}
+          <button onClick={() => setOpen(true)}>{location ? t("common.change") : t("location.add")}</button>
         </div>
       )}
     </div>
@@ -2137,31 +2140,28 @@ function TrialCard({
   };
   return (
     <div className="card form">
-      <h2>Trial Reel</h2>
-      <Switch on={trial.on} disabled={busy} onChange={(on) => save(on)} label="Also post it as a Trial Reel" />
-      <p className="muted small">
-        Right after the Reel: the same video, shown to non-followers first. It reaches your followers too if it does
-        well.
-      </p>
+      <h2>{t("results.trial")}</h2>
+      <Switch on={trial.on} disabled={busy} onChange={(on) => save(on)} label={t("trial.also")} />
+      <p className="muted small">{t("trial.note")}</p>
       <p className="muted small">
         {trial.explicit ? (
           <>
-            Set for this Reel.{" "}
+            {t("trial.set")}{" "}
             <a className="link" href={`#/stats/instagram/${encodeURIComponent(account)}`}>
               @{account}
             </a>
-            's default is {trial.byDefault ? "on" : "off"}.{" "}
+            {t("trial.defaultIs", { state: trial.byDefault ? t("trial.on") : t("trial.off") })}{" "}
             <button className="link-button" disabled={busy} onClick={() => save(null)}>
-              Use the default
+              {t("common.useDefault")}
             </button>
           </>
         ) : (
           <>
-            Following{" "}
+            {t("trial.following")}{" "}
             <a className="link" href={`#/stats/instagram/${encodeURIComponent(account)}`}>
               @{account}
             </a>
-            's default.
+            {t("trial.followingEnd")}
           </>
         )}
       </p>
@@ -2194,7 +2194,7 @@ function Reschedule({ item, onDone }: { item: Item; onDone: (note: string) => vo
         time: to?.time ?? time,
       });
       setOpen(false);
-      onDone(`Moved to ${when(r.due)}.${r.note ? " It needs approving again for the new time." : ""}`);
+      onDone(`${t("reschedule.moved", { when: when(r.due) })}${r.note ? ` ${t("reschedule.reapprove")}` : ""}`);
     } catch (e) {
       setErr(e instanceof HttpError ? friendly(e) : (e as Error).message);
       setSlots(slotsOf(e));
@@ -2204,29 +2204,29 @@ function Reschedule({ item, onDone }: { item: Item; onDone: (note: string) => vo
   };
   return (
     <div className="card form">
-      <h2>Release date</h2>
+      <h2>{t("reschedule.title")}</h2>
       <p className="small">
         {item.due ? (
           <>
-            Goes out <strong>{when(item.due)}</strong>.
+            {t("reschedule.goesOut")} <strong>{when(item.due)}</strong>.
           </>
         ) : (
-          "Not scheduled yet."
+          t("reschedule.notYet")
         )}
       </p>
       {open ? (
         <>
           <div className="row">
             <label>
-              Date ({zoneLabel()})
+              {t("common.dateIn", { zone: zoneLabel() })}
               <input type="date" value={date} min={zoneShift(0)} onChange={(e) => setDate(e.target.value)} />
             </label>
             <label>
-              Time
+              {t("common.time")}
               <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             </label>
           </div>
-          {item.approved && <p className="muted small">Moving it needs a new approval for the new time.</p>}
+          {item.approved && <p className="muted small">{t("reschedule.needsApproval")}</p>}
           {err && (
             <p className="notice bad small" role="alert">
               {err}
@@ -2268,24 +2268,26 @@ function Reschedule({ item, onDone }: { item: Item; onDone: (note: string) => vo
 /** Where the texts shown (the scheduler's copy, what it posts) came from: a repo item's files, copied by an importer, or an
  *  edit here or by an agent. */
 function TextsOrigin({ item }: { item: Item }) {
-  const t = item.texts;
-  if (!t || (item.content === "db" && (!t.by || t.by === "owner@app"))) return null; // a draft's texts: written here
-  const at = t.at ? utcToZone(new Date(t.at * 1000).toISOString()) : null;
-  if (t.by === "repo") return <p className="muted small">Texts copied from the repo{at ? ` on ${at}` : ""}.</p>;
-  if (!t.by)
+  const texts = item.texts;
+  if (!texts || (item.content === "db" && (!texts.by || texts.by === "owner@app"))) return null; // a draft's texts: written here
+  const at = texts.at ? utcToZone(new Date(texts.at * 1000).toISOString()) : null;
+  if (texts.by === "repo") return <p className="muted small">{at ? t("texts.copiedAt", { at }) : t("texts.copied")}</p>;
+  if (!texts.by)
     return (
       <p className="muted small">
-        Not copied yet: add the texts in the app or with <code>bongsu texts set</code>.
+        {t("texts.notCopied")} <code>bongsu texts set</code>.
       </p>
     );
-  const who = t.by === "owner@app" ? "here" : `by an agent (${t.by.replace(/^key:/, "")})`;
+  const who = texts.by === "owner@app" ? t("texts.byHere") : t("texts.byAgent", { id: texts.by.replace(/^key:/, "") });
   return (
     <p className="muted small">
-      Texts edited {who}
-      {at ? ` on ${at}` : ""}
-      {t.files ? (
+      {t("texts.edited", { who })}
+      {at ? t("texts.on", { at }) : ""}
+      {texts.files ? (
         <>
-          ; the repo files are older (<code>bongsu texts set</code> with those files brings the scheduler in step)
+          {t("texts.filesOlder")}
+          <code>bongsu texts set</code>
+          {t("texts.filesOlderEnd")}
         </>
       ) : null}
       .
@@ -2294,18 +2296,24 @@ function TextsOrigin({ item }: { item: Item }) {
 }
 
 /** One 24 h results line: views (against `vs`), likes, comments, saves, shares, reach. */
-function ResultsLine({ r, vs, label = "24 h:" }: { r: Results; vs: string; label?: string }) {
+function ResultsLine({ r, vs, label }: { r: Results; vs: string; label?: string }) {
   return (
     <p className="small num results-line">
-      <strong>{label}</strong> {r.views ?? "–"} views
+      <strong>{label ?? t("results.line24h")}</strong> {t("results.lineViews", { n: r.views ?? "–" })}
       {r.median_views && r.views != null ? (
         <span className={r.views >= r.median_views ? " ok-text" : " muted"}>
           {" "}
           ({(r.views / r.median_views).toFixed(1)}× {vs})
         </span>
       ) : null}{" "}
-      · {r.likes ?? 0} likes · {r.comments ?? 0} comments · {r.saves ?? 0} saves · {r.shares ?? 0} shares · reach{" "}
-      {r.reach ?? "–"}
+      ·{" "}
+      {t("results.lineRest", {
+        likes: r.likes ?? 0,
+        comments: r.comments ?? 0,
+        saves: r.saves ?? 0,
+        shares: r.shares ?? 0,
+        reach: r.reach ?? "–",
+      })}
       {r.follows != null && ` · +${r.follows} ${t("results.followersWord")}`}
       {r.profile_visits != null && ` · ${r.profile_visits} ${t("results.visitsWord")}`}
     </p>
@@ -2487,8 +2495,8 @@ function ResultsView({ keyId, item }: { keyId: string; item: Item }) {
     <>
       {(r || tr) && (
         <div className="card published">
-          {r && <ResultsLine r={r} vs="usual" />}
-          {tr && <ResultsLine r={tr} vs="the regular Reel" label={t("results.trialNumbers")} />}
+          {r && <ResultsLine r={r} vs={t("results.vsUsual")} />}
+          {tr && <ResultsLine r={tr} vs={t("results.vsRegular")} label={t("results.trialNumbers")} />}
           <p className="muted small">{t("results.taken", { when: takenAt((r ?? tr)!.fetched_at) })}</p>
         </div>
       )}
@@ -2521,7 +2529,7 @@ function useApprove(keyId: string, fingerprint: string | undefined, after: () =>
         e instanceof HttpError
           ? friendly(e) + extra
           : /NotAllowed|cancel/i.test(`${(e as Error).name} ${m}`)
-            ? "The passkey prompt was closed or timed out. Nothing was approved: tap Approve to try again."
+            ? t("approve.cancelled")
             : `${m}${extra}`,
       );
     } finally {
@@ -2540,19 +2548,19 @@ function ShortComment({ video }: { video: string }) {
   if (error) return <ErrorNote msg={error} onRetry={reload} />;
   if (!c) return null;
   const state = c.posted
-    ? { tone: "ok", word: "Commented" }
+    ? { tone: "ok", word: t("comment.commented") }
     : c.approved?.matches
-      ? { tone: "ok", word: "Approved" }
+      ? { tone: "ok", word: t("status.approved") }
       : c.approved
-        ? { tone: "warn", word: "Changed since approval" }
-        : { tone: "warn", word: "Waiting for your approval" };
+        ? { tone: "warn", word: t("comment.changed") }
+        : { tone: "warn", word: t("comment.waiting") };
   return (
     <>
-      <h2>Comment</h2>
+      <h2>{t("comment.title")}</h2>
       <p>
         <span className={`pill ${state.tone}`}>{state.word}</span>
       </p>
-      <pre className="text">{c.caption || "(missing)"}</pre>
+      <pre className="text">{c.caption || t("item.missing")}</pre>
       {c.problems.map((p) => (
         <p key={p} className="notice warn small">
           {p}
@@ -2565,13 +2573,13 @@ function ShortComment({ video }: { video: string }) {
               {err}
             </p>
           )}
-          <p className="small">It goes out as {c.account} once the video is public.</p>
+          <p className="small">{t("comment.goesOutAs", { account: c.account })}</p>
           <button className="primary" disabled={busy || !fresh || c.problems.length > 0} onClick={approve}>
-            {busy ? "Waiting for passkey…" : c.problems.length ? "Fix the problem first" : "Approve the comment"}
+            {busy ? t("common.waitingPasskey") : c.problems.length ? t("comment.fixFirst") : t("comment.approve")}
           </button>
         </div>
       )}
-      {done && <p className="notice ok small">Approved: it's posted once the video is public.</p>}
+      {done && <p className="notice ok small">{t("comment.approved")}</p>}
     </>
   );
 }
@@ -2600,14 +2608,14 @@ function ReleaseDate({
       const response = await startAuthentication({ optionsJSON: o.options });
       const r = await api<{ due: string }>("youtube/release/verify", { challengeId: o.challengeId, response });
       setOpen(false);
-      onDone(`Moved to ${when(r.due)}.`, r.due);
+      onDone(t("reschedule.moved", { when: when(r.due) }), r.due);
     } catch (e) {
       const m = (e as Error).message;
       setErr(
         e instanceof HttpError
           ? friendly(e)
           : /NotAllowed|cancel/i.test(`${(e as Error).name} ${m}`)
-            ? "The passkey prompt was closed or timed out. Nothing was moved: tap Save new date to try again."
+            ? t("release.cancelled")
             : m,
       );
     } finally {
@@ -2616,19 +2624,20 @@ function ReleaseDate({
   };
   return (
     <div className="card form">
-      <h2>Release date</h2>
+      <h2>{t("reschedule.title")}</h2>
       <p className="small">
-        Goes public <strong>{event.time ? when(`${event.date} ${event.time}`) : dayName(event.date)}</strong>.
+        {t("status.scheduled")}{" "}
+        <strong>{event.time ? when(`${event.date} ${event.time}`) : dayName(event.date)}</strong>.
       </p>
       {open ? (
         <>
           <div className="row">
             <label>
-              Date ({zoneLabel()})
+              {t("common.dateIn", { zone: zoneLabel() })}
               <input type="date" value={date} min={zoneShift(0)} onChange={(e) => setDate(e.target.value)} />
             </label>
             <label>
-              Time
+              {t("common.time")}
               <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             </label>
           </div>
@@ -2678,7 +2687,7 @@ function VideoPage({ route }: { route: string }) {
     <p className="back-row">
       <a className="back" href={lastList}>
         {ICON.back}
-        {lastList.startsWith("#/calendar") ? "Calendar" : "Today"}
+        {lastList.startsWith("#/calendar") ? t("tabs.calendar") : t("tabs.today")}
       </a>
     </p>
   );
@@ -2686,7 +2695,7 @@ function VideoPage({ route }: { route: string }) {
     return (
       <>
         {back}
-        <p className="muted">Unknown video link.</p>
+        <p className="muted">{t("video.unknown")}</p>
       </>
     );
   const [, account, id] = m;
@@ -2713,7 +2722,7 @@ function VideoPage({ route }: { route: string }) {
             {moved}
           </p>
         )}
-        <p className="muted">This video isn't in the calendar for {month} any more.</p>
+        <p className="muted">{t("video.gone", { month })}</p>
         <a className="button-link with-icon" href={`https://youtu.be/${id}`} target="_blank" rel="noopener">
           {ICON.external}
           {t("common.openOnYoutube")}
@@ -2758,10 +2767,7 @@ function VideoPage({ route }: { route: string }) {
           <p>
             <span className={`pill ${statusTone(e.status)}`}>{statusWord(e.status)}</span>
           </p>
-          <p className="muted small">
-            YouTube videos are published by YouTube itself; the scheduler only adds the pinned-comment text to Shorts,
-            once you approve it.
-          </p>
+          <p className="muted small">{t("video.note")}</p>
           {moved && (
             <p className="notice ok small" role="status">
               {moved}
@@ -2842,12 +2848,7 @@ function CommentsPage() {
   };
   if (error) return <ErrorNote msg={error} onRetry={reload} />;
   if (!data) return <p className="muted">{t("common.loading")}</p>;
-  if (!data.comments.length)
-    return (
-      <p className="muted">
-        No comments on the last two weeks' posts yet. New ones show up here (checked every 15 minutes).
-      </p>
-    );
+  if (!data.comments.length) return <p className="muted">{t("comments.none")}</p>;
   const groups = new Map<string, CommentRow[]>();
   for (const c of data.comments) groups.set(c.media_id, [...(groups.get(c.media_id) ?? []), c]);
   return (
@@ -2855,7 +2856,7 @@ function CommentsPage() {
       {[...groups.values()].map((cs) => {
         const c0 = cs[0];
         const yt = c0.platform === "yt";
-        const title = c0.title || (c0.name ? nice(c0.name) : yt ? "YouTube Short" : "Instagram post");
+        const title = c0.title || (c0.name ? nice(c0.name) : yt ? t("comments.ytShort") : t("comments.igPost"));
         const href = c0.item_key && !yt ? `#/item/${encodeURIComponent(c0.item_key)}` : null;
         const out = yt ? `https://youtu.be/${c0.media_id}` : c0.permalink;
         return (
@@ -2876,7 +2877,7 @@ function CommentsPage() {
                   href={out}
                   target="_blank"
                   rel="noopener"
-                  aria-label={`Open on ${yt ? "YouTube" : "Instagram"}`}
+                  aria-label={t("row.openOn", { where: yt ? "YouTube" : "Instagram" })}
                 >
                   {yt ? ICON.youtube : ICON.instagram}
                 </a>
@@ -2892,11 +2893,11 @@ function CommentsPage() {
                       <span className="muted small">{utcToZone(new Date(c.at * 1000).toISOString())}</span>
                     </div>
                     <p className="comment-text">{c.text}</p>
-                    {c.reply_text && <p className="small muted">↳ You replied: {c.reply_text}</p>}
+                    {c.reply_text && <p className="small muted">{t("comments.replied", { text: c.reply_text })}</p>}
                     {open === c.id ? (
                       <div className="form">
                         <label className="vh" htmlFor={`r-${c.id}`}>
-                          Reply
+                          {t("comments.reply")}
                         </label>
                         <textarea
                           id={`r-${c.id}`}
@@ -2904,7 +2905,7 @@ function CommentsPage() {
                           value={text}
                           autoFocus
                           onChange={(e) => setText(e.target.value)}
-                          placeholder={`Reply to ${yt ? c.author : `@${c.author}`}`}
+                          placeholder={t("comments.replyTo", { author: yt ? c.author : `@${c.author}` })}
                         />
                         {err && (
                           <p className="notice bad small" role="alert">
@@ -2922,7 +2923,7 @@ function CommentsPage() {
                             {t("common.cancel")}
                           </button>
                           <button className="primary inline" onClick={() => send(c.id)} disabled={busy || !text.trim()}>
-                            {busy ? "Sending…" : "Send reply"}
+                            {busy ? t("comments.sending") : t("comments.send")}
                           </button>
                         </div>
                       </div>
@@ -2935,7 +2936,7 @@ function CommentsPage() {
                             setErr(null);
                           }}
                         >
-                          Reply
+                          {t("comments.reply")}
                         </button>
                       )
                     )}
@@ -2968,19 +2969,19 @@ function TextsForm({
   alt: boolean;
   initial: Texts;
   submit: string;
-  onSubmit: (t: Texts) => Promise<void>;
+  onSubmit: (texts: Texts) => Promise<void>;
   onCancel: () => void;
   children?: ReactNode;
   noTexts?: boolean;
 }) {
-  const [t, setT] = useState(initial);
+  const [texts, setTexts] = useState(initial);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const go = async () => {
     setBusy(true);
     setErr(null);
     try {
-      await onSubmit(t);
+      await onSubmit(texts);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -2991,26 +2992,40 @@ function TextsForm({
     <div className="card form">
       {children}
       {noTexts ? (
-        <p className="muted small">A Story has no caption or comments.</p>
+        <p className="muted small">{t("texts.storyNone")}</p>
       ) : (
         <>
           <label>
-            Caption
-            <textarea rows={6} value={t.caption} onChange={(e) => setT({ ...t, caption: e.target.value })} />
+            {t("item.caption")}
+            <textarea
+              rows={6}
+              value={texts.caption}
+              onChange={(e) => setTexts({ ...texts, caption: e.target.value })}
+            />
           </label>
-          <span className={`small ${t.caption.length > 2200 ? "bad-text" : "muted"}`}>{t.caption.length} / 2200</span>
+          <span className={`small ${texts.caption.length > 2200 ? "bad-text" : "muted"}`}>
+            {texts.caption.length} / 2200
+          </span>
           <label>
-            Self-comment <span className="muted small">(empty: the caption's question line)</span>
-            <textarea rows={2} value={t.comment} onChange={(e) => setT({ ...t, comment: e.target.value })} />
+            {t("item.selfComment")} <span className="muted small">{t("texts.commentHint")}</span>
+            <textarea
+              rows={2}
+              value={texts.comment}
+              onChange={(e) => setTexts({ ...texts, comment: e.target.value })}
+            />
           </label>
           <label>
-            Second comment <span className="muted small">(optional: posted right after the first)</span>
-            <textarea rows={2} value={t.comment2} onChange={(e) => setT({ ...t, comment2: e.target.value })} />
+            {t("item.secondComment")} <span className="muted small">{t("texts.comment2Hint")}</span>
+            <textarea
+              rows={2}
+              value={texts.comment2}
+              onChange={(e) => setTexts({ ...texts, comment2: e.target.value })}
+            />
           </label>
           {alt && (
             <label>
-              Alt texts <span className="muted small">(one line per image, in order)</span>
-              <textarea rows={3} value={t.alt} onChange={(e) => setT({ ...t, alt: e.target.value })} />
+              {t("item.altTexts")} <span className="muted small">{t("texts.altHint")}</span>
+              <textarea rows={3} value={texts.alt} onChange={(e) => setTexts({ ...texts, alt: e.target.value })} />
             </label>
           )}
         </>
@@ -3022,14 +3037,14 @@ function TextsForm({
       )}
       <div className="row">
         <button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button
           className="primary"
           onClick={go}
-          disabled={busy || (!noTexts && (!t.caption.trim() || t.caption.length > 2200))}
+          disabled={busy || (!noTexts && (!texts.caption.trim() || texts.caption.length > 2200))}
         >
-          {busy ? "Saving…" : submit}
+          {busy ? t("common.saving") : submit}
         </button>
       </div>
     </div>
@@ -3044,8 +3059,8 @@ const slotsOf = (e: unknown): Slot[] =>
 function FreeSlots({ slots, onPick }: { slots: Slot[]; onPick: (s: Slot) => void }) {
   if (!slots.length) return null;
   return (
-    <div className="slots" role="group" aria-label="Free times">
-      <span className="small muted">Free:</span>
+    <div className="slots" role="group" aria-label={t("schedule.freeTimes")}>
+      <span className="small muted">{t("schedule.free")}</span>
       {slots.map((s) => (
         <button key={`${s.date} ${s.time}`} className="chip" onClick={() => onPick(s)}>
           {dayName(s.date)} · {s.time}
@@ -3075,9 +3090,9 @@ function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[];
         comment2: d.payload.comment2 ?? "",
         alt: d.payload.alt ?? "",
       }}
-      submit={story ? "Schedule Story" : "Schedule"}
+      submit={story ? t("schedule.story") : t("schedule.schedule")}
       onCancel={onCancel}
-      onSubmit={async (t) => {
+      onSubmit={async (texts) => {
         setSlots([]);
         try {
           const r = await api<{ key: string }>(`drafts/${d.id}/schedule`, {
@@ -3085,7 +3100,7 @@ function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[];
             date,
             time,
             name,
-            ...(story ? { format: "story" } : t),
+            ...(story ? { format: "story" } : texts),
           });
           location.hash = `#/item/${encodeURIComponent(r.key)}`;
         } catch (e) {
@@ -3095,17 +3110,17 @@ function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[];
       }}
     >
       {single && (
-        <div className="segmented" role="group" aria-label="Publish as">
+        <div className="segmented" role="group" aria-label={t("schedule.publishAs")}>
           <button aria-pressed={!story} onClick={() => setStory(false)}>
-            {kind === "reel" ? "Reel" : "Post"}
+            {kind === "reel" ? t("schedule.reel") : t("channel.post")}
           </button>
           <button aria-pressed={story} onClick={() => setStory(true)}>
-            Story
+            {t("item.story")}
           </button>
         </div>
       )}
       <label>
-        Account
+        {t("schedule.account")}
         <select value={account} onChange={(e) => setAccount(e.target.value)}>
           {accounts.map((a) => (
             <option key={a} value={a}>
@@ -3116,11 +3131,11 @@ function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[];
       </label>
       <div className="row">
         <label>
-          Date ({zoneLabel()})
+          {t("common.dateIn", { zone: zoneLabel() })}
           <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </label>
         <label>
-          Time ({zoneLabel()})
+          {t("common.timeIn", { zone: zoneLabel() })}
           <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
         </label>
       </div>
@@ -3133,9 +3148,11 @@ function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[];
         }}
       />
       <label>
-        Name{" "}
+        {t("name.name")}{" "}
         <span className="muted small">
-          (item key: {story || kind === "post" ? "post" : "reel"}:{d.payload.folder ?? "drafts"}/{name})
+          {t("schedule.itemKey", {
+            key: `${story || kind === "post" ? "post" : "reel"}:${d.payload.folder ?? "drafts"}/${name}`,
+          })}
         </span>
         <input value={name} onChange={(e) => setName(e.target.value)} />
       </label>
@@ -3211,10 +3228,10 @@ function uploadFile(url: string, file: File, onProgress: (sent: number) => void)
       try {
         await fill();
       } catch (e) {
-        throw fail(
-          `this device couldn't read ${file.name} (${(e as Error).name}): pick it again from the file browser (Videos or DCIM/Camera)`,
-          { start: offset, stage: "read" },
-        );
+        throw fail(t("upload.unreadable", { file: file.name, error: (e as Error).name }), {
+          start: offset,
+          stage: "read",
+        });
       }
       const buf = take();
       const last = eof && have <= CHUNK;
@@ -3231,8 +3248,11 @@ function uploadFile(url: string, file: File, onProgress: (sent: number) => void)
         if (tries >= 3)
           throw fail(
             x
-              ? `upload of ${file.name} failed (${x.status})`
-              : `upload of ${file.name}: network error at ${file.size ? Math.round((offset / file.size) * 100) : 0}%`,
+              ? t("upload.failed", { file: file.name, status: x.status })
+              : t("upload.network", {
+                  file: file.name,
+                  percent: file.size ? Math.round((offset / file.size) * 100) : 0,
+                }),
             { start: offset, stage: x ? "status" : "network", status: x?.status ?? 0 },
           );
         await new Promise((r) => setTimeout(r, 2000 * (tries + 1)));
@@ -3246,7 +3266,7 @@ function uploadFile(url: string, file: File, onProgress: (sent: number) => void)
         continue;
       }
       if (x.status === 200 || x.status === 201) return JSON.parse(x.responseText) as { id: string };
-      throw fail(`upload of ${file.name} failed (${x.status}: ${x.responseText.slice(0, 120)})`, {
+      throw fail(t("upload.failed", { file: file.name, status: `${x.status}: ${x.responseText.slice(0, 120)}` }), {
         start: offset,
         stage: "status",
         status: x.status,
@@ -3261,7 +3281,7 @@ function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel
   const [files, setFiles] = useState<File[]>([]);
   const [project, setProject] = useState(remembered("draft.project"));
   const [name, setName] = useState("");
-  const [t, setT] = useState<Texts>({ caption: "", comment: "", comment2: "", alt: "" });
+  const [texts, setTexts] = useState<Texts>({ caption: "", comment: "", comment2: "", alt: "" });
   const [sent, setSent] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const total = files.reduce((s, f) => s + f.size, 0);
@@ -3293,7 +3313,7 @@ function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel
         done += f.size;
       }
       remember("draft.project", project);
-      const r = await api<{ id: string }>("drafts/new", { files: ids, project, name, ...t });
+      const r = await api<{ id: string }>("drafts/new", { files: ids, project, name, ...texts });
       onDone(r.id);
     } catch (e) {
       setErr((e as Error).message);
@@ -3307,23 +3327,24 @@ function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel
         {/* No accept list on purpose: with image/video types Android opens its photo picker, whose copies Chrome can't
             read (NotReadableError / TypeError, seen on some Android phones); without, it opens the file browser. */}
         <label className="button">
-          Choose files
+          {t("draft.choose")}
           <input type="file" multiple className="vh" disabled={busy} onChange={(e) => pick(e.target.files)} />
         </label>
       </div>
-      <p className="muted small">
-        1 video for a Reel, or up to 10 images/videos for a carousel, in the order picked (on the phone: Videos, Images
-        or DCIM/Camera in the file browser).
-      </p>
+      <p className="muted small">{t("draft.pickHelp")}</p>
       {files.length > 0 && (
         <p className="muted small">
-          {files.length > 1 ? `Carousel of ${files.length}` : files[0].type.startsWith("video/") ? "Reel" : "Photo"} ·{" "}
-          {(total / 1024 / 1024).toFixed(1)} MB: {files.map((f) => f.name).join(", ")}
+          {files.length > 1
+            ? t("draft.carouselOf", { n: files.length })
+            : files[0].type.startsWith("video/")
+              ? t("schedule.reel")
+              : t("draft.photo")}{" "}
+          · {t("draft.size", { mb: (total / 1024 / 1024).toFixed(1), files: files.map((f) => f.name).join(", ") })}
         </p>
       )}
       <div className="row">
         <label>
-          Project
+          {t("queue.project")}
           <input
             list="projects"
             value={project}
@@ -3333,7 +3354,7 @@ function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel
           />
         </label>
         <label>
-          Name
+          {t("name.name")}
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="short3_name" disabled={busy} />
         </label>
       </div>
@@ -3343,56 +3364,59 @@ function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel
         ))}
       </datalist>
       <label>
-        Caption
+        {t("item.caption")}
         <textarea
           rows={5}
-          value={t.caption}
-          onChange={(e) => setT({ ...t, caption: e.target.value })}
+          value={texts.caption}
+          onChange={(e) => setTexts({ ...texts, caption: e.target.value })}
           disabled={busy}
         />
       </label>
       <label>
-        Self-comment <span className="muted small">(empty: the caption's question line)</span>
+        {t("item.selfComment")} <span className="muted small">{t("texts.commentHint")}</span>
         <textarea
           rows={2}
-          value={t.comment}
-          onChange={(e) => setT({ ...t, comment: e.target.value })}
+          value={texts.comment}
+          onChange={(e) => setTexts({ ...texts, comment: e.target.value })}
           disabled={busy}
         />
       </label>
       <label>
-        Second comment <span className="muted small">(optional: posted right after the first)</span>
+        {t("item.secondComment")} <span className="muted small">{t("texts.comment2Hint")}</span>
         <textarea
           rows={2}
-          value={t.comment2}
-          onChange={(e) => setT({ ...t, comment2: e.target.value })}
+          value={texts.comment2}
+          onChange={(e) => setTexts({ ...texts, comment2: e.target.value })}
           disabled={busy}
         />
       </label>
       {images > 0 && files.length > 1 && (
         <label>
-          Alt texts <span className="muted small">(one line per image)</span>
-          <textarea rows={3} value={t.alt} onChange={(e) => setT({ ...t, alt: e.target.value })} disabled={busy} />
+          {t("item.altTexts")} <span className="muted small">{t("draft.altHint")}</span>
+          <textarea
+            rows={3}
+            value={texts.alt}
+            onChange={(e) => setTexts({ ...texts, alt: e.target.value })}
+            disabled={busy}
+          />
         </label>
       )}
       {busy && (
         <p className="small">
-          Uploading to Drive… {total ? Math.round((sent! / total) * 100) : 0}% <progress max={total} value={sent!} />
+          {t("draft.uploading", { percent: total ? Math.round((sent! / total) * 100) : 0 })}{" "}
+          <progress max={total} value={sent!} />
         </p>
       )}
       {err && <p className="error small">{err}</p>}
       <div className="row">
         <button onClick={onCancel} disabled={busy}>
-          Cancel
+          {t("common.cancel")}
         </button>
         <button className="primary" onClick={go} disabled={busy || !files.length || !project || !name}>
-          {busy ? "Uploading…" : "Upload and create draft"}
+          {busy ? t("draft.uploadingShort") : t("draft.upload")}
         </button>
       </div>
-      <p className="muted small">
-        The files go straight from this device to Drive ("{"Bongsu app uploads"}"); the texts can still be edited when
-        scheduling.
-      </p>
+      <p className="muted small">{t("draft.uploadNote")}</p>
     </div>
   );
 }
@@ -3464,7 +3488,7 @@ function DraftsPage() {
   const refuse = async (id: string) => {
     try {
       await api(`drafts/${id}/refuse`, {});
-      setMsg("Draft refused.");
+      setMsg(t("drafts.refused"));
       reload();
     } catch (e) {
       setMsg((e as Error).message);
@@ -3472,13 +3496,13 @@ function DraftsPage() {
   };
   const kindWord = (k: string) =>
     k === "reel"
-      ? "Reel"
+      ? t("schedule.reel")
       : k === "carousel"
-        ? "Carousel"
+        ? t("drafts.carousel")
         : k === "photo"
-          ? "Photo"
+          ? t("draft.photo")
           : k === "shorts_comment"
-            ? "Shorts comment"
+            ? t("drafts.shortsComment")
             : cap(k);
   return (
     <section>
@@ -3486,7 +3510,8 @@ function DraftsPage() {
         <div className="drafts-head">
           {uploads.data?.enabled && (
             <button onClick={() => setAdding(true)} className="with-icon">
-              {ICON.plus}New draft
+              {ICON.plus}
+              {t("drafts.new")}
             </button>
           )}
           <button
@@ -3494,8 +3519,8 @@ function DraftsPage() {
             onClick={() => setAbout(!about)}
             aria-expanded={about}
             aria-controls="drafts-about"
-            aria-label="About drafts"
-            title="About drafts"
+            aria-label={t("drafts.about")}
+            title={t("drafts.about")}
           >
             {ICON.info}
           </button>
@@ -3503,8 +3528,7 @@ function DraftsPage() {
       )}
       {about && (
         <p id="drafts-about" className="notice small">
-          Files dropped in Drive's <code>UPLOADS/inbox/&lt;project&gt;/</code> and proposals from agents. Schedule one,
-          then approve it on its page.
+          {t("drafts.aboutBefore")} <code>UPLOADS/inbox/&lt;project&gt;/</code> {t("drafts.aboutAfter")}
         </p>
       )}
       {adding && (
@@ -3545,7 +3569,7 @@ function DraftsPage() {
                       controls
                       playsInline
                       preload="metadata"
-                      aria-label={`Video: ${m.name}`}
+                      aria-label={t("drafts.video", { name: m.name })}
                     />
                   ) : (
                     <img key={m.url} src={m.url} alt={m.name} loading="lazy" />
@@ -3554,22 +3578,24 @@ function DraftsPage() {
               </div>
             )}
             {d.payload.caption && <pre className="text small">{d.payload.caption}</pre>}
-            {d.payload.comment && <p className="muted small">Self-comment: {d.payload.comment}</p>}
-            {d.payload.comment2 && <p className="muted small">Second comment: {d.payload.comment2}</p>}
+            {d.payload.comment && <p className="muted small">{t("drafts.selfComment", { text: d.payload.comment })}</p>}
+            {d.payload.comment2 && (
+              <p className="muted small">{t("drafts.secondComment", { text: d.payload.comment2 })}</p>
+            )}
             {d.payload.note && <p className="small">{d.payload.note}</p>}
             <p className="muted small">
-              {when(d.created_at)} · {d.source === "drive" ? "Drive inbox" : d.created_by}
+              {when(d.created_at)} · {d.source === "drive" ? t("drafts.driveInbox") : d.created_by}
             </p>
             {open !== d.id && (
               <div className="row actions">
                 <ConfirmButton
-                  label="Refuse"
-                  confirm="Refuse this draft?"
-                  detail="It can't be brought back."
+                  label={t("drafts.refuse")}
+                  confirm={t("drafts.refuseConfirm")}
+                  detail={t("drafts.refuseDetail")}
                   onConfirm={() => refuse(d.id)}
                 />
                 {(d.payload.media?.length ?? 0) > 0 && d.kind !== "shorts_comment" && (
-                  <button onClick={() => setOpen(d.id)}>Schedule…</button>
+                  <button onClick={() => setOpen(d.id)}>{t("drafts.schedule")}</button>
                 )}
               </div>
             )}
@@ -3610,7 +3636,8 @@ type StatsOverview = {
 };
 
 const num = (n?: number | null) => (n == null ? "–" : n >= 10000 ? `${(n / 1000).toFixed(1)}k` : String(n));
-const count = (n: number | null | undefined, one: string, many = `${one}s`) => `${num(n)} ${n === 1 ? one : many}`;
+/** "1 follower", "12.3k views": the plural key picks one/other by the count (a missing count reads "–" and plural). */
+const count = (n: number | null | undefined, key: Key) => t(key, { n: n ?? Number.NaN, count: num(n) });
 
 /** The Stats tab: each account with its followers and the change since a day before, opening its page; then the
  *  posts and videos of the last 7 days, most viewed first, each opening its Results or video page. */
@@ -3621,7 +3648,7 @@ function StatsPage() {
   return (
     <section>
       {stale && <Stale msg={stale} at={at} onRetry={reload} />}
-      <h2>Audience</h2>
+      <h2>{t("stats.audience")}</h2>
       {data.accounts.length ? (
         <ul className="list">
           {data.accounts.map((a) => (
@@ -3631,12 +3658,12 @@ function StatsPage() {
                   <strong className="small">{a.title}</strong>
                   <div className="muted small">
                     {a.platform === "youtube"
-                      ? "YouTube channel"
+                      ? t("stats.ytChannel")
                       : `Instagram${a.title !== a.handle ? ` · @${a.handle}` : ""}`}
                   </div>
                 </div>
                 <div className="small num aud-n">
-                  {count(a.followers, a.platform === "youtube" ? "subscriber" : "follower")}
+                  {count(a.followers, a.platform === "youtube" ? "stats.subscribers" : "stats.followers")}
                   {a.change ? (
                     <div className={a.change > 0 ? "ok-text" : "bad-text"}>
                       {a.change > 0 ? "+" : ""}
@@ -3649,9 +3676,9 @@ function StatsPage() {
           ))}
         </ul>
       ) : (
-        <p className="muted">No accounts yet.</p>
+        <p className="muted">{t("stats.noAccounts")}</p>
       )}
-      <h2>Last {data.days} days, most viewed</h2>
+      <h2>{t("stats.recent", { n: data.days })}</h2>
       {data.recent.length ? (
         <ul className="list">
           {data.recent.map((r) => (
@@ -3659,21 +3686,21 @@ function StatsPage() {
               <a href={r.href}>
                 <div className="row">
                   <strong className="small clip">{r.title}</strong>
-                  <span className="small num">{count(r.views, "view")}</span>
+                  <span className="small num">{count(r.views, "stats.views")}</span>
                 </div>
                 <div className="muted small">
-                  {r.label ?? (r.platform === "youtube" ? "Video" : "Post")}
+                  {r.label ?? (r.platform === "youtube" ? t("results.video") : t("channel.post"))}
                   {r.published_at ? ` · ${shortDay(r.published_at)}` : ""}
                 </div>
                 <div className="muted small num">
-                  {count(r.likes, "like")} · {count(r.comments, "comment")}
+                  {count(r.likes, "stats.likes")} · {count(r.comments, "stats.comments")}
                 </div>
               </a>
             </li>
           ))}
         </ul>
       ) : (
-        <p className="muted">Nothing published in the last {data.days} days has numbers yet.</p>
+        <p className="muted">{t("stats.recentNone", { n: data.days })}</p>
       )}
     </section>
   );
@@ -3705,7 +3732,8 @@ function ChannelPage({ route }: { route: string }) {
   const back = (
     <p className="back-row">
       <a className="back" href="#/stats">
-        {ICON.back}Stats
+        {ICON.back}
+        {t("tabs.stats")}
       </a>
     </p>
   );
@@ -3729,11 +3757,11 @@ function ChannelPage({ route }: { route: string }) {
       {back}
       {stale && <Stale msg={stale} at={at} onRetry={reload} />}
       <h2>{a.title || `@${a.id}`}</h2>
-      <p className="muted small">{yt ? "YouTube channel" : `Instagram · @${a.id}`}</p>
+      <p className="muted small">{yt ? t("stats.ytChannel") : `Instagram · @${a.id}`}</p>
       <div className="card">
         <p className="stat-big num">{a.followers == null ? "–" : a.followers.toLocaleString("en")}</p>
         <p className="small">
-          {yt ? "subscribers" : "followers"}
+          {yt ? t("results.subscribersWord") : t("results.followersWord")}
           {a.change ? (
             <span className={a.change > 0 ? " ok-text" : " bad-text"}>
               {" "}
@@ -3802,7 +3830,8 @@ function ChannelPage({ route }: { route: string }) {
       )}
       {a.url && (
         <a className="button-link with-icon" href={a.url} target="_blank" rel="noopener">
-          {yt ? ICON.youtube : ICON.instagram}Open on {yt ? "YouTube" : "Instagram"}
+          {yt ? ICON.youtube : ICON.instagram}
+          {t("row.openOn", { where: yt ? "YouTube" : "Instagram" })}
         </a>
       )}
     </section>
@@ -3831,11 +3860,15 @@ function VersionInfo() {
     <div className="card">
       <h2>{t("settings.version")}</h2>
       <p className="small">
-        App <code>{v.commit}</code>, built {v.built}.{live && !behind && <span className="muted"> Up to date.</span>}
+        {t("settings.app")} <code>{v.commit}</code>
+        {t("settings.built", { built: v.built })}
+        {live && !behind && <span className="muted"> {t("settings.upToDate")}</span>}
       </p>
       {behind && (
         <p className="small warn">
-          A newer version is deployed (<code>{live.commit}</code>, {live.built}).{" "}
+          {t("settings.newer")}
+          <code>{live.commit}</code>
+          {t("settings.newerEnd", { built: live.built })}{" "}
           <button
             onClick={() =>
               navigator.serviceWorker
@@ -3844,7 +3877,7 @@ function VersionInfo() {
                 .finally(() => location.reload())
             }
           >
-            Update now
+            {t("settings.update")}
           </button>
         </p>
       )}
