@@ -58,13 +58,12 @@ header.
 For a client that only speaks stdio, the `bongsu` command bridges to `/mcp` with your own CLI token:
 
 ```sh
-pnpm --filter bongsu build                      # once, in your checkout of the repository
-node packages/cli/dist/cli.mjs login --url https://<your instance>
-claude mcp add bongsu -- node "$PWD/packages/cli/dist/cli.mjs" mcp
+npx bongsu login --url https://<your instance>
+claude mcp add bongsu -- npx -y bongsu mcp
 ```
 
-Run it from the repository root: the `claude mcp add` line stores the absolute path, since Claude starts the bridge
-from elsewhere. The package is not on npm yet; once it is, `npx bongsu mcp` will do ([the CLI](cli.md#install)).
+The CLI is [`bongsu` on npm](https://www.npmjs.com/package/bongsu); see [the CLI](cli.md#install) to run it from a
+checkout instead.
 
 A CLI token acts as you, so the bridge has your rights, not an agent key's: see [The command line](cli.md#mcp). Use an
 agent key for agents, and keep the bridge for yourself.

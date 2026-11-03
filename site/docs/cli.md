@@ -7,20 +7,18 @@ against Cloudflare and Docker.
 
 ## Install
 
-The package is not published to npm yet: build it once from a checkout of the repository (Node 22, pnpm):
+The package is [`bongsu` on npm](https://www.npmjs.com/package/bongsu) (Node 22 or later). Run it with `npx`, or
+install it once:
 
 ```sh
-pnpm --filter bongsu build
-node packages/cli/dist/cli.mjs --help
+npx bongsu --help
+npm install -g bongsu   # then plain `bongsu`
 ```
 
-The examples below call it `bongsu`; from the repository root, an alias makes that work:
+The examples below call it `bongsu`. `bongsu --version` prints its version; `npx bongsu@<version>` runs a given one.
 
-```sh
-alias bongsu="node $PWD/packages/cli/dist/cli.mjs"
-```
-
-Once the package is published, `npx bongsu` will work too, without the checkout.
+From a checkout of the repository, the same command is built with `pnpm --filter bongsu build` and runs as
+`node packages/cli/dist/cli.mjs` (an alias makes it `bongsu`: `alias bongsu="node $PWD/packages/cli/dist/cli.mjs"`).
 
 ## Log in
 
@@ -137,12 +135,12 @@ This is a plan export for scripts, not a database backup (for that, see [Databas
 ### mcp
 
 ```sh
-claude mcp add bongsu -- node "$PWD/packages/cli/dist/cli.mjs" mcp
+claude mcp add bongsu -- npx -y bongsu mcp
 ```
 
-Run it from the repository root: Claude starts the bridge from elsewhere, so it needs the absolute path (an alias
-doesn't reach it). Once the package is published, `npx bongsu mcp` will do. Run `bongsu login` first. See
-[Agents](api-reference.md#mcp).
+Run `bongsu login` first: the bridge uses that profile. From a checkout instead, give Claude the absolute path
+(`node "$PWD/packages/cli/dist/cli.mjs" mcp` from the repository root), since it starts the bridge from elsewhere and
+an alias doesn't reach it. See [Agents](api-reference.md#mcp).
 
 ### schema
 

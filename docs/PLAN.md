@@ -733,7 +733,8 @@ of the project (2.6).
   - [x] The workflows (`.github/workflows/`: ci, pr-title, release, pages) and `.github/dependabot.yml`, pinned by
         commit; the release flow is in `docs/development.md`.
   - [x] The CLI publishable: `bongsu` public with provenance, its own README, no runtime dependencies (the bundle);
-        `npm pack` installs and runs on its own. The guides say "not on npm yet" until the first release.
+        `npm pack` installs and runs on its own. On npm since 2026-11-02 (0.1.0 by hand, to set up trusted publishing);
+        the guides use `npx bongsu`.
   - [ ] Turned on in the public repository (npm trusted publisher, Actions may open pull requests, Pages from Actions, GHCR
         visibility); the GitLab CI files removed at the switch.
   - [x] GitHub is the source (2026-11-03): issues and pull requests there, `main` mirrored to the private GitLab
