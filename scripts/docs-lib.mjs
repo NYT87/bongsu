@@ -3,12 +3,21 @@
 // index at /docs/, so every link stays relative and the site works under any path (GitHub Pages project sites).
 import { Marked } from "marked";
 
+/** Inline tags out of a heading's text, repeated until none is left (nested or broken markup leaves no tag behind). */
+const stripTags = (text) => {
+  let out = text;
+  for (let prev; prev !== out; ) {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, "");
+  }
+  return out;
+};
+
 /** GitHub's heading anchors ("2. A refresh token" → "2-a-refresh-token", "Keys & tokens" → "keys--tokens"), so links
  *  written for the repo view still land. */
 export const slug = (text) =>
-  text
+  stripTags(text)
     .toLowerCase()
-    .replace(/<[^>]+>/g, "")
     .replace(/[^\p{L}\p{N}\s_-]/gu, "")
     .trim()
     .replace(/\s/g, "-");

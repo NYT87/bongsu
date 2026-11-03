@@ -88,9 +88,9 @@ class AdminError extends Error {
 
 /** "ABCD-EFGH": unambiguous letters and digits (no 0/O, 1/I). */
 const code = (n: number) => {
-  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const A = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 32 letters: the low 5 bits of a random byte pick one without bias
   const b = crypto.getRandomValues(new Uint8Array(n));
-  const s = [...b].map((x) => A[x % A.length]).join("");
+  const s = [...b].map((x) => A[x & 31]).join("");
   return s.replace(/(.{4})(?=.)/g, "$1-");
 };
 

@@ -21,6 +21,7 @@ test("slug follows GitHub's heading rule", () => {
   assert.equal(slug("2. Connect the channel from the dashboard"), "2-connect-the-channel-from-the-dashboard");
   assert.equal(slug("Keeping it working"), "keeping-it-working");
   assert.equal(slug("<code>bongsu</code> export"), "bongsu-export");
+  assert.equal(slug('<a href="#x"><code>bongsu</code></a> export'), "bongsu-export");
 });
 
 test("rewriteLink points guides at their pages, from a page and from the index", () => {
