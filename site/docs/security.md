@@ -61,4 +61,4 @@ Owner actions (approve, passkey added, setup code, pause/resume…) are written 
 
 ## Reporting a vulnerability
 
-Report a vulnerability as described in [SECURITY.md](../../SECURITY.md): a confidential issue on GitLab.
+Report a vulnerability as described in [SECURITY.md](../../SECURITY.md): a private report on GitHub.

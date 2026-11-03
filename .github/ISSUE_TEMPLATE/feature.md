@@ -1,3 +1,9 @@
+---
+name: Feature
+about: Something Bongsu should do
+labels: enhancement
+---
+
 ## The problem
 
 <!-- What you can't do today, or what is hard. -->

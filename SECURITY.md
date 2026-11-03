@@ -9,8 +9,9 @@ Only the latest release gets security fixes. Update to it before reporting, if y
 
 ## Reporting
 
-Please don't open a public issue. On the project's GitLab, open **Issues → New issue**, tick **This issue is
-confidential**, and give it a title that names the area (for example "Approval bypass in the agent API").
+Please don't open a public issue. On the project's GitHub, open **Security → Report a vulnerability**
+([the form](https://github.com/NYT87/bongsu/security/advisories/new)): only the maintainers see it. Give it a title
+that names the area (for example "Approval bypass in the agent API").
 
 Include:
 

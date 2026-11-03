@@ -1,16 +1,18 @@
 #!/bin/sh
-# Builds the project site (site/) into a folder any static host can serve (GitLab Pages: public/). It copies the page
+# Builds the project site (site/) into a folder any static host can serve (GitHub Pages: public/). It copies the page
 # and the brand files, and fills in the links: REPO_URL (the repository), BLOB_URL and TREE_URL (where its files and
-# folders are shown) and SITE_URL (where the site lives, for the link preview). On GitLab CI they default to the
-# project's own variables; on GitHub, pass them (BLOB_URL="$REPO_URL/blob/main" TREE_URL="$REPO_URL/tree/main").
+# folders are shown) and SITE_URL (where the site lives, for the link preview). In GitHub Actions they follow the
+# repository it runs in (a fork links to itself); elsewhere they default to the project's.
 set -eu
 cd "$(dirname "$0")/.."
 
 out="${1:-public}"
-repo_url="${REPO_URL:-${CI_PROJECT_URL:-https://gitlab.com/nyt87/bongsu}}"
-blob_url="${BLOB_URL:-$repo_url/-/blob/${CI_DEFAULT_BRANCH:-main}}"
-tree_url="${TREE_URL:-$repo_url/-/tree/${CI_DEFAULT_BRANCH:-main}}"
-site_url="${SITE_URL:-${CI_PAGES_URL:-}}"
+repo="${GITHUB_REPOSITORY:-NYT87/bongsu}"
+repo_url="${REPO_URL:-${GITHUB_SERVER_URL:-https://github.com}/$repo}"
+blob_url="${BLOB_URL:-$repo_url/blob/main}"
+tree_url="${TREE_URL:-$repo_url/tree/main}"
+owner="$(echo "${repo%%/*}" | tr '[:upper:]' '[:lower:]')"
+site_url="${SITE_URL:-https://$owner.github.io/${repo#*/}}"
 
 rm -rf "$out"
 mkdir -p "$out/brand"

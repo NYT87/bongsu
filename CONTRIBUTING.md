@@ -8,7 +8,7 @@ Thanks for helping. The short version:
 2. Make the change with tests. See [docs/development.md](docs/development.md) for the layout and commands.
 3. Run `pnpm check && pnpm typecheck && pnpm test`.
 4. Add a changeset if users would notice the change: `pnpm changeset`.
-5. Commit with a [Conventional Commits](https://www.conventionalcommits.org) message and open a merge request.
+5. Commit with a [Conventional Commits](https://www.conventionalcommits.org) message and open a pull request.
 6. Be kind: the [code of conduct](CODE_OF_CONDUCT.md) applies to everyone here.
 7. Found a security problem? Report it privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
 
@@ -28,7 +28,7 @@ BREAKING CHANGE: what breaks and how to migrate (only for breaking changes; also
 - Examples: `feat(core): add a catch-up window per account`, `fix(web): keep the queue scroll position`,
   `docs: explain the Drive inbox`.
 
-The commit-msg hook checks this locally, and CI checks every commit of a merge request and its title (used when
+The commit-msg hook checks this locally, and CI checks every commit of a pull request and its title (used when
 squashing).
 
 ## Code style

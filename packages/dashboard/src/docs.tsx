@@ -21,7 +21,7 @@ const ASSETS = import.meta.glob<string>(
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
-/** GitLab's heading anchors: "2. A refresh token" → "2-a-refresh-token". */
+/** GitHub's heading anchors: "2. A refresh token" → "2-a-refresh-token", "Keys & tokens" → "keys--tokens". */
 const slug = (text: string) =>
   text
     .toLowerCase()

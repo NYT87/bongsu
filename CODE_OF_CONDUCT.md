@@ -48,8 +48,8 @@ offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders
-responsible for enforcement through a confidential issue on the project's GitLab (Issues → New issue → tick
-"This issue is confidential"). All complaints will be reviewed and investigated promptly and fairly.
+responsible for enforcement through a private report on the project's GitHub (Security → Report a vulnerability:
+only the maintainers see it; say it is about conduct). All complaints will be reviewed and investigated promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

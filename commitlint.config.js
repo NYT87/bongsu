@@ -1,5 +1,5 @@
 // Conventional Commits (https://www.conventionalcommits.org): `type(scope): summary`, e.g. `fix(core): retry a failed
-// container poll`. Checked by the commit-msg hook (lefthook.yml) and in CI on every merge request and push.
+// container poll`. Checked by the commit-msg hook (lefthook.yml) and in CI on every pull request and push.
 export default {
   extends: ["@commitlint/config-conventional"],
   rules: {

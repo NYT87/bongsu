@@ -1,3 +1,9 @@
+---
+name: Bug
+about: Something Bongsu did that it shouldn't, or didn't do
+labels: bug
+---
+
 ## What happened
 
 <!-- What you did and what Bongsu did. Steps to reproduce help most. -->

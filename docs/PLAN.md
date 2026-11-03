@@ -1,7 +1,8 @@
 # Bongsu: implementation plan
 
-Status: Phases 1–3 done, 2026-10-27 (Phase 3 on branch `feat/phase-3`) (private: https://gitlab.com/nyt87/bongsu). Decisions D1–D3 made: name **Bongsu**, MIT, private on
-GitLab until the public release on GitHub.
+Status: public on GitHub (https://github.com/NYT87/bongsu) since 2026-11-02; the private GitLab project is a mirror
+that keeps the history from before then. Decisions D1–D3 made: name **Bongsu**, MIT, private on GitLab until the
+public release on GitHub.
 
 Goal: a standalone, open-source publishing scheduler that anyone can deploy for their own accounts, built from a
 private scheduler's code.
@@ -732,6 +733,9 @@ of the project (2.6).
         `npm pack` installs and runs on its own. The guides say "not on npm yet" until the first release.
   - [ ] Turned on in the public repository (npm trusted publisher, Actions may open pull requests, Pages from Actions, GHCR
         visibility); the GitLab CI files removed at the switch.
+  - [x] GitHub is the source (2026-11-03): issues and pull requests there, `main` mirrored to the private GitLab
+        project (`mirror.yml`), whose `private-history` keeps the earlier history; `.gitlab-ci.yml`, `.gitlab/` and
+        `changesets-gitlab` removed.
 - [ ] First public version tagged (the changesets gathered until then).
 - [ ] Repository settings: branch protection, Dependabot/Renovate, topics, description.
 
