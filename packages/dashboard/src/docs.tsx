@@ -21,11 +21,20 @@ const ASSETS = import.meta.glob<string>(
 const escapeHtml = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 
+/** Inline tags out of a heading's text, repeated until none is left (nested or broken markup leaves no tag behind). */
+const stripTags = (text: string) => {
+  let out = text;
+  for (let prev: string | undefined; prev !== out; ) {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, "");
+  }
+  return out;
+};
+
 /** GitHub's heading anchors: "2. A refresh token" → "2-a-refresh-token", "Keys & tokens" → "keys--tokens". */
 const slug = (text: string) =>
-  text
+  stripTags(text)
     .toLowerCase()
-    .replace(/<[^>]+>/g, "")
     .replace(/[^\p{L}\p{N}\s_-]/gu, "")
     .trim()
     .replace(/\s/g, "-");

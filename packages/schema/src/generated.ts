@@ -37,7 +37,7 @@ const defaultOf = (c: Column) =>
 /** The schema as data, for other tools: NOW becomes {"now": true}. */
 export const schemaJson = (tables: Tables) => ({ $comment: "Generated from packages/schema: don't edit.", tables });
 
-function schemaDoc(tables: Tables): string {
+export function schemaDoc(tables: Tables): string {
   const out = [
     "# Database schema",
     "",
@@ -61,7 +61,7 @@ function schemaDoc(tables: Tables): string {
       ].filter(Boolean);
       const nullable = c.notNull || c.primaryKey || c.type === "serial" || t.primaryKey?.includes(cn) ? "no" : "yes";
       out.push(
-        `| \`${cn}\` | ${typeName(c)} | ${nullable} | ${defaultOf(c)} | ${notes.join("; ").replace(/\|/g, "\\|")} |`,
+        `| \`${cn}\` | ${typeName(c)} | ${nullable} | ${defaultOf(c)} | ${notes.join("; ").replace(/[\\|]/g, "\\$&")} |`,
       );
     }
     const extra = [
