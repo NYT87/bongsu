@@ -31,11 +31,11 @@ jobs:
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           cache: true
-      # Trusted publishing needs npm 11.5.1 or later; Node 22 ships npm 10, Node 24 ships npm 11
+      # Trusted publishing needs npm 11.5.1 or later; Node 22 ships npm 10, Node 24 ships npm 11. No registry-url: it
+      # writes an .npmrc with a token placeholder that stands in the way of the OIDC exchange.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
       - run: pnpm install --frozen-lockfile
       # The CLI is published as its bundle (packages/cli/build.mjs); the other packages publish nothing.
       - run: pnpm --filter bongsu build
@@ -43,7 +43,7 @@ jobs:
         uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51 # v2.1.2
         with:
           version-script: pnpm changeset version
-          publish-script: pnpm changeset publish # private packages only get their git tag
+          publish-script: sh scripts/release-publish.sh # the CLI with npm, then a git tag per new version
           commit-message: "chore(release): version packages"
           pr-title: "chore(release): version packages"
           create-github-releases: true
@@ -51,21 +51,25 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
 
-  # The Node image (Dockerfile) at the product's version: @bongsu/core shares it with the rest of the fixed group
-  # (.changeset/config.json).
+  # The Node image (Dockerfile) at the product's version, when any package of the fixed group (.changeset/config.json)
+  # got its tag in this run; they share @bongsu/core's version.
   docker:
     needs: release
-    if: needs.release.outputs.published == 'true' && contains(needs.release.outputs.packages, '"@bongsu/core"')
+    if: >-
+      needs.release.outputs.published == 'true' && (contains(needs.release.outputs.packages, '"@bongsu/core"') ||
+      contains(needs.release.outputs.packages, '"@bongsu/api"') ||
+      contains(needs.release.outputs.packages, '"@bongsu/cloudflare"') ||
+      contains(needs.release.outputs.packages, '"@bongsu/web"') ||
+      contains(needs.release.outputs.packages, '"@bongsu/dashboard"'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write # push to ghcr.io
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # the product's version, from the commit being released (core may have been tagged by an earlier run)
       - id: version
-        env:
-          PACKAGES: ${{ needs.release.outputs.packages }}
-        run: echo "version=$(jq -r '.[] | select(.name == "@bongsu/core") | .version' <<<"$PACKAGES")" >>"$GITHUB_OUTPUT"
+        run: echo "version=$(jq -r .version packages/core/package.json)" >>"$GITHUB_OUTPUT"
       - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
