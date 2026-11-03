@@ -15,7 +15,7 @@ schedules, with everything in one SQLite file. It's the same code as the Cloudfl
 ## 1. Settings
 
 ```sh
-git clone https://gitlab.com/nyt87/bongsu.git && cd bongsu
+git clone https://github.com/NYT87/bongsu.git && cd bongsu
 cp .env.example .env
 ```
 

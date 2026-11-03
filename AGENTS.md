@@ -19,7 +19,7 @@ Shorts comments, posted on time after the owner approves them with a passkey. Re
 | `site/docs/` | The public guides, built into the site and the dashboard (`nav.json` orders them) |
 | `docs/` | Internal documentation. Keep it current when behaviour changes |
 | `.trail/learnings/` | What earlier coding sessions worked out about this code (decisions, what was ruled out, what to watch out for), one Markdown file each, from [Trail-code](https://github.com/trailhq/Trail-Code). Read the ones about the code you're changing before exploring it. `trail` (and its MCP server in `.mcp.json`) also answers "where is X and what calls it"; its map lives in the git-ignored `graft/` |
-| `site/` | The project's landing page: static HTML and CSS, no build step and no API calls. `scripts/build-site.sh` (`pnpm site`) assembles it with the brand files into `public/`; the `pages` CI job publishes it on GitLab Pages from `main` |
+| `site/` | The project's landing page: static HTML and CSS, no build step and no API calls. `scripts/build-site.sh` (`pnpm site`) assembles it with the brand files into `public/`; `.github/workflows/pages.yml` publishes it on GitHub Pages from `main` |
 
 Dependencies point one way: `apps/*` → `api` → `core`. Packages import each other by path (`@bongsu/core/tick`).
 
@@ -73,11 +73,14 @@ Before finishing a change: `pnpm check && pnpm typecheck && pnpm test` pass.
   `test`, `build`, `ci`, `chore`, `revert`, `style`. Scopes: `core`, `api`, `web`, `dashboard`, `cloudflare`, `node`,
   `cli`, `schema`, `providers`, `docs`, `ci`, `deps`, `release`, `repo` (several: `core,api`). Breaking change:
   `feat(api)!: …` plus a `BREAKING CHANGE:` footer.
-- **Issues:** every roadmap task is a GitLab issue (milestone = phase, label `phase-<n>`, board column `doing` while
-  it's being worked on, `needs-owner` when it waits for the owner). Reference it in the commit body (`Refs #36`) and
-  close it from the merge request description (`Closes #36`); tick the matching box in `docs/PLAN.md` too.
-- **Merge request titles follow the same rule** (`feat(core,api): …`): CI lints the title too, since it can become the
-  merge commit's message.
+- **GitHub is the source** (`github.com/NYT87/bongsu`): branches, pull requests, issues and releases live there.
+  `main` takes only squash merges of pull requests (the ruleset), and `.github/workflows/mirror.yml` copies it to the
+  private GitLab project, a backup that also keeps the history from before the public squash. Never push to GitLab.
+- **Issues:** every roadmap task is a GitHub issue (milestone = phase, label `phase-<n>`, `needs-owner` when it waits
+  for the owner). Reference it in the commit body (`Refs #36`) and close it from the pull request description
+  (`Closes #36`); tick the matching box in `docs/PLAN.md` too. Issue numbers before the move are GitLab's.
+- **Pull request titles follow the same rule** (`feat(core,api): …`): CI lints the title too, since it becomes the
+  squashed commit's message.
 - **Changesets:** a change users would notice gets one (`pnpm changeset`, committed with the change). Docs-only, test-only
   and CI-only changes don't need one.
 - **Formatting:** Biome (`biome.json`): 2 spaces, double quotes, semicolons, trailing commas, 120 columns. The

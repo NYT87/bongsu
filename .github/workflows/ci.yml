@@ -1,4 +1,4 @@
-# Checks on every pull request and every push to main: the same as the `check` and `commitlint` jobs of .gitlab-ci.yml.
+# Checks on every pull request and every push to main: Biome, the typecheck, the tests, the builds and commitlint.
 # Nothing here deploys; deployments use their own private configuration.
 name: CI
 

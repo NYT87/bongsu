@@ -158,23 +158,11 @@ Versions and changelogs are managed with [Changesets](https://changesets.dev):
   (patch, minor, major), write one or two lines, and commit the file it creates in `.changeset/` with the change.
 - `@bongsu/core`, `@bongsu/api`, `@bongsu/web` and `@bongsu/cloudflare` share one version (the product); each has its
   own `CHANGELOG.md` listing its own changes. Packages published on their own later (the CLI) get their own version.
-- **Releasing is manual for now** (versions matter once the app is ready; until then changesets just accumulate):
-
-  ```sh
-  pnpm changeset status          # what's pending
-  pnpm version-packages          # bump versions, write the CHANGELOG.md entries, remove the applied changesets
-  git commit -am "chore(release): version packages"
-  pnpm changeset publish         # private packages: only creates the git tags (@bongsu/core@0.2.0, …)
-  git push --follow-tags
-  ```
-
-- The GitLab CI jobs that automate this (`release`: a **Version Packages** merge request on `main` and the tags once
-  it's merged; `changeset-comment`: a note on merge requests) are in `.gitlab-ci.yml` but dormant: they run only when a
-  `GITLAB_TOKEN` CI/CD variable exists.
+- Releasing is automated on GitHub; `pnpm changeset status` shows what's pending.
 
 ### On GitHub
 
-The public repository releases with `.github/workflows/release.yml` (Changesets' GitHub action, the built-in
+The repository releases with `.github/workflows/release.yml` (Changesets' GitHub action, the built-in
 `GITHUB_TOKEN`), on every push to `main`:
 
 1. With pending changesets it opens or updates the **Version Packages** pull request
@@ -191,13 +179,15 @@ weekly updates for npm, the workflows' actions and the Docker base image.
 
 ## CI
 
-`.gitlab-ci.yml` runs `biome ci`, `pnpm typecheck`, `pnpm test`, `pnpm test:site`, `pnpm site`, `pnpm build` and
-commitlint on every push and merge request; the release jobs above stay dormant without a token. It never deploys.
+`.github/workflows/`: `ci.yml` runs `biome ci`, `pnpm typecheck`, `pnpm test`, `pnpm test:site`, `pnpm site`,
+`pnpm build` and commitlint over the commits of every pull request and push; `pr-title.yml` lints the pull request
+title (again when it's edited), since it becomes the squashed commit's message; `release.yml` (above); `pages.yml`
+(the site on GitHub Pages); `mirror.yml` (main and the tags to the private GitLab backup, with the `GITLAB_TOKEN`
+secret). None of them deploys an instance.
 
-`.github/workflows/` does the same on GitHub: `ci.yml` (the checks, and commitlint over the commits of a pull request
-or push), `pr-title.yml` (commitlint over the pull request title, again when it's edited), `release.yml` (above) and
-`pages.yml` (the site on GitHub Pages, like GitLab's `pages` job). At the move to GitHub, `.gitlab-ci.yml`,
-`.gitlab/` (issue and merge request templates) and the `changesets-gitlab` dev dependency go.
+GitHub is the only source: `main` takes squash merges of pull requests, with the `check` and `commitlint` checks
+required (a ruleset), and nothing is pushed to GitLab by hand. The GitLab project keeps the history from before the
+public squash on its `private-history` branch and tag; it stays private.
 
 ## Code style and commits
 

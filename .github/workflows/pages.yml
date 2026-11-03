@@ -1,5 +1,5 @@
-# The project site (site/) on GitHub Pages from main, like the `pages` job of .gitlab-ci.yml: static files, separate
-# from the Workers; nothing on it calls the API.
+# The project site (site/) on GitHub Pages from main: static files, separate from the Workers; nothing on it calls
+# the API.
 name: Pages
 
 on:

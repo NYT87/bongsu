@@ -1,9 +1,10 @@
 // The public docs site's renderer: Markdown guides in, pages out. Pure (no file system), so scripts/build-docs.mjs does
 // the reading and writing and the tests run on strings. `base` is "../" for a page at /docs/<name>/ and "" for the
-// index at /docs/, so every link stays relative and the site works under any path (GitLab Pages project sites).
+// index at /docs/, so every link stays relative and the site works under any path (GitHub Pages project sites).
 import { Marked } from "marked";
 
-/** GitLab's heading anchors ("2. A refresh token" → "2-a-refresh-token"), so links written for the repo view still land. */
+/** GitHub's heading anchors ("2. A refresh token" → "2-a-refresh-token", "Keys & tokens" → "keys--tokens"), so links
+ *  written for the repo view still land. */
 export const slug = (text) =>
   text
     .toLowerCase()

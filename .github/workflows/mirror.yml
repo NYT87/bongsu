@@ -1,0 +1,34 @@
+# Mirrors main and the tags to the GitLab project, a private backup that also keeps the history from before the public
+# squash (its `private-history` branch and tag). GitHub is the source: nothing is ever pushed to GitLab by hand.
+# Needs the GITLAB_TOKEN secret (a GitLab project access token, role Maintainer, scope write_repository); without it,
+# or in a fork, the job does nothing.
+name: Mirror
+
+on:
+  push:
+    branches: [main]
+    tags: ["*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mirror
+  cancel-in-progress: false
+
+jobs:
+  gitlab:
+    if: github.repository == 'NYT87/bongsu'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the whole history: GitLab only takes a push that continues its main
+          persist-credentials: false
+      # main only ever moves forward (squash merges, no force pushes), so a plain push is enough
+      - env:
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+        run: |
+          if [ -z "$GITLAB_TOKEN" ]; then echo "No GITLAB_TOKEN: nothing mirrored."; exit 0; fi
+          git push "https://oauth2:${GITLAB_TOKEN}@gitlab.com/nyt87/bongsu.git" \
+            refs/remotes/origin/main:refs/heads/main 'refs/tags/*:refs/tags/*'

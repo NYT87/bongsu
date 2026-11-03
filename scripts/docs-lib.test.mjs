@@ -17,7 +17,7 @@ import {
 
 const B = "https://x/blob/main";
 
-test("slug follows GitLab's heading rule", () => {
+test("slug follows GitHub's heading rule", () => {
   assert.equal(slug("2. Connect the channel from the dashboard"), "2-connect-the-channel-from-the-dashboard");
   assert.equal(slug("Keeping it working"), "keeping-it-working");
   assert.equal(slug("<code>bongsu</code> export"), "bongsu-export");

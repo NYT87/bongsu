@@ -70,7 +70,7 @@ choices:
 On **Cloudflare** ([the full guide](site/docs/deploy-cloudflare.md): the variables, secrets and signing up):
 
 ```sh
-git clone https://gitlab.com/nyt87/bongsu.git && cd bongsu
+git clone https://github.com/NYT87/bongsu.git && cd bongsu
 pnpm install && cd apps/cloudflare && pnpm exec wrangler login
 pnpm exec wrangler d1 create bongsu              # database_id, PUBLIC_URL and RP_ID go in both wrangler files
 pnpm exec wrangler d1 migrations apply bongsu --remote
@@ -81,7 +81,7 @@ cd apps/cloudflare && pnpm run deploy
 With **Docker** on your own server ([the full guide](site/docs/self-hosting.md): `.env`, Postgres, email):
 
 ```sh
-git clone https://gitlab.com/nyt87/bongsu.git && cd bongsu
+git clone https://github.com/NYT87/bongsu.git && cd bongsu
 cp .env.example .env                             # PUBLIC_URL, DOMAIN, the keys (openssl rand -hex 32 each)
 docker compose --profile https up -d --build     # Caddy gets the HTTPS certificate for DOMAIN
 docker compose ps                                # healthy once it's up
@@ -94,7 +94,7 @@ notifies, nothing is published.
 
 ## Docs
 
-The guides are at **[nyt87.gitlab.io/bongsu/docs](https://nyt87.gitlab.io/bongsu/docs/)** (and in
+The guides are at **[nyt87.github.io/bongsu/docs](https://nyt87.github.io/bongsu/docs/)** (and in
 [`site/docs/`](site/docs/)), and inside your own dashboard. A few to start with:
 
 - [What is Bongsu](site/docs/what-is-bongsu.md) and [how it works](site/docs/how-it-works.md)
