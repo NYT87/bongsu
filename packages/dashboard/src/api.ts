@@ -33,6 +33,9 @@ export async function api<T = Record<string, unknown>>(path: string, body?: unkn
   return data as T;
 }
 
+/** Opens a workspace in this session (the server refuses one the person can't open). */
+export const switchWorkspace = (id: string) => api("session/workspace", { id });
+
 /** A fresh passkey check on this session (for changes to who can do what). */
 export async function verifyPasskey() {
   const o = await api<{ options: never; challengeId: string }>("verify/options", {});

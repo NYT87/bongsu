@@ -2,7 +2,7 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import type { State } from "./App";
-import { api, manages, when, withFreshCheck } from "./api";
+import { api, manages, switchWorkspace, when, withFreshCheck } from "./api";
 import { GuideLink } from "./docs";
 import { Brand, Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
 
@@ -2926,7 +2926,7 @@ export function Workspaces(_: Props) {
   const open = async (w: WorkspaceRow) => {
     setErr(null);
     try {
-      await api(`workspaces/${encodeURIComponent(w.id)}/open`, {});
+      await switchWorkspace(w.id);
       workIn();
     } catch (e) {
       setErr(errorText(e));
