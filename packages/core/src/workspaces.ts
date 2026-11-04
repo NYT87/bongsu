@@ -43,11 +43,6 @@ async function firstMembership(db: Db, userId: string) {
     .first<{ workspace_id: string; role: string }>();
 }
 
-/** The workspace a signed-in user works in, without a session (a provider's redirect back): their first one. */
-export async function userWorkspace(db: Db, userId: string): Promise<string | null> {
-  return (await firstMembership(db, userId))?.workspace_id ?? null;
-}
-
 /** The workspace a request works in: the one its session names (sessions.workspace_id) when the user is a member
  *  there, or an instance admin, and it isn't archived; else the user's first. `role` is the membership's, "admin" for
  *  an instance admin without one. Null when there's none: the request works nowhere. */

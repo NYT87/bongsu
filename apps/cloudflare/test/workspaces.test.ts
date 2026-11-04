@@ -251,6 +251,9 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     const { key } = await seedReel(w, { date: "2026-10-30" }); // the default workspace's
     expect((await as("bea", "pwa", "/app-api/me")).json.workspaceTimezone).toBe("Europe/Madrid");
     expect((await as("bea", "pwa", `/app-api/item?key=${encodeURIComponent(key)}`)).status).toBe(404);
+    // Settings' connections: workspace B's only
+    const conns = (await as("bea", "pwa", "/app-api/connections")).json.connections as { id: string }[];
+    expect(conns.map((c) => c.id)).toEqual(["c_b"]);
     // the same lookup in the item's own workspace finds it
     expect(await resolveItem(await testEnv(env), w.fetch, key, "UTC", "default")).not.toBeNull();
   });

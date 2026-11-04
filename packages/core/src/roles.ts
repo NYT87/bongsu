@@ -16,3 +16,7 @@ export async function isInstanceAdmin(db: Db, userId: string): Promise<boolean> 
   // SQLite keeps 0/1, Postgres a boolean
   return !!r?.instance_admin;
 }
+
+/** Who connects accounts (Instagram, YouTube) in a workspace: its admins and creators, not its editors. An instance
+ *  admin's role there is "admin" (core/workspaces.ts sessionWorkspace). */
+export const mayConnect = (role: Role | null | undefined): boolean => role === "admin" || role === "creator";

@@ -15,6 +15,7 @@ import {
 import { channelUploads } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import {
+  type ConnectBack,
   ConnectError,
   finishConnect,
   oauthApps,
@@ -404,11 +405,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   });
 
   // The provider sends the browser back here. The dashboard's cookie is SameSite=Strict, so it doesn't come along on
-  // this cross-site redirect: the flow's single-use state says who started it (core/connections.ts).
+  // this cross-site redirect: the flow's single-use state says who started it, in which workspace and from which app
+  // (core/connections.ts). A flow started in the app goes back to the app's Settings; an unknown state to the dashboard.
   app.get("/admin-api/connect/:provider/callback", async (c) => {
     const provider = c.req.param("provider") ?? "";
-    const back = (q: Record<string, string>) =>
-      c.redirect(`${origin(c)}/dashboard/connections?${new URLSearchParams(q)}`, 302);
+    const back = (q: Record<string, string>, to: ConnectBack = "dashboard") =>
+      c.redirect(
+        `${origin(c)}${to === "app" ? "/#/settings" : "/dashboard/connections"}?${new URLSearchParams(q)}`,
+        302,
+      );
     try {
       const r = await finishConnect(
         c.env,
@@ -430,9 +435,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         r.userId,
         r.workspaceId,
       );
-      return back({ connected: r.label, accounts: String(r.accounts.length) });
+      return back({ connected: r.label, accounts: String(r.accounts.length) }, r.back);
     } catch (e) {
-      return back({ error: (e as Error).message.slice(0, 300) });
+      return back({ error: (e as Error).message.slice(0, 300) }, e instanceof ConnectError ? e.back : undefined);
     }
   });
 
@@ -1365,6 +1370,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const url = await startConnect(c.env, c.req.param("provider") ?? "", {
         userId: c.get("session").userId,
         workspaceId: ws(c),
+        back: "dashboard",
         reconnect: typeof b.reconnect === "string" ? b.reconnect : null,
         nowS: nowS(),
       });

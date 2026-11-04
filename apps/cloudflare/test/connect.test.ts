@@ -2,6 +2,8 @@
 // YouTube (Google, with PKCE) through the callback, pasting a token or a Composio id, reconnecting and removing.
 import { env } from "cloudflare:workers";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
+import { appRoutes } from "@bongsu/api/pwa/routes";
+import { createSession } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { connectionSecret, listAccounts } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
@@ -341,5 +343,168 @@ describe("the connections page", () => {
       canPaste: false,
     });
     expect(r.kinds.find((k) => k.provider === "composio")).toMatchObject({ kind: "composio", canPaste: true });
+  });
+});
+
+describe("connecting into the workspace the flow started from", () => {
+  /** A user with `role` in workspace `b` (and nowhere else). */
+  const member = async (id: string, role: string) => {
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO UPDATE SET archived_at = NULL",
+      ),
+      env.DB.prepare("INSERT INTO users (id, name, created_at) VALUES (?1, ?1, 0)").bind(id),
+      env.DB.prepare("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', ?1, ?2, 0)").bind(
+        id,
+        role,
+      ),
+    ]);
+    return `bongsu_session=${await createSession(env.DB, Math.floor(Date.now() / 1000), { userId: id })}`;
+  };
+  /** The app's routes, signed in with `appCookie`. */
+  const app = async (appCookie: string, path: string, body?: unknown) => {
+    const r = await appRoutes(w.fetch, fake).request(
+      `https://bongsu.test${path}`,
+      {
+        method: body === undefined ? "GET" : "POST",
+        headers: { "Content-Type": "application/json", Cookie: appCookie },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      },
+      e,
+    );
+    return { status: r.status, json: (await r.json().catch(() => ({}))) as Record<string, unknown> };
+  };
+  const workspaceOf = (externalId: string) =>
+    env.DB.prepare("SELECT workspace_id FROM accounts WHERE external_id = ?1")
+      .bind(externalId)
+      .first<string>("workspace_id");
+  /** Starts YouTube from the app and has Google send the browser back. */
+  const youtubeFromApp = async (appCookie: string, beforeCallback?: () => Promise<unknown>) => {
+    const start = await app(appCookie, "/app-api/connect/youtube/start", {});
+    expect(start.status).toBe(200);
+    const url = new URL(start.json.url as string);
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    await beforeCallback?.();
+    return callback("youtube", { code: "g-code", state: url.searchParams.get("state")! });
+  };
+
+  it("connects a creator's YouTube channel from the app into their workspace and returns to the app", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    const cara = await member("cara", "creator");
+    const start = await app(cara, "/app-api/connect/youtube/start", {});
+    expect(start.status).toBe(200);
+    const url = new URL(start.json.url as string);
+    expect(url.origin + url.pathname).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+    // the provider comes back to the one registered redirect URL, whichever app started
+    expect(url.searchParams.get("redirect_uri")).toBe("https://bongsu.test/admin-api/connect/youtube/callback");
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+
+    const back = await callback("youtube", { code: "g-code", state: url.searchParams.get("state")! });
+    expect(back.status).toBe(302);
+    expect(back.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?/);
+    expect(Object.fromEntries(new URLSearchParams(back.location!.split("?")[1]))).toEqual({
+      connected: "Our Channel",
+      accounts: "1",
+    });
+    expect(await workspaceOf("UCours")).toBe("b");
+    const conn = await env.DB.prepare(
+      "SELECT c.workspace_id FROM connections c JOIN accounts a ON a.connection_id = c.id WHERE a.external_id = 'UCours'",
+    ).first();
+    expect(conn).toEqual({ workspace_id: "b" });
+    const audit = await env.DB.prepare("SELECT user_id, workspace_id FROM audit WHERE action = 'connect'").first();
+    expect(audit).toEqual({ user_id: "cara", workspace_id: "b" });
+
+    // an app flow's error goes back to the app too, and its state is single use
+    const again = await callback("youtube", { code: "g-code", state: url.searchParams.get("state")! });
+    expect(again.location).toMatch(/^https:\/\/bongsu\.test\/dashboard\/connections\?error=/);
+    const denied = await app(cara, "/app-api/connect/youtube/start", {});
+    const s = new URL(denied.json.url as string).searchParams.get("state")!;
+    const cancelled = await callback("youtube", { error: "access_denied", state: s });
+    expect(cancelled.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?error=/);
+  });
+
+  it("refuses editors, in the app as in the dashboard", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    const ed = await member("ed", "editor");
+    expect((await app(ed, "/app-api/me")).json.connects).toBe(false);
+    expect((await app(await member("cara", "creator"), "/app-api/me")).json.connects).toBe(true);
+    const r = await app(ed, "/app-api/connect/youtube/start", {});
+    expect(r.status).toBe(403);
+    expect((await app(ed, "/app-api/connections")).status).toBe(403);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_states").first()).toEqual({ n: 0 });
+  });
+
+  it("lists the workspace's connections and which providers the instance's OAuth apps make ready", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    const cara = await member("cara", "creator");
+    let r = (await app(cara, "/app-api/connections")).json as {
+      connections: unknown[];
+      providers: { provider: string; ready: boolean }[];
+    };
+    expect(r.connections).toEqual([]); // the default workspace's aren't hers
+    expect(r.providers).toEqual([
+      expect.objectContaining({ provider: "instagram", ready: false }),
+      expect.objectContaining({ provider: "youtube", ready: true }),
+    ]);
+    await youtubeFromApp(cara);
+    r = (await app(cara, "/app-api/connections")).json as typeof r;
+    expect(r.connections).toEqual([
+      expect.objectContaining({ provider: "youtube", label: "Our Channel", status: "ok", accounts: ["ourchannel"] }),
+    ]);
+    // without the Meta app, starting Instagram says who has to add it
+    const ig = await app(cara, "/app-api/connect/instagram/start", {});
+    expect(ig.status).toBe(400);
+    expect(ig.json.error).toMatch(/Meta app/);
+  });
+
+  it("reconnects only a connection of the caller's workspace", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    const cara = await member("cara", "creator");
+    // c_main is the default workspace's
+    expect((await app(cara, "/app-api/connect/youtube/start", { reconnect: "c_main" })).status).toBe(400);
+  });
+
+  it("a dashboard flow lands in the session's workspace, not the user's first", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    await member("x", "creator"); // makes workspace b
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', ?1, 'admin', 1)",
+    )
+      .bind(me)
+      .run();
+    expect((await call("/admin-api/workspaces/b/open", {})).status).toBe(200);
+    const url = new URL((await call("/admin-api/connect/youtube/start", {})).json.url as string);
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    const back = await callback("youtube", { code: "g-code", state: url.searchParams.get("state")! });
+    expect(back.location).toMatch(/^https:\/\/bongsu\.test\/dashboard\/connections\?connected=/);
+    expect(await workspaceOf("UCours")).toBe("b");
+  });
+
+  it("refuses to finish into a workspace the user left, or that was archived, since the start", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    const cara = await member("cara", "creator");
+    const left = await youtubeFromApp(cara, () =>
+      env.DB.prepare("DELETE FROM memberships WHERE user_id = 'cara'").run(),
+    );
+    expect(left.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?error=/);
+    expect(await workspaceOf("UCours")).toBeNull();
+    expect(w.googleCodes).toHaveLength(0); // refused before the code was exchanged
+
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'cara', 'creator', 0)",
+    ).run();
+    const archived = await youtubeFromApp(cara, () =>
+      env.DB.prepare("UPDATE workspaces SET archived_at = 1 WHERE id = 'b'").run(),
+    );
+    expect(archived.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?error=/);
+    expect(await workspaceOf("UCours")).toBeNull();
+
+    // demoted to editor in between: no longer someone who connects
+    await env.DB.prepare("UPDATE workspaces SET archived_at = NULL WHERE id = 'b'").run();
+    const demoted = await youtubeFromApp(cara, () =>
+      env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'cara'").run(),
+    );
+    expect(demoted.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?error=/);
+    expect(await workspaceOf("UCours")).toBeNull();
   });
 });

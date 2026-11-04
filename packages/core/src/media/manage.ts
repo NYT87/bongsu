@@ -183,7 +183,7 @@ export async function startDriveConnect(env: Env, userId: string, nowS: number) 
       authorizeParams: { access_type: "offline", prompt: "consent" },
     },
     app,
-    { flow: DRIVE_FLOW, userId, connectionId: null, nowS },
+    { flow: DRIVE_FLOW, userId, workspaceId: null, connectionId: null, nowS },
   );
 }
 

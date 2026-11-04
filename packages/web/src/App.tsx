@@ -38,6 +38,8 @@ type Me = {
   accounts?: number;
   /** What the signed-in role may do (the server's ROLE_SCOPES): an action is shown only to someone who can take it. */
   scopes?: string[];
+  /** An admin or a creator of the workspace: Settings offers connecting accounts. */
+  connects?: boolean;
 };
 type Status = {
   dry_run: boolean;
@@ -4075,6 +4077,87 @@ function MediaStoresCard() {
   );
 }
 
+type Connections = {
+  connections: { id: string; provider: string; label: string | null; status: string; accounts: string[] }[];
+  providers: { provider: string; label: string; ready: boolean }[];
+};
+
+/** The workspace's Instagram and YouTube connections, for its admins and creators: Connect sends the browser to the
+ *  provider with the instance's OAuth app, and the provider's way back lands here with `?connected=` or `?error=`. */
+function ConnectCard() {
+  const { data } = useLoad<Connections>("connections");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(location.hash.split("?")[1] ?? "");
+    const connected = q.get("connected");
+    const error = q.get("error");
+    if (connected === null && error === null) return;
+    if (connected !== null)
+      setMsg({ text: t("settings.connected", { label: connected, n: Number(q.get("accounts") ?? 0) }), ok: true });
+    else setMsg({ text: t("settings.connectFailed", { error: error ?? "" }), ok: false });
+    // a reload shouldn't say it again
+    history.replaceState(history.state, "", "#/settings");
+  }, []);
+  const start = async (provider: string, reconnect?: string) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api<{ url: string }>(`connect/${provider}/start`, reconnect ? { reconnect } : {});
+      location.href = r.url;
+    } catch (e) {
+      setMsg({ text: (e as Error).message, ok: false });
+      setBusy(false);
+    }
+  };
+  if (!data) return null;
+  const ready = (p: string) => data.providers.some((x) => x.provider === p && x.ready);
+  return (
+    <div className="card">
+      <h2>{t("settings.accounts")}</h2>
+      <p className="muted small">{t("settings.accountsNote")}</p>
+      {data.connections.length === 0 ? (
+        <p className="small muted">{t("settings.connectNone")}</p>
+      ) : (
+        <ul className="small">
+          {data.connections.map((c) => (
+            <li key={c.id}>
+              {c.label ?? c.provider}
+              {c.status !== "ok" && <span className="warn"> · {t("settings.connectBroken")}</span>}{" "}
+              {ready(c.provider) && (
+                <button className="link-button" disabled={busy} onClick={() => start(c.provider, c.id)}>
+                  {t("settings.reconnect")}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="row">
+        {data.providers
+          .filter((p) => p.ready)
+          .map((p) => (
+            <button key={p.provider} disabled={busy} onClick={() => start(p.provider)}>
+              {t("settings.connect", { label: p.label })}
+            </button>
+          ))}
+      </div>
+      {data.providers
+        .filter((p) => !p.ready)
+        .map((p) => (
+          <p key={p.provider} className="small muted">
+            {t("settings.connectNoApp", { label: p.label })}
+          </p>
+        ))}
+      {msg && (
+        <p className={`notice small ${msg.ok ? "ok" : "bad"}`} role="status">
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** The zone the app shows and takes times in: the user's own or the workspace's. Plans are stored in UTC, so changing
  *  it moves nothing; the app reloads to show every time in the new zone. */
 function TimeZoneCard({ me }: { me: Me }) {
@@ -4253,6 +4336,7 @@ function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         </div>
         {note("push")}
       </div>
+      {me.connects && <ConnectCard />}
       <TimeZoneCard me={me} />
       <MediaStoresCard />
       <VersionInfo />

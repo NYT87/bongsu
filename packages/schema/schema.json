@@ -850,6 +850,10 @@
         },
         "used_at": {
           "type": "timestamp"
+        },
+        "workspace_id": {
+          "type": "text",
+          "description": "the workspace the flow connects into; NULL: the instance's (Drive)"
         }
       }
     },

@@ -2,10 +2,11 @@
 // assets) and talks only to these routes, same origin. Sign-in is a passkey (the first one registered with a
 // one-time code made in the dashboard's Devices & passkeys); approving needs a fresh passkey assertion every time.
 
-import { instagramAccounts } from "@bongsu/core/accounts";
+import { instagramAccounts, listAccounts } from "@bongsu/core/accounts";
 import { calendar } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import { replyToComment } from "@bongsu/core/comments";
+import { ConnectError, startConnect } from "@bongsu/core/connections";
 import { LINK_TTL_S } from "@bongsu/core/constants";
 import { dueFrom, getItem, getPosted, isPosted, itemOptions, trialFor, WhenError } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -19,6 +20,7 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs } from "@bongsu/core/providers/index";
 import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
+import { mayConnect } from "@bongsu/core/roles";
 import { mayBeLive } from "@bongsu/core/tick";
 import {
   callerZone,
@@ -54,7 +56,7 @@ import {
   verifyRegistration,
 } from "./webauthn";
 
-type Vars = { Bindings: Env; Variables: { caller: Caller } };
+type Vars = { Bindings: Env; Variables: { caller: Caller; connects: boolean } };
 type C = Context<Vars>;
 // The app works as the signed-in user, in their session's workspace (core/workspaces.ts sessionWorkspace), with their
 // role's rights there (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming need
@@ -66,6 +68,8 @@ const NEEDS: [RegExp, Scope | null][] = [
   [/^\/app-api\/resume\//, "resume"],
   [/^\/app-api\/pause$/, "pause"],
   [/^\/app-api\/youtube\/release\//, "reschedule"],
+  // connecting accounts needs the role itself (an admin's or a creator's: core/roles.ts mayConnect), not a scope
+  [/^\/app-api\/connect\//, null],
   [/^\/app-api\/(logout|me\/timezone|push\/|client-error|comments\/seen)/, null],
 ];
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -88,6 +92,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     const where = await sessionWorkspace(c.env.DB, s);
     if (!where) return null;
     const scopes = scopesOf(where.role, where.instanceAdmin);
+    c.set("connects", mayConnect(where.role));
     return { id: s.userId, name: `${s.userId} (app)`, scopes, workspaceId: where.workspaceId, userId: s.userId };
   };
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");
@@ -166,6 +171,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       signedIn: !!s,
       // the role's scopes (ROLE_SCOPES): the app shows an action only to someone who can take it
       scopes: caller?.scopes ?? [],
+      // an admin or a creator there (core/roles.ts mayConnect): Settings offers Connect Instagram and YouTube
+      connects: !!caller && !!c.get("connects"),
       setupNeeded: (n?.n ?? 0) === 0,
       // signed in, but a member of no workspace (yet, or any more): the app says to ask for one
       noWorkspace: !!s && !caller,
@@ -483,6 +490,58 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         status: r.status,
         where: r.kind === "s3" ? String(r.settings.bucket ?? "") : null,
       })),
+    }),
+  );
+  // ---- connecting accounts (Settings): admins and creators connect Instagram and YouTube with the instance's OAuth
+  // apps, into their workspace. The provider sends the browser back to the dashboard's callback (the one redirect URL
+  // registered in the app), which sends it on to the app's Settings (dashboard/routes.ts).
+  const connector = (c: C) => {
+    if (!c.get("connects")) throw new ops.ApiError(403, "only the workspace's admins and creators connect accounts");
+  };
+  app.get(
+    "/app-api/connections",
+    wrap(async (c) => {
+      connector(c);
+      const ws = me(c).workspaceId;
+      const r = await c.env.DB.prepare(
+        "SELECT id, provider, label, status, expires_at FROM connections WHERE workspace_id = ?1 ORDER BY provider, id",
+      )
+        .bind(ws)
+        .all<{ id: string; provider: string; label: string | null; status: string; expires_at: number | null }>();
+      const accounts = await listAccounts(c.env.DB, { workspaceId: ws, all: true });
+      const apps = new Set(
+        (await c.env.DB.prepare("SELECT id FROM oauth_apps").all<{ id: string }>()).results.map((x) => x.id),
+      );
+      return {
+        connections: r.results.map((x) => ({
+          ...x,
+          accounts: accounts.filter((a) => a.connection?.id === x.id).map((a) => a.id),
+        })),
+        // what can be connected from here: the authorization flows; `ready` once the instance's OAuth app is added
+        providers: connectSpecs()
+          .filter((k) => k.kind === "oauth2" && k.app && k.authorizeUrl)
+          .map((k) => ({ provider: k.provider, label: k.label, platform: k.platform, ready: apps.has(k.app ?? "") })),
+      };
+    }),
+  );
+  app.post(
+    "/app-api/connect/:provider/start",
+    wrap(async (c) => {
+      connector(c);
+      const b = await body(c);
+      try {
+        const url = await startConnect(c.env, c.req.param("provider") ?? "", {
+          userId: userOf(c),
+          workspaceId: me(c).workspaceId,
+          back: "app",
+          reconnect: typeof b.reconnect === "string" ? b.reconnect : null,
+          nowS: nowS(),
+        });
+        return { url };
+      } catch (e) {
+        if (e instanceof ConnectError) throw new ops.ApiError(400, e.message);
+        throw e;
+      }
     }),
   );
   // The stores the app can upload to (the default first): the upload page offers a choice when there are several.
