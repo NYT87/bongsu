@@ -90,24 +90,50 @@ import {
   verifyRegistration,
 } from "../pwa/webauthn";
 
-type C = Context<{
+type Vars = {
   Bindings: Env;
-  Variables: { session: Session; token: string; workspace: string; role: string; instanceAdmin: boolean };
-}>;
+  Variables: { session: Session; token: string; workspace: string; role: string; instanceAdmin: boolean; area: Area };
+};
+type C = Context<Vars>;
 // The three guards (the roles table: docs/superpowers/specs/2026-11-04-phase13-people-roles-design.md, section 1).
-/** What's instance-wide (workspaces, media stores, OAuth apps, who the instance admins are): instance admins only,
- *  reading included, since the instance's settings aren't a workspace's. */
-const INSTANCE = /^\/admin-api\/(workspaces|media-stores|oauth-apps|instance-admins)/;
-/** Changes to a workspace's members, invites, agent keys, accounts, connections and settings: its admins' (and the
- *  instance admins'). The person's own passkeys, devices and CLI tokens are every member's. Moving a release date
- *  (videos) is editing the plan: an editor's too. */
-const MANAGING = /^\/admin-api\/(members|invites|keys|accounts|connections|settings|connect\/)/;
-/** What an editor doesn't even read: the workspace's members, invites, agent keys, connections and settings. The
- *  overview, accounts and videos are theirs to read, and their own passkeys, devices and CLI tokens to manage. */
-const NOT_EDITORS = /^\/admin-api\/(members|invites|keys|connections|settings)/;
-/** What an instance admin in no workspace reaches besides INSTANCE: the passkey check the instance's changes ask for,
- *  their own passkeys and devices, and the instance's audit (`?instance=1`). None of it reads a workspace's data. */
-const NO_WORKSPACE = /^\/admin-api\/(verify\/|passkeys|devices|recovery-codes|audit)/;
+// Each page is tagged by the router itself (app.use on its route pattern, below), never by reading the URL again:
+// Hono matches the decoded path, so a second look at the raw one would miss `/admin-api/%77orkspaces`.
+type Area = {
+  /** Instance-wide (workspaces, media stores, OAuth apps, who the instance admins are): instance admins only, reading
+   *  included, since the instance's settings aren't a workspace's. */
+  instance?: true;
+  /** What an instance admin in no workspace reaches besides the instance's pages: the passkey check the instance's
+   *  changes ask for, their own passkeys and devices, and the instance's audit (`?instance=1`). None of it reads a
+   *  workspace's data. */
+  noWorkspace?: true;
+  /** Changes to a workspace's members, invites, agent keys, accounts, connections and settings: its admins' (and the
+   *  instance admins'). The person's own passkeys, devices and CLI tokens are every member's. Moving a release date
+   *  (videos) is editing the plan: an editor's too. */
+  managing?: true;
+  /** What an editor doesn't even read: the workspace's members, invites, agent keys, connections and settings. The
+   *  overview, accounts and videos are theirs to read, and their own passkeys, devices and CLI tokens to manage. */
+  notEditors?: true;
+};
+/** Each page under /admin-api/<name> (the name and everything below it) and its area; a page not listed is any
+ *  member's. */
+const AREAS: Record<string, Area> = {
+  workspaces: { instance: true },
+  "media-stores": { instance: true },
+  "oauth-apps": { instance: true },
+  "instance-admins": { instance: true },
+  verify: { noWorkspace: true },
+  passkeys: { noWorkspace: true },
+  devices: { noWorkspace: true },
+  "recovery-codes": { noWorkspace: true },
+  audit: { noWorkspace: true },
+  members: { managing: true, notEditors: true },
+  invites: { managing: true, notEditors: true },
+  keys: { managing: true, notEditors: true },
+  connections: { managing: true, notEditors: true },
+  settings: { managing: true, notEditors: true },
+  accounts: { managing: true },
+  connect: { managing: true },
+};
 
 /** How recent the last passkey check must be for changes to who can do what. */
 export const FRESH_S = 10 * 60;
@@ -139,10 +165,7 @@ const code = (n: number) => {
 };
 
 export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVerifiers) {
-  const app = new Hono<{
-    Bindings: Env;
-    Variables: { session: Session; token: string; workspace: string; role: string; instanceAdmin: boolean };
-  }>();
+  const app = new Hono<Vars>();
   const nowS = () => Math.floor(Date.now() / 1000);
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");
   const body = async (c: C) => {
@@ -504,17 +527,22 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }),
   );
 
-  // ---- everything else needs a dashboard session
+  // ---- everything else needs a dashboard session, and the role its page asks for (AREAS, tagged by the router)
+  for (const [name, area] of Object.entries(AREAS))
+    app.use(`/admin-api/${name}/*`, async (c, next) => {
+      c.set("area", area);
+      await next();
+    });
   app.use("/admin-api/*", async (c, next) => {
     const token = readCookie(c.req.header("Cookie"), "dashboard");
     const s = await validSession(c.env.DB, token, nowS(), "dashboard");
     if (!s || !token) return c.json({ error: "sign in" }, 401);
-    const path = new URL(c.req.url).pathname;
+    const area = c.get("area") ?? {};
     // Everything below works in the session's workspace (core/workspaces.ts sessionWorkspace), with the role it has
     // there. An instance admin without one still reaches the instance's own pages.
     const where = await sessionWorkspace(c.env.DB, s, { notCreator: true });
     const instanceAdmin = where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId));
-    if (!where && !(instanceAdmin && (INSTANCE.test(path) || NO_WORKSPACE.test(path))))
+    if (!where && !(instanceAdmin && (area.instance || area.noWorkspace)))
       return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     c.set("session", s);
     c.set("token", token);
@@ -524,16 +552,16 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     await next();
   });
   app.use("/admin-api/*", async (c, next) => {
-    const path = new URL(c.req.url).pathname;
+    const area = c.get("area") ?? {};
     const instanceAdmin = c.get("instanceAdmin");
     // a creator works in the app; the sign-in state and signing out are answered above
     if (c.get("role") === "creator" && !instanceAdmin)
       return c.json({ error: "creators use the Bongsu app", app: true }, 403);
-    if (INSTANCE.test(path) && !instanceAdmin) return c.json({ error: "only an instance admin can do this" }, 403);
+    if (area.instance && !instanceAdmin) return c.json({ error: "only an instance admin can do this" }, 403);
     const admin = c.get("role") === "admin" || instanceAdmin;
-    if (!admin && c.req.method !== "GET" && MANAGING.test(path))
+    if (!admin && c.req.method !== "GET" && area.managing)
       return c.json({ error: "only an admin of the workspace can change this" }, 403);
-    if (!admin && NOT_EDITORS.test(path)) return c.json({ error: "only an admin of the workspace can see this" }, 403);
+    if (!admin && area.notEditors) return c.json({ error: "only an admin of the workspace can see this" }, 403);
     await next();
   });
 
@@ -753,7 +781,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }),
   );
 
-  // ---- members and invites (MANAGING: the workspace's admins and the instance admins)
+  // ---- members and invites (AREAS: managing, the workspace's admins and the instance admins)
   /** An invite's id in the lists: the start of its token's hash (the token itself is shown once, when made). */
   const INVITE_ID = "substr(token_hash, 1, 16)";
   app.get(
@@ -1189,7 +1217,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }),
   );
 
-  // ---- workspaces (instance admins: INSTANCE)
+  // ---- workspaces (instance admins: AREAS)
   /** A workspace's name from a request, or a 400. */
   const nameOf = (v: unknown) => {
     const name = workspaceName(v);

@@ -5,7 +5,7 @@ import { env } from "cloudflare:workers";
 import { authenticate } from "@bongsu/api/agent/auth";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
-import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
+import { createSession, markVerified, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
@@ -384,5 +384,105 @@ describe("a request's workspace", () => {
     expect((await (await sessionIn("ina", "b", "pwa"))("/app-api/me")).json).toMatchObject({ noWorkspace: false });
     await env.DB.prepare("UPDATE users SET timezone = NULL WHERE id = 'ina'").run();
     await env.DB.prepare("UPDATE workspace_settings SET timezone = ?1 WHERE workspace_id = 'default'").bind(tz).run();
+  });
+});
+
+// Hono routes on the decoded path: `/admin-api/%77orkspaces` reaches the /admin-api/workspaces handler. The guards
+// must refuse it exactly as they refuse the plain path, whatever the escapes' case.
+describe("a percent-encoded path", () => {
+  /** Bea's dashboard session with `role`, its passkey check fresh (the instance's changes ask for one). */
+  const freshAs = async (role: string) => {
+    await setRole("bea", role);
+    const token = await createSession(env.DB, nowS(), { app: "dashboard", userId: "bea" });
+    await markVerified(env.DB, token, nowS());
+    return caller("dashboard", `bongsu_admin=${token}`);
+  };
+  const instance = { error: "only an instance admin can do this" };
+
+  it("dashboard: the instance's pages stay an instance admin's", async () => {
+    for (const role of ["admin", "editor"]) {
+      const call = await freshAs(role);
+      for (const path of [
+        "/admin-api/%77orkspaces",
+        "/admin-api/%6Fauth-apps",
+        "/admin-api/%6d%65dia-stores",
+        "/admin-api/%6D%65dia-stores",
+      ]) {
+        const r = await call(path);
+        expect([r.status, r.json], `${role} ${path}`).toEqual([403, instance]);
+      }
+      for (const path of [
+        "/admin-api/%69nstance-admins",
+        "/admin-api/%69nst%61nce-admins",
+        "/admin-api/i%6Estance-admins",
+      ]) {
+        const r = await call(path, { userId: "bea", on: true });
+        expect([r.status, r.json], `${role} ${path}`).toEqual([403, instance]);
+      }
+      expect(await isInstanceAdmin(env.DB, "bea")).toBe(false);
+      for (const path of [
+        "/admin-api/%77orkspaces/b/admins",
+        "/admin-api/%77%6Frkspaces/b/admins",
+        "/admin-api/workspace%73/b/admins",
+      ]) {
+        const r = await call(path, { email: "a@example.com" });
+        expect([r.status, r.json], `${role} ${path}`).toEqual([403, instance]);
+      }
+      expect((await call("/admin-api/%77orkspaces/b/archive", {})).json).toEqual(instance);
+      // an encoded slash routes nowhere: refused or not found, never done
+      for (const path of ["/admin-api/%77orkspaces%2Fb%2Farchive", "/admin-api/workspaces%2fb/archive"])
+        expect([403, 404], `${role} ${path}`).toContain((await call(path, {})).status);
+    }
+    expect(await env.DB.prepare("SELECT 1 FROM invites WHERE email = 'a@example.com'").first()).toBeNull();
+    expect(
+      await env.DB.prepare("SELECT 1 FROM workspaces WHERE id = 'b' AND archived_at IS NOT NULL").first(),
+    ).toBeNull();
+  });
+
+  it("dashboard: an editor still neither manages nor reads members, keys, connections and settings", async () => {
+    const editor = await freshAs("editor");
+    for (const path of ["/admin-api/%6Dembers/dee", "/admin-api/%6dembers/dee/remove", "/admin-api/%6Beys"]) {
+      const r = await editor(path, { role: "admin", name: "k", scopes: ["plan"] });
+      expect([r.status, r.json.error], path).toEqual([403, "only an admin of the workspace can change this"]);
+    }
+    for (const path of [
+      "/admin-api/%6Dembers",
+      "/admin-api/%73ettings",
+      "/admin-api/%63onnections",
+      "/admin-api/%6beys",
+    ]) {
+      const r = await editor(path);
+      expect([r.status, r.json.error], path).toEqual([403, "only an admin of the workspace can see this"]);
+    }
+    const r = await editor("/admin-api/%73ettings", { timezone: "Asia/Seoul" });
+    expect(r.status).toBe(403);
+  });
+
+  it("dashboard: an instance admin in no workspace reaches the instance's pages, encoded or not", async () => {
+    const ina = await sessionIn("ina", null);
+    expect((await ina("/admin-api/%77orkspaces")).status).toBe(200);
+    expect((await ina("/admin-api/%6Fverview")).json).toEqual({
+      error: "you're not a member of any workspace",
+      noWorkspace: true,
+    });
+  });
+
+  it("app: an editor still can't approve, pause or resume", async () => {
+    const editor = await asRole("editor", "pwa");
+    for (const [path, b] of [
+      ["/app-api/%61pprove/options", { key: "reel:x/y" }],
+      ["/app-api/%61%70prove/options", { key: "reel:x/y" }],
+      ["/app-api/appro%76e/verify", {}],
+      ["/app-api/%72esume/options", {}],
+      ["/app-api/%72%65sume/verify", {}],
+      ["/app-api/%70ause", { reason: "x" }],
+      ["/app-api/p%61use", { reason: "x" }],
+    ] as const) {
+      const r = await editor(path, b);
+      expect([r.status, r.json.error], path).toEqual([403, expect.stringMatching(/your role/)]);
+    }
+    for (const path of ["/app-api/approve%2Foptions", "/app-api/%61pprove%2fverify"])
+      expect([403, 404], path).toContain((await editor(path, {})).status);
+    expect(await env.DB.prepare("SELECT 1 FROM workspace_settings WHERE paused IS NOT NULL").first()).toBeNull();
   });
 });

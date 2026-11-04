@@ -56,21 +56,27 @@ import {
   verifyRegistration,
 } from "./webauthn";
 
-type Vars = { Bindings: Env; Variables: { caller: Caller; connects: boolean } };
+type Vars = { Bindings: Env; Variables: { caller: Caller; connects: boolean; needs: { scope: Scope | null } } };
 type C = Context<Vars>;
 // The app works as the signed-in user, in their session's workspace (core/workspaces.ts sessionWorkspace), with their
 // role's rights there (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming need
 // "approve" / "resume", pausing "pause", changing the plan "plan". The signed-out routes (who am I, setup, login) act
 // for no one and in no workspace.
-/** The scope each change needs; a POST not listed needs "plan" unless it's the person's own (session, device, zone). */
-const NEEDS: [RegExp, Scope | null][] = [
-  [/^\/app-api\/approve\//, "approve"],
-  [/^\/app-api\/resume\//, "resume"],
-  [/^\/app-api\/pause$/, "pause"],
-  [/^\/app-api\/youtube\/release\//, "reschedule"],
+/** The scope each change needs, by route pattern; a POST not listed needs "plan" unless it's the person's own (session,
+ *  device, zone). The router tags each request with its pattern's (below), never a second look at the URL: Hono
+ *  matches the decoded path, so a regex on the raw one would miss `/app-api/%61pprove/options`. */
+const NEEDS: [string, Scope | null][] = [
+  ["/app-api/approve/*", "approve"],
+  ["/app-api/resume/*", "resume"],
+  ["/app-api/pause", "pause"],
+  ["/app-api/youtube/release/*", "reschedule"],
   // connecting accounts needs the role itself (an admin's or a creator's: core/roles.ts mayConnect), not a scope
-  [/^\/app-api\/connect\//, null],
-  [/^\/app-api\/(logout|me\/timezone|push\/|client-error|comments\/seen)/, null],
+  ["/app-api/connect/*", null],
+  ["/app-api/logout", null],
+  ["/app-api/me/timezone", null],
+  ["/app-api/push/*", null],
+  ["/app-api/client-error", null],
+  ["/app-api/comments/seen", null],
 ];
 const nowS = () => Math.floor(Date.now() / 1000);
 
@@ -332,11 +338,15 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     await next();
   });
   // ---- and a role that allows the change
+  for (const [pattern, scope] of NEEDS)
+    app.use(pattern, async (c, next) => {
+      c.set("needs", { scope });
+      await next();
+    });
   app.use("/app-api/*", async (c, next) => {
     if (c.req.method === "GET") return next();
-    const path = new URL(c.req.url).pathname;
-    const need = NEEDS.find(([re]) => re.test(path));
-    const scope = need ? need[1] : "plan";
+    const needs = c.get("needs");
+    const scope = needs ? needs.scope : "plan";
     if (scope && !me(c).scopes.includes(scope))
       return c.json({ error: `your role in this workspace can't do that (it needs "${scope}")` }, 403);
     await next();
