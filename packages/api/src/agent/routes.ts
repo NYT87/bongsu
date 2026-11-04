@@ -204,7 +204,7 @@ export function apiRoutes(fetcher: typeof fetch) {
           capabilities: { tools: { listChanged: false } },
           serverInfo: { name: "bongsu", version: "1.0.0" },
           instructions:
-            "Bongsu publishing scheduler. Start with list_accounts (the workspace's Instagram profiles and YouTube channels) and get_status (today's date and your time zone: dates and times you give and read are in it; times are stored in UTC, and due_at fields and `at` inputs are ISO 8601). Read the queue, items, jobs and notifications; edit the plan (add, reschedule, hold, remove; record manual posts/comments); set the texts it posts (plan_add / plan_update caption, comment, comment2, alt; shorts_add text); propose drafts; pause publishing. Every post needs the owner's approval: approving and resuming are owner-only, and a changed text needs a new approval.",
+            "Bongsu publishing scheduler. Start with list_accounts (the workspace's Instagram profiles and YouTube channels) and get_status (today's date and your time zone: dates and times you give and read are in it; times are stored in UTC, and due_at fields and `at` inputs are ISO 8601). Read the queue, items, jobs and notifications; edit the plan (add, reschedule, hold, remove; record manual posts/comments); set the texts it posts (plan_add / plan_update caption, comment, comment2, alt; shorts_add text); propose drafts; pause publishing in this workspace. Every post needs a person's approval: approving and resuming are for the people with a passkey (the workspace's admins and creators), never an agent key, and a changed text needs a new approval.",
         });
       case "ping":
         return reply({});
