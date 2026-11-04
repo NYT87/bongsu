@@ -2,21 +2,26 @@
 // Agent keys can read, make drafts, edit the plan (scope "plan"), pause and, only if given the opt-in scope
 // "reschedule", move a scheduled YouTube video's release date; they can never approve, resume or manage
 // keys. A CLI token (api_keys.user_id set) acts as its person, with their role's rights in its workspace, read on
-// every request: for an owner that includes approve and resume (docs/PLAN.md, principle 5).
+// every request: for an admin or a creator that includes approve and resume (docs/PLAN.md, principle 5); an instance
+// admin's token has an admin's rights.
 import type { Db } from "@bongsu/core/db";
 import { sha256Hex } from "@bongsu/core/formats/approved";
+import { isRole, type Role } from "@bongsu/core/roles";
 
 // "metrics" (uploading samples collected elsewhere) is opt-in on an agent key, like "reschedule"
 export type Scope = "read" | "draft" | "pause" | "plan" | "reschedule" | "metrics" | "approve" | "resume";
 
-/** What each membership role may do through a CLI token. */
-export const ROLE_SCOPES: Record<string, Scope[]> = {
-  owner: ["read", "draft", "plan", "pause", "reschedule", "metrics", "approve", "resume"],
+/** What each membership role may do through a CLI token and in the app. An editor edits but never approves, pauses
+ *  or resumes; approving and resuming in the app still take the passkey. */
+export const ROLE_SCOPES: Record<Role, Scope[]> = {
   admin: ["read", "draft", "plan", "pause", "reschedule", "metrics", "approve", "resume"],
-  approver: ["read", "approve"],
-  editor: ["read", "draft", "plan"],
-  viewer: ["read"],
+  editor: ["read", "draft", "plan", "reschedule", "metrics"],
+  creator: ["read", "draft", "plan", "pause", "reschedule", "metrics", "approve", "resume"],
 };
+
+/** A person's scopes in a workspace: an instance admin's are an admin's; a role that isn't one (or none) has none. */
+export const scopesOf = (role: string | null | undefined, instanceAdmin: boolean): Scope[] =>
+  instanceAdmin ? ROLE_SCOPES.admin : isRole(role) ? ROLE_SCOPES[role] : [];
 export interface Caller {
   id: string;
   name: string;
@@ -34,8 +39,10 @@ export async function authenticate(db: Db, header: string | null | undefined, no
   if (!m) return null;
   const row = await db
     .prepare(
-      `SELECT k.id, k.name, k.scopes, k.last_used_at, k.workspace_id, k.user_id, k.expires_at, m.role
+      `SELECT k.id, k.name, k.scopes, k.last_used_at, k.workspace_id, k.user_id, k.expires_at, m.role,
+         u.instance_admin
        FROM api_keys k LEFT JOIN memberships m ON m.user_id = k.user_id AND m.workspace_id = k.workspace_id
+         LEFT JOIN users u ON u.id = k.user_id
        WHERE k.key_hash = ?1 AND k.revoked_at IS NULL`,
     )
     .bind(await sha256Hex(m[1]))
@@ -48,11 +55,12 @@ export async function authenticate(db: Db, header: string | null | undefined, no
       user_id: string | null;
       expires_at: number | null;
       role: string | null;
+      instance_admin: number | boolean | null;
     }>();
   if (!row) return null;
   if (row.expires_at !== null && row.expires_at <= nowS) return null;
-  // a CLI token whose person left the workspace stops working
-  if (row.user_id && !row.role) return null;
+  // a CLI token whose person left the workspace stops working (an instance admin acts in any workspace)
+  if (row.user_id && !row.role && !row.instance_admin) return null;
   if (!row.last_used_at || nowS - row.last_used_at > 300) {
     await db.prepare("UPDATE api_keys SET last_used_at = ?1 WHERE id = ?2").bind(nowS, row.id).run();
   }
@@ -60,7 +68,7 @@ export async function authenticate(db: Db, header: string | null | undefined, no
     return {
       id: row.id,
       name: row.name,
-      scopes: ROLE_SCOPES[row.role ?? ""] ?? [],
+      scopes: scopesOf(row.role, !!row.instance_admin),
       workspaceId: row.workspace_id,
       userId: row.user_id,
     };

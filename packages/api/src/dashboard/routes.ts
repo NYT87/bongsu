@@ -50,9 +50,10 @@ import { platform, platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
+import { isInstanceAdmin } from "@bongsu/core/roles";
 import { callerZone, setWorkspaceSettings, userRole, userWorkspace, workspaceSettings } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
-import { ROLE_SCOPES, withinAttempts } from "../agent/auth";
+import { scopesOf, withinAttempts } from "../agent/auth";
 import {
   createSession,
   endSession,
@@ -74,11 +75,16 @@ import {
 
 type C = Context<{
   Bindings: Env;
-  Variables: { session: Session; token: string; workspace: string; role: string };
+  Variables: { session: Session; token: string; workspace: string; role: string; instanceAdmin: boolean };
 }>;
-/** Changes to the instance (connections, accounts, OAuth apps, agent keys, settings, media stores): an owner's or admin's. Reading,
- *  and the person's own passkeys, devices and CLI tokens, are every member's. */
-const MANAGING = /^\/admin-api\/(keys|accounts|videos|connections|oauth-apps|settings|connect\/|media-stores)/;
+// The three guards (the roles table: docs/superpowers/specs/2026-11-04-phase13-people-roles-design.md, section 1).
+/** What's instance-wide (workspaces, media stores, OAuth apps, who the instance admins are): instance admins only,
+ *  reading included, since the instance's settings aren't a workspace's. */
+const INSTANCE = /^\/admin-api\/(workspaces|media-stores|oauth-apps|instance-admins)/;
+/** Changes to a workspace's members, invites, agent keys, accounts, connections and settings: its admins' (and the
+ *  instance admins'). Reading, and the person's own passkeys, devices and CLI tokens, are every member's. Moving a
+ *  release date (videos) is editing the plan: an editor's too. */
+const MANAGING = /^\/admin-api\/(members|invites|keys|accounts|connections|settings|connect\/)/;
 
 /** How recent the last passkey check must be for changes to who can do what. */
 export const FRESH_S = 10 * 60;
@@ -112,7 +118,7 @@ const code = (n: number) => {
 export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVerifiers) {
   const app = new Hono<{
     Bindings: Env;
-    Variables: { session: Session; token: string; workspace: string; role: string };
+    Variables: { session: Session; token: string; workspace: string; role: string; instanceAdmin: boolean };
   }>();
   const nowS = () => Math.floor(Date.now() / 1000);
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");
@@ -196,11 +202,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const user = s
         ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1").bind(s.userId).first()
         : null;
+      // what the sidebar shows: the Instance group for instance admins; a creator is pointed at the app
+      const workspace = s && (await userWorkspace(c.env.DB, s.userId));
       return {
         bootstrapNeeded: !(await bootstrapped(c)),
         setupTokenSet: !!c.env.SETUP_TOKEN,
         signedIn: !!s,
         user,
+        instanceAdmin: !!s && (await isInstanceAdmin(c.env.DB, s.userId)),
+        role: (s && workspace && (await userRole(c.env.DB, s.userId, workspace))) || null,
         dryRun: c.env.DRY_RUN !== "0",
         publicUrl: origin(c),
       };
@@ -410,19 +420,29 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     const token = readCookie(c.req.header("Cookie"), "dashboard");
     const s = await validSession(c.env.DB, token, nowS(), "dashboard");
     if (!s || !token) return c.json({ error: "sign in" }, 401);
-    // Everything below works in the user's workspace (Phase 13 adds a picker for users in several).
+    const instanceAdmin = await isInstanceAdmin(c.env.DB, s.userId);
+    const path = new URL(c.req.url).pathname;
+    // Everything below works in the user's workspace (Phase 13 adds a picker for users in several). An instance admin
+    // without one still reaches the instance's own pages.
     const workspace = await userWorkspace(c.env.DB, s.userId);
-    if (!workspace) return c.json({ error: "you're not a member of any workspace" }, 403);
+    if (!workspace && !(instanceAdmin && INSTANCE.test(path)))
+      return c.json({ error: "you're not a member of any workspace" }, 403);
     c.set("session", s);
     c.set("token", token);
-    c.set("workspace", workspace);
-    c.set("role", (await userRole(c.env.DB, s.userId, workspace)) ?? "viewer");
+    if (workspace) c.set("workspace", workspace);
+    c.set("role", (workspace && (await userRole(c.env.DB, s.userId, workspace))) || "");
+    c.set("instanceAdmin", instanceAdmin);
     await next();
   });
   app.use("/admin-api/*", async (c, next) => {
     const path = new URL(c.req.url).pathname;
-    if (c.req.method !== "GET" && MANAGING.test(path) && !["owner", "admin"].includes(c.get("role")))
-      return c.json({ error: "only an owner or admin of the workspace can change this" }, 403);
+    const instanceAdmin = c.get("instanceAdmin");
+    // a creator works in the app; the sign-in state and signing out are answered above
+    if (c.get("role") === "creator" && !instanceAdmin)
+      return c.json({ error: "creators use the Bongsu app", app: true }, 403);
+    if (INSTANCE.test(path) && !instanceAdmin) return c.json({ error: "only an instance admin can do this" }, 403);
+    if (c.req.method !== "GET" && MANAGING.test(path) && c.get("role") !== "admin" && !instanceAdmin)
+      return c.json({ error: "only an admin of the workspace can change this" }, 403);
     await next();
   });
 
@@ -594,7 +614,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       )
         .bind(c.get("session").userId, ws(c))
         .all();
-      return { rights: ROLE_SCOPES[(await role(c)) ?? ""] ?? [], days: TOKEN_DAYS, tokens: r.results };
+      return { rights: scopesOf(await role(c), c.get("instanceAdmin")), days: TOKEN_DAYS, tokens: r.results };
     }),
   );
   app.post(

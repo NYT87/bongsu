@@ -126,7 +126,7 @@ export function apiRoutes(fetcher: typeof fetch) {
   const human = (c: Context<{ Bindings: Env; Variables: Vars }>) => {
     const k = c.get("caller");
     if (!k.scopes.includes("approve") || !k.userId)
-      throw new ApiError(403, "approving takes a CLI token of an owner, admin or approver");
+      throw new ApiError(403, "approving takes a CLI token of an admin or a creator");
     return k;
   };
   const approvable = async (c: Context<{ Bindings: Env; Variables: Vars }>, key: string) => {

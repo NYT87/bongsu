@@ -753,15 +753,20 @@ describe("me.scopes", () => {
     const owner = (await (await call("/app-api/me")).json()) as { scopes: string[] };
     expect(owner.scopes).toEqual(expect.arrayContaining(["read", "approve", "resume", "reschedule"]));
     const user = await env.DB.prepare("SELECT user_id FROM passkeys LIMIT 1").first<{ user_id: string }>();
+    // an editor's: no approve, pause or resume (not an instance admin meanwhile, whose rights are an admin's)
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = ?1").bind(user?.user_id).run();
     await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = ?1").bind(user?.user_id).run();
     try {
       expect(((await (await call("/app-api/me")).json()) as { scopes: string[] }).scopes).toEqual([
         "read",
         "draft",
         "plan",
+        "reschedule",
+        "metrics",
       ]);
     } finally {
       await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(user?.user_id).run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(user?.user_id).run();
     }
   });
 });

@@ -153,7 +153,7 @@ Three REST routes are not tools: MCP never lists them. They exist for the `bongs
 
 | Route | Needs | What it does |
 |---|---|---|
-| `GET /v1/approve/<key>` | a CLI token with `approve` (owner, admin, approver) | What would be approved: texts, media names and checksums, lint checks, `due`/`due_at`, and a `snapshot` |
+| `GET /v1/approve/<key>` | a CLI token with `approve` (admin, creator, instance admin) | What would be approved: texts, media names and checksums, lint checks, `due`/`due_at`, and a `snapshot` |
 | `POST /v1/approve` | the same | Body `{ key, snapshot }`. Approves only if the item still matches the snapshot (else 409 `changed`); answers `{ approved, key, due }` |
 | `GET /v1/export?texts=1` | `read` | Every plan item of the workspace as `{ items }`; `texts=1` adds the texts |
 

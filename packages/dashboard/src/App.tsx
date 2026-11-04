@@ -2,7 +2,7 @@
 // page. Paths live under /dashboard/ (the Worker serves index.html for each).
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { api } from "./api";
+import { APP_ONLY, api } from "./api";
 import { Guide, GuideLink } from "./docs";
 import {
   Accounts,
@@ -24,6 +24,10 @@ export interface State {
   setupTokenSet: boolean;
   signedIn: boolean;
   user: { id: string; email: string | null; name: string | null } | null;
+  /** Instance admins also see the Instance group (Media, OAuth apps). */
+  instanceAdmin: boolean;
+  /** The role in the workspace: admin, editor or creator (who uses the app instead). */
+  role: string | null;
   dryRun: boolean;
   publicUrl: string;
 }
@@ -31,14 +35,17 @@ export interface State {
 const SECTIONS = [
   ["", "Overview", Overview],
   ["connections", "Connections", Connections],
-  ["media", "Media", Media],
-  ["apps", "OAuth apps", OAuthApps],
   ["accounts", "Accounts", Accounts],
   ["videos", "Videos", Videos],
   ["devices", "Devices & passkeys", Devices],
   ["keys", "Keys & tokens", Keys],
   ["audit", "Audit", Audit],
   ["settings", "Settings", Settings],
+] as const;
+/** What's instance-wide: the sidebar's Instance group, an instance admin's only. */
+const INSTANCE = [
+  ["media", "Media", Media],
+  ["apps", "OAuth apps", OAuthApps],
 ] as const;
 /** Pages reached from other pages, not the sidebar. */
 const HIDDEN = [["start", "Get started", GetStarted]] as const;
@@ -53,6 +60,13 @@ export function App() {
   const [state, setState] = useState<State | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [section, setSection] = useState(sectionOf);
+  // a 403 with `app: true` (api.ts): this person is a creator, who works in the app
+  const [appOnly, setAppOnly] = useState(false);
+  useEffect(() => {
+    const f = () => setAppOnly(true);
+    addEventListener(APP_ONLY, f);
+    return () => removeEventListener(APP_ONLY, f);
+  }, []);
   const load = useCallback(() => {
     api<State>("state")
       .then((s) => {
@@ -99,6 +113,15 @@ export function App() {
       />
     );
   if (!state.signedIn) return <SignIn onDone={load} />;
+  if (appOnly || (state.role === "creator" && !state.instanceAdmin))
+    return (
+      <AppOnly
+        onSignOut={() => {
+          setAppOnly(false);
+          load();
+        }}
+      />
+    );
   return (
     <Toasts>
       <Shell state={state} section={section} go={go} onSignOut={load} />
@@ -118,7 +141,22 @@ function Shell({
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const current = [...SECTIONS, ...HIDDEN].find(([s]) => s === section) ?? SECTIONS[0];
+  const instance = state.instanceAdmin ? INSTANCE : [];
+  const current = [...SECTIONS, ...instance, ...HIDDEN].find(([s]) => s === section) ?? SECTIONS[0];
+  const link = ([s, label]: (typeof SECTIONS | typeof INSTANCE)[number]) => (
+    <a
+      key={s}
+      href={`/dashboard/${s}`}
+      aria-current={s === current[0] ? "page" : undefined}
+      onClick={(e) => {
+        e.preventDefault();
+        setOpen(false);
+        go(s);
+      }}
+    >
+      {label}
+    </a>
+  );
   const Body = current[2];
   return (
     <div className="shell">
@@ -131,20 +169,13 @@ function Shell({
           Menu
         </button>
         <nav className="nav" aria-label="Sections">
-          {SECTIONS.map(([s, label]) => (
-            <a
-              key={s}
-              href={`/dashboard/${s}`}
-              aria-current={s === current[0] ? "page" : undefined}
-              onClick={(e) => {
-                e.preventDefault();
-                setOpen(false);
-                go(s);
-              }}
-            >
-              {label}
-            </a>
-          ))}
+          {SECTIONS.map(link)}
+          {instance.length > 0 && (
+            <>
+              <h2 className="nav-group">Instance</h2>
+              {instance.map(link)}
+            </>
+          )}
         </nav>
         {/* Who is signed in, and the way out: an icon button with its name for screen readers and as a tooltip. */}
         <div className="user">
@@ -202,6 +233,37 @@ function Shell({
         </div>
       </main>
     </div>
+  );
+}
+
+/** A creator signed in: the dashboard isn't theirs, the app is. */
+function AppOnly({ onSignOut }: { onSignOut: () => void }) {
+  useEffect(() => {
+    document.title = "Bongsu dashboard";
+  }, []);
+  return (
+    <main className="centered">
+      <Brand />
+      <Card>
+        <h1>Creators use the Bongsu app</h1>
+        <p className="muted">Your posts, approvals and accounts are in the app.</p>
+        <div className="actions stacked">
+          <a className="button primary" href="/">
+            Open the app
+          </a>
+          <button
+            type="button"
+            className="link"
+            onClick={async () => {
+              await api("signout", {});
+              onSignOut();
+            }}
+          >
+            Sign out
+          </button>
+        </div>
+      </Card>
+    </main>
   );
 }
 

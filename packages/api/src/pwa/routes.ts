@@ -19,6 +19,7 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs } from "@bongsu/core/providers/index";
 import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
+import { isInstanceAdmin } from "@bongsu/core/roles";
 import { mayBeLive } from "@bongsu/core/tick";
 import {
   callerZone,
@@ -29,7 +30,7 @@ import {
   workspaceZone,
 } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
-import { type Caller, ROLE_SCOPES, type Scope } from "../agent/auth";
+import { type Caller, type Scope, scopesOf } from "../agent/auth";
 import * as ops from "../agent/ops";
 import { resolveItem, type Snapshot, sameSnapshot, snapshot, writeApproval } from "./approve";
 import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
@@ -47,8 +48,8 @@ import {
 type Vars = { Bindings: Env; Variables: { caller: Caller } };
 type C = Context<Vars>;
 // The app works as the signed-in user, in their workspace (core/workspaces.ts userWorkspace; Phase 13 adds a picker),
-// with their role's rights (agent/auth.ts ROLE_SCOPES): approving and resuming need "approve" / "resume", changing the
-// plan "plan". Before sign-in (who am I, setup, login) it's the first user's default workspace, read-only.
+// with their role's rights (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming
+// need "approve" / "resume", pausing "pause", changing the plan "plan". Before sign-in (who am I, setup, login) it's the first user's default workspace, read-only.
 const OWNER: Caller = {
   id: "owner",
   name: "owner (app)",
@@ -74,7 +75,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     const workspaceId = await userWorkspace(c.env.DB, userId);
     if (!workspaceId) return null;
     const role = await userRole(c.env.DB, userId, workspaceId);
-    const scopes = ROLE_SCOPES[role ?? ""] ?? ["read"];
+    const scopes = scopesOf(role, await isInstanceAdmin(c.env.DB, userId));
     return { ...OWNER, id: userId, name: `${userId} (app)`, scopes, workspaceId, userId };
   };
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");

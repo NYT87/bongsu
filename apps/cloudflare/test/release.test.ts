@@ -296,14 +296,16 @@ describe("the PWA", () => {
     expect(w.ytUpdates).toEqual([]);
   });
 
-  it("an editor can't move it: moving a release date needs the reschedule scope", async () => {
+  it("an editor may move it too: release dates are the plan's, every role's (the reschedule scope)", async () => {
     const user = await env.DB.prepare("SELECT user_id FROM sessions").first<{ user_id: string }>();
+    // not an instance admin meanwhile, whose rights are an admin's whatever the role
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = ?1").bind(user?.user_id).run();
     await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = ?1").bind(user?.user_id).run();
     try {
-      expect((await post("/app-api/youtube/release/options", when)).status).toBe(403);
-      expect((await post("/app-api/youtube/release/verify", { challengeId: "x", response: {} })).status).toBe(403);
+      expect((await post("/app-api/youtube/release/options", when)).status).toBe(200);
     } finally {
       await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(user?.user_id).run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(user?.user_id).run();
     }
     expect(w.ytUpdates).toEqual([]);
   });
@@ -442,7 +444,7 @@ describe("the dashboard", () => {
     expect(w.ytUpdates).toEqual([]);
   });
 
-  it("moves a release after a fresh passkey check, and a viewer can't", async () => {
+  it("moves a release after a fresh passkey check, an editor's too", async () => {
     const move = { date: "2099-11-06", time: "19:00" };
     await env.DB.prepare("UPDATE sessions SET verified_at = verified_at - ?1")
       .bind(FRESH_S + 5)
@@ -459,11 +461,14 @@ describe("the dashboard", () => {
     expect(w.ytUploads[0].publishAt).toBe("2099-11-06T10:00:00Z");
     expect((await call("/admin-api/videos/v-pub/release", move)).status).toBe(409);
     expect((await call("/admin-api/videos/v-none/release", move)).status).toBe(404);
+    // an editor too (not an instance admin meanwhile, whose rights are an admin's whatever the role)
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = 'owner'").run();
     await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
     try {
-      expect((await call("/admin-api/videos/v-sched/release", move)).status).toBe(403);
+      expect((await call("/admin-api/videos/v-sched/release", { date: "2099-11-07", time: "19:00" })).status).toBe(200);
     } finally {
       await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = 'owner'").run();
     }
   });
 });

@@ -1,5 +1,6 @@
 // The dashboard's calls to /admin-api. A 403 with `verify: true` means "confirm with your passkey first": callers
-// run verifyPasskey() and retry (withFreshCheck does both).
+// run verifyPasskey() and retry (withFreshCheck does both). A 403 with `app: true` means a creator, who uses the app:
+// it's announced with the APP_ONLY event, and App shows the pointer to the app.
 import { startAuthentication } from "@simplewebauthn/browser";
 
 export class ApiError extends Error {
@@ -12,6 +13,8 @@ export class ApiError extends Error {
   }
 }
 
+export const APP_ONLY = "bongsu:app-only";
+
 export async function api<T = Record<string, unknown>>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(`/admin-api/${path}`, {
     method: body === undefined ? "GET" : "POST",
@@ -20,6 +23,7 @@ export async function api<T = Record<string, unknown>>(path: string, body?: unkn
     credentials: "same-origin",
   });
   const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
+  if (r.status === 403 && data.app === true) dispatchEvent(new Event(APP_ONLY));
   if (!r.ok) throw new ApiError(r.status, String(data.error ?? r.statusText), data);
   return data as T;
 }

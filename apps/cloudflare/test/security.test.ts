@@ -492,19 +492,26 @@ describe("roles", () => {
       );
   };
 
-  it("lets only an owner or admin manage the instance in the dashboard", async () => {
+  it("lets only an admin manage the workspace, and only an instance admin the instance, in the dashboard", async () => {
     for (const role of ["editor", "creator"]) {
       const call = await admin(role);
       expect((await call("/admin-api/keys", { name: "k", scopes: ["plan", "pause"] })).status, role).toBe(403);
       expect((await call("/admin-api/settings", { timezone: "Europe/Madrid" })).status, role).toBe(403);
       expect((await call("/admin-api/settings/ntfy", { url: "https://ntfy.sh/x" })).status, role).toBe(403);
       expect((await call("/admin-api/settings/ntfy/test", {})).status, role).toBe(403);
+    }
+    // reading is an editor's too; a creator is pointed at the app
+    expect((await (await admin("editor"))("/admin-api/keys")).status).toBe(200);
+    const creator = await (await admin("creator"))("/admin-api/keys");
+    expect([creator.status, await creator.json()]).toEqual([403, { error: "creators use the Bongsu app", app: true }]);
+    // the instance's media stores: not even a workspace admin's, reading included
+    for (const role of ["editor", "creator", "admin"]) {
+      const call = await admin(role);
       expect((await call("/admin-api/media-stores/s3", { bucket: "x" })).status, role).toBe(403);
       expect((await call("/admin-api/media-stores/drive/remove", {})).status, role).toBe(403);
       expect((await call("/admin-api/media-stores/s3/default", {})).status, role).toBe(403);
       expect((await call("/admin-api/media-stores/drive/start", {})).status, role).toBe(403);
-      expect((await call("/admin-api/keys")).status, role).toBe(200); // reading is fine
-      expect((await call("/admin-api/media-stores")).status, role).toBe(200);
+      expect((await call("/admin-api/media-stores")).status, role).toBe(403);
     }
     const call = await admin("admin");
     expect((await call("/admin-api/keys", { name: "k", scopes: ["plan"] })).status).toBe(200);
@@ -513,16 +520,21 @@ describe("roles", () => {
     ).toBe(1);
   });
 
-  it("lets only a role with the right approve, resume, pause or edit in the app", async () => {
-    // 0018's roles; Task 2 gives the creator its scopes and this test the whole table
+  it("lets only a role with the right approve, resume or pause in the app; every role edits", async () => {
+    // an editor edits but never approves: approval stays human, and not every human
     const editor = await pwa("editor");
     expect((await editor("/app-api/status")).status).toBe(200);
     expect((await editor("/app-api/approve/options", { key: "reel:x/y" })).status).toBe(403);
+    expect((await editor("/app-api/approve/verify", {})).status).toBe(403);
     expect((await editor("/app-api/resume/options", {})).status).toBe(403);
     expect((await editor("/app-api/pause", { reason: "x" })).status).toBe(403);
     expect((await editor("/app-api/item/hold", { key: "reel:x/y", hold: true })).status).toBe(404); // allowed; no such item
     expect((await editor("/app-api/comments/seen", {})).status).toBe(200);
-    const admin = await pwa("admin");
-    expect((await admin("/app-api/approve/options", { key: "reel:x/y" })).status).toBe(404); // allowed; no such item
+    for (const role of ["creator", "admin"]) {
+      const call = await pwa(role);
+      expect((await call("/app-api/approve/options", { key: "reel:x/y" })).status, role).toBe(404); // allowed; no item
+      expect((await call("/app-api/resume/options", {})).status, role).toBe(200);
+      expect((await call("/app-api/item/hold", { key: "reel:x/y", hold: true })).status, role).toBe(404);
+    }
   });
 });

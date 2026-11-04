@@ -296,12 +296,29 @@ describe("signed in", () => {
     const v1 = (t: string) =>
       exports.default.fetch("https://scheduler.test/v1/status", { headers: { Authorization: `Bearer ${t}` } });
     expect((await v1(token)).status).toBe(200);
-    // a smaller role, smaller rights; no membership, no access
-    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
-    const smaller = (await authenticate(env.DB, `Bearer ${token}`, now))?.scopes;
-    expect(smaller).toContain("read");
-    expect(smaller).not.toContain("approve");
-    await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
+    // a smaller role, smaller rights: an editor's token edits but never approves, pauses or resumes; a creator's
+    // approves. An instance admin's is an admin's whatever the role, so the owner stops being one meanwhile.
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = 'owner'").run();
+    try {
+      await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
+      expect((await authenticate(env.DB, `Bearer ${token}`, now))?.scopes).toEqual([
+        "read",
+        "draft",
+        "plan",
+        "reschedule",
+        "metrics",
+      ]);
+      await env.DB.prepare("UPDATE memberships SET role = 'creator' WHERE user_id = 'owner'").run();
+      expect((await authenticate(env.DB, `Bearer ${token}`, now))?.scopes).toEqual(listed.json.rights);
+      // no membership, no access
+      await env.DB.prepare("DELETE FROM memberships WHERE user_id = 'owner'").run();
+      expect(await authenticate(env.DB, `Bearer ${token}`, now)).toBeNull();
+    } finally {
+      await env.DB.prepare(
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', 0) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'admin'",
+      ).run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = 'owner'").run();
+    }
     // expired
     expect(await authenticate(env.DB, `Bearer ${token}`, now + 31 * 86400)).toBeNull();
     // revoked: only by its person
@@ -416,7 +433,7 @@ describe("signed in", () => {
     expect(audit[0].actor).toBe("user:owner");
   });
 
-  it("caption rules per account: the defaults shown, an override stored, bad values refused, viewers read-only", async () => {
+  it("caption rules per account: the defaults shown, an override stored, bad values refused, editors read-only", async () => {
     type Rules = { hashtagMax: number; foldChars: number; languageChecks: boolean };
     type Acc = { id: string; captionRules: (Rules & { defaults: Rules }) | null };
     const rules = async (id: string) =>
@@ -451,9 +468,16 @@ describe("signed in", () => {
     expect(JSON.parse(stored?.settings ?? "")).toEqual({ captionRules: { hashtagMax: 10 } });
     const audit = (await call("/admin-api/audit")).json.entries as { action: string; target: string }[];
     expect(audit.find((x) => x.action === "account_update")?.target).toBe("demo_travel");
+    // an editor reads them; changing them is an admin's (and an instance admin's: the owner stops being one meanwhile)
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = 'owner'").run();
     await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
-    expect((await call("/admin-api/accounts/demo_travel", { captionRules: { hashtagMax: 3 } })).status).toBe(403);
-    await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
+    try {
+      expect((await call("/admin-api/accounts/demo_travel", { captionRules: { hashtagMax: 3 } })).status).toBe(403);
+      expect((await call("/admin-api/accounts")).status).toBe(200);
+    } finally {
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = 'owner'").run();
+    }
   });
 
   it("removing an account: disabled first, nothing left to publish, history kept", async () => {

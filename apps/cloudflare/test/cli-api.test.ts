@@ -1,4 +1,4 @@
-// Approving from the CLI (Phase 6): a CLI token of an owner, admin or approver reads an item as it would be published
+// Approving from the CLI (Phase 6): a CLI token of an admin or a creator reads an item as it would be published
 // and approves exactly what it was shown; an agent key never can, whatever its row says (Refs #72, #74).
 import { env } from "cloudflare:workers";
 import { apiRoutes } from "@bongsu/api/agent/routes";
@@ -74,14 +74,14 @@ beforeEach(async () => {
   await env.DB.prepare(
     "INSERT INTO users (id, name, created_at) VALUES ('bea', 'Bea', 0) ON CONFLICT (id) DO NOTHING",
   ).run();
-  await addToken("tok-owner", OWNER_TOKEN, "bea", "owner");
+  await addToken("tok-owner", OWNER_TOKEN, "bea", "admin");
   const { folder, base, key: k } = await seedReel(w, { approve: false });
   w.drivePut(`UPLOADS/${folder}/exports/shorts/instagram/${base}.mp4`, { md5: MD5, mimeType: "video/mp4" });
   key = k;
 });
 
 describe("approving from a CLI token", () => {
-  it("shows and writes an approval for an owner's CLI token, then the tick publishes", async () => {
+  it("shows and writes an approval for an admin's CLI token, then the tick publishes", async () => {
     const shown = await show(key);
     expect(shown.snapshot.key).toBe(key);
     expect(shown).toMatchObject({ key, account: "demo_travel", approved: null });
@@ -103,22 +103,20 @@ describe("approving from a CLI token", () => {
     );
   });
 
-  it("lets an approver's token approve", async () => {
-    await setRole("approver");
+  it("lets a creator's token approve", async () => {
+    await setRole("creator");
     const shown = await show(key);
     expect((await approve(key, shown.snapshot)).status).toBe(200);
     expect(await approvals()).toBe(1);
   });
 
-  it("refuses a viewer's and an editor's token", async () => {
+  it("refuses an editor's token: editors edit, they don't approve", async () => {
     const shown = await show(key);
-    for (const role of ["viewer", "editor"]) {
-      await setRole(role);
-      const g = await req(`/v1/approve/${encodeURIComponent(key)}`, OWNER_TOKEN);
-      expect(g.status).toBe(403);
-      expect(await g.json()).toEqual({ error: "approving takes a CLI token of an owner, admin or approver" });
-      expect((await approve(key, shown.snapshot)).status).toBe(403);
-    }
+    await setRole("editor");
+    const g = await req(`/v1/approve/${encodeURIComponent(key)}`, OWNER_TOKEN);
+    expect(g.status).toBe(403);
+    expect(await g.json()).toEqual({ error: "approving takes a CLI token of an admin or a creator" });
+    expect((await approve(key, shown.snapshot)).status).toBe(403);
     expect(await approvals()).toBe(0);
   });
 
