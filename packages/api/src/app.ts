@@ -30,9 +30,10 @@ export function createApp(fetcher: typeof fetch) {
     const tables = (await tableNames(c.env.DB)).filter((n) => CORE_TABLES.includes(n));
     const providers = (await c.env.DB.prepare("SELECT DISTINCT provider FROM connections").all<{ provider: string }>())
       .results;
-    // anything stored encrypted (credentials, OAuth app secrets) needs the key to be read back
+    // anything stored encrypted (credentials, OAuth app secrets, ntfy topics) needs the key to be read back
     const encrypted = await c.env.DB.prepare(
-      "SELECT 1 FROM connections WHERE credentials IS NOT NULL UNION ALL SELECT 1 FROM oauth_apps LIMIT 1",
+      `SELECT 1 FROM connections WHERE credentials IS NOT NULL UNION ALL SELECT 1 FROM oauth_apps
+       UNION ALL SELECT 1 FROM workspace_settings WHERE notify_url IS NOT NULL LIMIT 1`,
     ).first();
     const needed = [
       ...SECRETS,

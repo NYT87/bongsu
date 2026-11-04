@@ -1896,10 +1896,133 @@ export function GetStarted({ go }: Props) {
 
 // ---- Settings
 
-export function Settings(_: Props) {
-  const { data, error, reload } = useLoad<{ timezone: string; digestHour: number; dryRun: boolean; publicUrl: string }>(
-    "settings",
+/** The workspace's ntfy topic: its notifications are also posted there. The page never sees the whole address. */
+function NtfyCard({
+  ntfy,
+  encryptionKeySet,
+  onChange,
+}: {
+  ntfy: { set: boolean; host: string | null };
+  encryptionKeySet: boolean;
+  onChange: () => void;
+}) {
+  const toast = useToast();
+  const { confirm, dialog } = useConfirm();
+  const [url, setUrl] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    try {
+      await withFreshCheck(() => api("settings/ntfy", { url }));
+      toast({ ok: true, text: "The ntfy topic is set: this workspace's notifications go there too." });
+      setUrl("");
+      setEditing(false);
+      onChange();
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  const test = async () => {
+    try {
+      await api("settings/ntfy/test", {});
+      toast({ ok: true, text: "Sent: check the topic." });
+    } catch (e) {
+      toast({ ok: false, text: errorText(e) });
+    }
+  };
+  return (
+    <Card title="Notifications (ntfy)">
+      <p className="muted">
+        Optional: this workspace's notifications also go to an{" "}
+        <a href="https://ntfy.sh" target="_blank" rel="noopener noreferrer">
+          ntfy
+        </a>{" "}
+        topic, on ntfy.sh or your own server. Anyone who knows a topic's address can read it, so pick a long, random
+        name; it's stored encrypted and not shown again. Each workspace has its own.
+      </p>
+      {!encryptionKeySet ? (
+        <p className="banner" role="status">
+          Set the ENCRYPTION_KEY secret first: the topic is stored encrypted with it.
+        </p>
+      ) : ntfy.set && !editing ? (
+        <div className="actions">
+          <span>
+            Posting to a topic on <code>{ntfy.host}</code>.
+          </span>
+          <button type="button" onClick={test}>
+            Send a test
+          </button>
+          <button type="button" onClick={() => setEditing(true)}>
+            Replace
+          </button>
+          <button
+            type="button"
+            className="link danger"
+            onClick={() =>
+              confirm({
+                title: "Stop posting to the ntfy topic?",
+                detail: "The app's notifications keep working.",
+                verb: "Remove",
+                run: async () => {
+                  await withFreshCheck(() => api("settings/ntfy", { url: null }));
+                  toast({ ok: true, text: "The ntfy topic is removed." });
+                  onChange();
+                },
+              })
+            }
+          >
+            Remove
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={save} className="inline-form">
+          <Field
+            label="Topic address"
+            help="https://ntfy.sh/<topic>, or your server's; a protected topic's token as ?auth=…"
+            error={err}
+          >
+            {(p) => (
+              <input
+                {...p}
+                className="mono"
+                type="url"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://ntfy.sh/"
+                autoComplete="off"
+                spellCheck={false}
+                required
+              />
+            )}
+          </Field>
+          <div className="actions">
+            {editing && (
+              <button type="button" onClick={() => setEditing(false)}>
+                Cancel
+              </button>
+            )}
+            <button className="primary" type="submit">
+              Save
+            </button>
+          </div>
+        </form>
+      )}
+      {dialog}
+    </Card>
   );
+}
+
+export function Settings(_: Props) {
+  const { data, error, reload } = useLoad<{
+    timezone: string;
+    digestHour: number;
+    dryRun: boolean;
+    publicUrl: string;
+    ntfy: { set: boolean; host: string | null };
+    encryptionKeySet: boolean;
+  }>("settings");
   const [tz, setTz] = useState("");
   const [hour, setHour] = useState(8);
   const [err, setErr] = useState<string | null>(null);
@@ -1962,6 +2085,7 @@ export function Settings(_: Props) {
               </div>
             </form>
           </Card>
+          <NtfyCard ntfy={data.ntfy} encryptionKeySet={data.encryptionKeySet} onChange={reload} />
           <Card title="Instance">
             <dl className="facts">
               <dt>Address</dt>

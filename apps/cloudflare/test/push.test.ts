@@ -121,13 +121,13 @@ describe("push delivery", () => {
   it("goes only to the devices of the workspace a notification is about", async () => {
     await subscribe(FCM("owner"), "owner", "default");
     await subscribe(FCM("bea"), "bea", "b");
-    await notifier(e.DB, pushService, undefined, 0, e).send(
+    await notifier(e, pushService, 0).send(
       { title: "Published", text: "an unpublished item's name and its comments" },
       "default",
     );
     expect(sent.map((s) => s.url)).toEqual([FCM("owner")]);
     sent = [];
-    await notifier(e.DB, pushService, undefined, 0, e).send({ title: "Digest", text: "B's day" }, "b");
+    await notifier(e, pushService, 0).send({ title: "Digest", text: "B's day" }, "b");
     expect(sent.map((s) => s.url)).toEqual([FCM("bea")]);
     // the audit row says which workspace it was about
     const audit = await env.DB.prepare("SELECT workspace_id FROM audit WHERE action = 'notify' ORDER BY id").all();

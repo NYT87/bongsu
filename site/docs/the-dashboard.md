@@ -109,7 +109,11 @@ Every change to the instance, newest first: when, who, what and the detail. **Lo
 ## Settings
 
 **Workspace** holds the **Time zone**, the default for everyone (each person can choose their own in the app), and the
-**Daily digest** hour, in that zone. **Instance** shows the address and whether publishing is **Live** or in **Dry
+**Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the workspace's notifications to an
+[ntfy](https://ntfy.sh) topic too, on ntfy.sh or your own server: paste the topic's `https://` address (a protected
+topic's token as `?auth=…`), **Save**, then **Send a test**. Anyone who knows a topic's address can read it, so pick a
+long, random name; it's stored encrypted (the instance needs `ENCRYPTION_KEY`) and the page only shows its server
+afterwards. Each workspace has its own; changing or removing it asks for your passkey again. **Instance** shows the address and whether publishing is **Live** or in **Dry
 run**. To go live, change `DRY_RUN` where the instance is configured and deploy again; see
 [Configuration](configuration.md). The instance's name and colour are set when the app is built, see
 [Branding](configuration.md#branding).

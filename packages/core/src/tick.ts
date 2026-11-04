@@ -149,7 +149,7 @@ class Ctx {
     this.store = mediaStore(env, deps.fetch);
     this.nowS = Math.floor(deps.now.getTime() / 1000);
     this.dry = env.DRY_RUN !== "0";
-    this.note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, this.nowS, env);
+    this.note = notifier(env, deps.fetch, this.nowS);
   }
   /** The provider that reaches the job's account (its connection), looked up once per run. Jobs queued before the
    *  providers name only a Composio connection. */

@@ -77,10 +77,7 @@ export async function dailyDigest(
       continue;
     }
     const { title, text } = await buildDigest(env, deps.fetch, deps.now, ws);
-    await notifier(env.DB, deps.fetch, env.NOTIFY_URL, Math.floor(deps.now.getTime() / 1000), env).send(
-      digestNote(title, text),
-      workspace_id,
-    );
+    await notifier(env, deps.fetch, Math.floor(deps.now.getTime() / 1000)).send(digestNote(title, text), workspace_id);
     outcomes.push("sent");
   }
   return outcomes.includes("sent") ? "sent" : outcomes.includes("already sent") ? "already sent" : "not yet";

@@ -9,6 +9,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneToUnix } from "@bongsu/core/formats/time";
 import { clearFolderCache } from "@bongsu/core/media/drive";
+import { setWorkspaceNtfy } from "@bongsu/core/ntfy";
 import { setWorkspaceSettings, workspaceZone } from "@bongsu/core/workspaces";
 
 export interface Call {
@@ -587,15 +588,24 @@ export async function seedAccounts(db: Env["DB"] = env.DB) {
   await setWorkspaceSettings(db, "default", { timezone: "Asia/Seoul", digestHour: 8 }, at);
 }
 
+/** The tests' environment. `NOTIFY_URL` (test-only: the Worker reads topics from the database) sets the default
+ *  workspace's ntfy topic, https://ntfy.test/topic unless given (undefined: none), where `w.notifications` collects. */
 export async function testEnv(base: Env, overrides: Partial<Env> & Record<string, unknown> = {}): Promise<Env> {
   clearTokenCache();
   clearFolderCache();
   await seedAccounts(base.DB);
+  const { NOTIFY_URL, ...rest } = overrides;
+  const e = await baseEnv(base, rest);
+  const topic = "NOTIFY_URL" in overrides ? (NOTIFY_URL as string | undefined) : "https://ntfy.test/topic";
+  await setWorkspaceNtfy(e, "default", topic && e.ENCRYPTION_KEY ? topic : null, 0);
+  return e;
+}
+
+async function baseEnv(base: Env, overrides: Partial<Env> & Record<string, unknown>): Promise<Env> {
   return {
     ...base,
     DRY_RUN: "0",
     PUBLIC_URL: "https://scheduler.test",
-    NOTIFY_URL: "https://ntfy.test/topic",
     COMPOSIO_CONSUMER_KEY: "ck_test",
     DRIVE_SA_JSON: await testSaJson(),
     MEDIA_SIGNING_KEY: "signing-key",

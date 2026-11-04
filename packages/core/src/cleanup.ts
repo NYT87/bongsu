@@ -88,7 +88,7 @@ export async function cleanMedia(
     }
   }
 
-  const note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env);
+  const note = notifier(env, deps.fetch, nowS);
   for (const [ws, refused] of refusedIn) await note.send(cleanupRefused(refused), ws);
   return out;
 }

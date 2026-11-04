@@ -31,6 +31,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { LintRules } from "@bongsu/core/formats/caption-lint";
 import { isTimeZone, utcIso, zoneStamp } from "@bongsu/core/formats/time";
+import { NtfyError, postNtfy, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
 import { platform, platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
@@ -131,6 +132,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (e instanceof AdminError) return c.json({ error: e.message, ...e.extra }, e.status);
       if (e instanceof ConnectError) return c.json({ error: e.message }, 400);
       if (e instanceof CryptoError) return c.json({ error: e.message }, 409);
+      if (e instanceof NtfyError) return c.json({ error: e.message }, 400);
       throw e;
     }
   };
@@ -1012,7 +1014,16 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/settings",
     wrap(async (c) => {
       const w = await workspaceSettings(c.env.DB, ws(c));
-      return { timezone: w.timezone, digestHour: w.digestHour, dryRun: c.env.DRY_RUN !== "0", publicUrl: origin(c) };
+      // the topic's host only: whoever knows the whole URL can read the topic
+      const topic = await workspaceNtfy(c.env, ws(c)).catch(() => null);
+      return {
+        timezone: w.timezone,
+        digestHour: w.digestHour,
+        dryRun: c.env.DRY_RUN !== "0",
+        publicUrl: origin(c),
+        ntfy: { set: !!topic, host: topic ? new URL(topic).host : null },
+        encryptionKeySet: !!c.env.ENCRYPTION_KEY,
+      };
     }),
   );
   app.post(
@@ -1027,6 +1038,33 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       await setWorkspaceSettings(c.env.DB, ws(c), { timezone: tz, digestHour: hour }, nowS());
       await audit(c, "settings", null, { timezone: tz, digestHour: hour });
       return { saved: true };
+    }),
+  );
+  // The workspace's ntfy topic: its notifications are also posted there (core/ntfy.ts).
+  app.post(
+    "/admin-api/settings/ntfy",
+    wrap(async (c) => {
+      fresh(c);
+      const url = (await body(c)).url;
+      await setWorkspaceNtfy(c.env, ws(c), typeof url === "string" && url.trim() ? url : null, nowS());
+      const host = typeof url === "string" && url.trim() ? new URL(url.trim()).host : null;
+      await audit(c, host ? "ntfy_set" : "ntfy_remove", null, { host });
+      return { set: !!host, host };
+    }),
+  );
+  app.post(
+    "/admin-api/settings/ntfy/test",
+    wrap(async (c) => {
+      const url = await workspaceNtfy(c.env, ws(c));
+      if (!url) throw new AdminError(400, "set the workspace's ntfy topic first");
+      const ok = await postNtfy(fetcher, url, {
+        title: "Bongsu",
+        text: "Notifications reach this topic.",
+        click: `${origin(c)}/`,
+        buttons: [],
+      }).catch(() => false);
+      if (!ok) throw new AdminError(400, "the topic didn't take the message: check its address");
+      return { sent: true };
     }),
   );
   app.get(

@@ -571,6 +571,7 @@ A workspace's time zone, daily digest hour and locale.
 | `digest_hour` | int | no |  | 0–23 |
 | `locale` | text | no |  |  |
 | `updated_at` | timestamp | no |  |  |
+| `notify_url` | text | yes |  | the workspace's ntfy topic URL, encrypted; NULL: none |
 
 ## `workspaces`
 

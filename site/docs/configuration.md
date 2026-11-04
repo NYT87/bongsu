@@ -117,7 +117,6 @@ Set on both Workers with `wrangler secret put` (never in the wrangler files).
 | `SETUP_TOKEN` | to sign up (web Worker only) | a long random string; the first person signs up in the dashboard with it, once |
 | YouTube OAuth secrets (any name, e.g. `YT_MAIN_OAUTH`) | no (channels connected without the dashboard) | JSON `{client_id, client_secret, refresh_token, token_uri}`, named by the channel's connection (`secret_name`) |
 | `VAPID_PRIVATE_KEY` | for push | the private half of the VAPID pair |
-| `NOTIFY_URL` | no | also POST notifications here (e.g. `https://ntfy.sh/<topic>`) |
 | `RESEND_API_KEY` | with `MAILER = "resend"` | a [Resend](https://resend.com) API key: connection alerts are also emailed to the workspace's owners and admins. Set `MAILER = "resend"` and `MAIL_FROM` (a sender on a domain verified in Resend, e.g. `Bongsu <bongsu@example.com>`) as `[vars]` in the cron Worker's wrangler file |
 | `DRIVE_OWNER_OAUTH` | no | the owner's Google OAuth (scope `drive.file`) for uploading from the app into "Bongsu app uploads" |
 

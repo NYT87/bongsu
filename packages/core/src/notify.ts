@@ -1,9 +1,10 @@
-// Notifications: always the audit log and the Worker log; also NOTIFY_URL when set (an ntfy.sh topic URL: the title
-// goes in the Title header, the text in the body; the instance operator's own topic), and Web Push to the installed
-// app of the members of the workspace the notification is about: every message names its workspace, and nothing of
-// one workspace reaches another's devices.
+// Notifications: always the audit log and the Worker log; also the workspace's ntfy topic when it has one (set in the
+// dashboard, core/ntfy.ts: the title goes in the Title header, the text in the body), and Web Push to the installed
+// app of the workspace's members. Every message names its workspace, and nothing of one workspace reaches another's
+// topic or devices.
 import type { Db } from "./db";
 import type { Env } from "./env";
+import { postNtfy, workspaceNtfy } from "./ntfy";
 import { sendPush } from "./push";
 import type { Note } from "./texts/notifications";
 
@@ -35,49 +36,54 @@ export function actionsFor(target: string | undefined, extra: Action[] = []): { 
   return { url: own.url, actions: [...extra, own].slice(0, 2) };
 }
 
-export function notifier(db: Db, fetcher: typeof fetch, url: string | undefined, nowS: number, env?: Env): Notifier {
-  const abs = (u: string) => (u.startsWith("/") ? `${(env?.PUBLIC_URL ?? "").replace(/\/$/, "")}${u}` : u);
+export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifier {
+  const abs = (u: string) => (u.startsWith("/") ? `${env.PUBLIC_URL.replace(/\/$/, "")}${u}` : u);
+  /** Each workspace's topic, read once per notifier. */
+  const topics = new Map<string, Promise<string | null>>();
+  const topic = (ws: string) => {
+    if (!topics.has(ws))
+      topics.set(
+        ws,
+        workspaceNtfy(env, ws).catch((e) => {
+          console.log(`notify: ${ws}'s ntfy topic can't be read: ${(e as Error).message}`);
+          return null;
+        }),
+      );
+    return topics.get(ws) as Promise<string | null>;
+  };
   return {
     async send({ title, text, target, actions: extra }, workspaceId) {
       console.log(`notify: ${title}: ${text}`);
-      await db
-        .prepare(
-          "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, ?4)",
-        )
+      await env.DB.prepare(
+        "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, ?4)",
+      )
         .bind(nowS, target ?? null, JSON.stringify({ title, text }), workspaceId)
         .run();
       const a = actionsFor(target, extra);
+      const url = await topic(workspaceId);
       if (url) {
         try {
-          // ntfy: "view" buttons (https://docs.ntfy.sh/publish/#action-buttons); labels may not contain , or ;
-          const buttons = a.actions
-            .map((x) => `view, ${x.label.replace(/[,;]/g, " ")}, ${abs(x.url)}, clear=true`)
-            .join("; ");
-          await fetcher(url, {
-            method: "POST",
-            headers: { Title: title, Tags: "calendar", Click: abs(a.url), Actions: buttons },
-            body: text,
-          });
+          const buttons = a.actions.map((x) => ({ label: x.label, url: abs(x.url) }));
+          if (!(await postNtfy(fetcher, url, { title, text, click: abs(a.url), buttons })))
+            console.log(`notify: ${workspaceId}'s ntfy topic refused the message`);
         } catch (e) {
-          console.log(`notify: ${url} failed: ${e}`);
+          console.log(`notify: ${workspaceId}'s ntfy topic failed: ${e}`);
         }
       }
-      if (env) {
-        // A push message carries about 4 KB, so the text is cut (ntfy and the audit keep all of it).
-        await sendPush(
-          env,
-          fetcher,
-          {
-            title,
-            body: text.slice(0, 1500),
-            url: a.url,
-            tag: target ?? undefined,
-            actions: a.actions.map((x, i) => ({ action: `a${i}`, title: x.label, url: x.url })),
-          },
-          nowS,
-          { workspaceId },
-        );
-      }
+      // A push message carries about 4 KB, so the text is cut (ntfy and the audit keep all of it).
+      await sendPush(
+        env,
+        fetcher,
+        {
+          title,
+          body: text.slice(0, 1500),
+          url: a.url,
+          tag: target ?? undefined,
+          actions: a.actions.map((x, i) => ({ action: `a${i}`, title: x.label, url: x.url })),
+        },
+        nowS,
+        { workspaceId },
+      );
     },
   };
 }
