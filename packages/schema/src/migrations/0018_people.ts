@@ -10,6 +10,9 @@ const roleCheck = `CHECK (role IN (${ROLES.map((r) => `'${r}'`).join(", ")}))`;
 const newRole =
   "CASE role WHEN 'owner' THEN 'admin' WHEN 'approver' THEN 'creator' WHEN 'viewer' THEN 'editor' ELSE role END";
 
+const owners =
+  "UPDATE users SET instance_admin = 1 WHERE id IN (SELECT user_id FROM memberships WHERE role = 'owner');";
+
 // SQLite can't change a CHECK in place: rebuild the table (create, copy, drop, rename)
 const rolesSqlite = [
   `CREATE TABLE memberships_new (
@@ -119,6 +122,8 @@ export const steps: Step[] = [
       indexes: [{ name: "invites_workspace", columns: ["workspace_id"] }],
     },
   },
+  // whoever owned a workspace keeps running the instance (read before the roles change)
+  { sql: { sqlite: owners, postgres: owners } },
   {
     sql: { sqlite: rolesSqlite, postgres: rolesPostgres },
     apply: (t) => {

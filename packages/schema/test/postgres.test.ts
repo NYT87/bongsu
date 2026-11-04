@@ -183,6 +183,11 @@ describe("0018_people", () => {
       { paused: '{"reason":"trip"}' },
     ]);
     expect((await pg.query("SELECT key FROM settings WHERE key = 'paused'")).rows).toEqual([]);
+    expect((await pg.query("SELECT id, instance_admin FROM users ORDER BY id")).rows).toEqual([
+      { id: "bea", instance_admin: 0 },
+      { id: "cy", instance_admin: 1 },
+      { id: "owner", instance_admin: 1 },
+    ]);
     await expect(
       pg.exec("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'owner', 'viewer', 1)"),
     ).rejects.toThrow(/memberships_role_check/);

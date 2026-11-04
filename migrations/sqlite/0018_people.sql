@@ -19,6 +19,7 @@ CREATE TABLE invites (
   revoked_at INTEGER
 );
 CREATE INDEX invites_workspace ON invites (workspace_id);
+UPDATE users SET instance_admin = 1 WHERE id IN (SELECT user_id FROM memberships WHERE role = 'owner');
 CREATE TABLE memberships_new (
   workspace_id TEXT NOT NULL REFERENCES workspaces (id),
   user_id TEXT NOT NULL REFERENCES users (id),

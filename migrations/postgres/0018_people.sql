@@ -19,6 +19,7 @@ CREATE TABLE "invites" (
   "revoked_at" BIGINT
 );
 CREATE INDEX "invites_workspace" ON "invites" ("workspace_id");
+UPDATE users SET instance_admin = 1 WHERE id IN (SELECT user_id FROM memberships WHERE role = 'owner');
 ALTER TABLE memberships DROP CONSTRAINT memberships_role_check;
 UPDATE memberships SET role = CASE role WHEN 'owner' THEN 'admin' WHEN 'approver' THEN 'creator' WHEN 'viewer' THEN 'editor' ELSE role END;
 ALTER TABLE memberships ADD CONSTRAINT memberships_role_check CHECK (role IN ('admin', 'editor', 'creator'));

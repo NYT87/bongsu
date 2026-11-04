@@ -262,6 +262,11 @@ describe("0018_people", () => {
       paused: '{"reason":"trip"}',
     });
     expect(db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key = 'paused'").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT id, instance_admin FROM users ORDER BY id").all()).toEqual([
+      { id: "bea", instance_admin: 0 },
+      { id: "cy", instance_admin: 1 },
+      { id: "owner", instance_admin: 1 },
+    ]);
     expect(() =>
       db.exec("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'owner', 'viewer', 1)"),
     ).toThrow(/CHECK/);
@@ -287,6 +292,10 @@ describe("0018_people", () => {
       expect(db.prepare("SELECT user_id, role FROM memberships").all(), fill).toEqual([
         { user_id: "owner", role: "admin" },
       ]);
+      // the old owner runs the instance
+      expect(db.prepare("SELECT instance_admin FROM users WHERE id = 'owner'").get(), fill).toEqual({
+        instance_admin: 1,
+      });
     }
   });
 });
