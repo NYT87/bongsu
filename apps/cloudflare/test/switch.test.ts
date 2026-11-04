@@ -21,7 +21,7 @@ const fake: Verifiers = {
   })) as unknown as Verifiers["authentication"],
 };
 const origFetch = globalThis.fetch;
-const USERS = ["amy", "cleo", "ina", "otto"];
+const USERS = ["amy", "cleo", "ina", "otto", "nell"];
 let w: World;
 let e: Env;
 /** The second workspace (`Studio Two`), the archived one and one nobody here is in. */
@@ -75,6 +75,8 @@ beforeEach(async () => {
       "INSERT INTO users (id, email, name, created_at) VALUES ('cleo', 'cleo@example.com', 'Cleo', 0)",
       "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ina', 'ina@example.com', 'Ina', 0, 1)",
       "INSERT INTO users (id, email, name, created_at) VALUES ('otto', 'otto@example.com', 'Otto', 0)",
+      // nell: signed in, in no workspace and no instance admin
+      "INSERT INTO users (id, email, name, created_at) VALUES ('nell', 'nell@example.com', 'Nell', 0)",
     ].map((s) => env.DB.prepare(s)),
   );
   w2 = await createWorkspace(env.DB, { name: "Studio Two", timezone: "Europe/Madrid", createdBy: "amy" }, 0);
@@ -210,6 +212,34 @@ describe("switching the session's workspace", () => {
       workspace: { id: "default", name: "Default" },
       workspaces: [{ id: "default", name: "Default", role: "editor" }],
     });
+  });
+
+  it("an instance admin in no workspace switches in the app too; someone in none who isn't one can't", async () => {
+    const ina = await app("ina");
+    expect((await meOf(ina)).workspace).toBeNull();
+    expect(await ina("/app-api/session/workspace", { id: other })).toEqual({
+      status: 200,
+      json: { ok: true, id: other },
+    });
+    expect((await meOf(ina)).workspace).toEqual({ id: other, name: "Elsewhere" });
+    expect((await opens()).results).toEqual([{ workspace_id: other, actor: "user:ina" }]);
+    // the rest of the app still needs a workspace: the tag covers the switch only
+    expect((await (await app("ina"))("/app-api/status")).status).toBe(403);
+
+    const nell = await app("nell");
+    expect(await nell("/app-api/session/workspace", { id: "default" })).toEqual({
+      status: 403,
+      json: { error: "you can't open that workspace" },
+    });
+    expect((await meOf(nell)).workspace).toBeNull();
+  });
+
+  it("an instance admin switching into a workspace they're a member of leaves no audit row", async () => {
+    await addMember(env.DB, w2, "ina", "editor", 4);
+    const ina = await dash("ina", "default");
+    expect((await ina("/admin-api/session/workspace", { id: w2 })).status).toBe(200);
+    expect((await (await app("ina"))("/app-api/session/workspace", { id: w2 })).status).toBe(200);
+    expect((await opens()).results).toEqual([]);
   });
 
   it("signed out: the switches answer 401, and the lists are empty", async () => {

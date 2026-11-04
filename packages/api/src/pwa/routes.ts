@@ -60,7 +60,17 @@ import {
   verifyRegistration,
 } from "./webauthn";
 
-type Vars = { Bindings: Env; Variables: { caller: Caller; connects: boolean; needs: { scope: Scope | null } } };
+type Vars = {
+  Bindings: Env;
+  Variables: {
+    caller: Caller;
+    connects: boolean;
+    needs: { scope: Scope | null };
+    session: Session;
+    /** Tagged by the router (below): a route a signed-in person in no workspace still reaches. */
+    noWorkspace: true;
+  };
+};
 type C = Context<Vars>;
 // The app works as the signed-in user, in their session's workspace (core/workspaces.ts sessionWorkspace), with their
 // role's rights there (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming need
@@ -340,13 +350,21 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
 
-  // ---- everything else needs a session
+  // ---- everything else needs a session, and a workspace to work in, except for switching to one: someone whose
+  // session works nowhere (an instance admin in none) picks one there, as the dashboard's `session` area allows.
+  // Tagged by the router, before the check reads it.
+  app.use("/app-api/session/*", async (c, next) => {
+    c.set("noWorkspace", true);
+    await next();
+  });
   app.use("/app-api/*", async (c, next) => {
     const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
     if (!s) return c.json({ error: "sign in" }, 401);
+    c.set("session", s);
     const caller = await callerFor(c, s);
-    if (!caller) return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
-    c.set("caller", caller);
+    if (caller) c.set("caller", caller);
+    else if (!c.get("noWorkspace"))
+      return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     await next();
   });
   // ---- and a role that allows the change
@@ -937,7 +955,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       // the app's session only: the dashboard's keeps its own workspace
       const token = readCookie(c.req.header("Cookie"));
       const id = String((await body(c)).id ?? "");
-      const w = token && (await openWorkspace(c.env.DB, token, userOf(c), id, nowS()));
+      // the session's user, with or without a workspace now: mayOpen decides where they may go
+      const w = token && (await openWorkspace(c.env.DB, token, c.get("session").userId, id, nowS()));
       if (!w) throw new ops.ApiError(403, "you can't open that workspace");
       return { ok: true, id: w.id };
     }),
