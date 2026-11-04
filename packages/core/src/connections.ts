@@ -25,8 +25,9 @@ export class ConnectError extends Error {
     message: string,
     readonly back?: ConnectBack,
     /**
-     * "browser": the state is unknown or used, or the flow's cookie is missing or doesn't match. Those are one
-     * condition on purpose: telling them apart would let a caller without the cookie probe whether a state exists.
+     * "browser": the state is unknown or used, the flow's cookie is missing or doesn't match, or the flow was started
+     * before its browser was kept (no browser_hash, from before migration 0020). Those are one condition on purpose:
+     * telling them apart would let a caller without the cookie probe whether a state exists.
      * It only tells the app to suggest the phone's own browser.
      */
     readonly hint?: "browser",
