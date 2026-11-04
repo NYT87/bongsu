@@ -21,7 +21,7 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs } from "@bongsu/core/providers/index";
 import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
-import { mayConnect } from "@bongsu/core/roles";
+import { isRole, mayConnect } from "@bongsu/core/roles";
 import { mayBeLive } from "@bongsu/core/tick";
 import {
   callerZone,
@@ -1020,9 +1020,15 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // changed from their role's defaults. A person's own settings, so no scope; an agent key never reaches /app-api.
   const prefsFor = async (c: C) => {
     const { workspaceId } = me(c);
-    const where = await sessionWorkspace(c.env.DB, c.get("session"));
-    if (!where?.role) return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
-    return { workspaceId, userId: userOf(c), role: where.role };
+    const userId = userOf(c);
+    // the person's own membership role, as push delivery uses (core/notify-prefs.ts receivers): an instance admin
+    // visiting a workspace they're not in gets no notes from it, so has nothing to set
+    const m = await c.env.DB.prepare("SELECT role FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
+      .bind(workspaceId, userId)
+      .first<{ role: string }>();
+    if (!m || !isRole(m.role))
+      return c.json({ error: "you get no notifications from a workspace you're not a member of" }, 403);
+    return { workspaceId, userId, role: m.role };
   };
   app.get("/app-api/notify-prefs", async (c) => {
     const who = await prefsFor(c);

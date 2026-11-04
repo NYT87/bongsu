@@ -1,10 +1,11 @@
 // The app's notification settings (Phase 13 part 2): GET and PUT /app-api/notify-prefs read and change the signed-in
 // person's own groups in the session's workspace. Runs on real SQL (D1): the role defaults, the row deleted when a
 // setting goes back to its default, and a role change moving whoever hasn't chosen.
-import { env } from "cloudflare:workers";
+import { env, exports } from "cloudflare:workers";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Env } from "@bongsu/core/env";
+import { sha256Hex } from "@bongsu/core/formats/approved";
 import { setRole } from "@bongsu/core/invites";
 import { addMember, createWorkspace } from "@bongsu/core/people";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,7 +13,7 @@ import { clearPlan, testEnv, World } from "./world";
 
 const nowS = () => Math.floor(Date.now() / 1000);
 const origFetch = globalThis.fetch;
-const USERS = ["amy", "otto"];
+const USERS = ["amy", "otto", "ina", "ivy"];
 let w: World;
 let e: Env;
 
@@ -59,10 +60,14 @@ beforeEach(async () => {
       `DELETE FROM users WHERE id IN (${ids})`,
       "INSERT INTO users (id, email, name, created_at) VALUES ('amy', 'amy@example.com', 'Amy', 0)",
       "INSERT INTO users (id, email, name, created_at) VALUES ('otto', 'otto@example.com', 'Otto', 0)",
+      // ina: an instance admin in no workspace; ivy: an instance admin who is the default workspace's editor
+      "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ina', 'ina@example.com', 'Ina', 0, 1)",
+      "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ivy', 'ivy@example.com', 'Ivy', 0, 1)",
     ].map((s) => env.DB.prepare(s)),
   );
   await addMember(env.DB, "default", "amy", "admin", 0);
   await addMember(env.DB, "default", "otto", "editor", 0);
+  await addMember(env.DB, "default", "ivy", "editor", 0);
 });
 afterEach(() => {
   globalThis.fetch = origFetch;
@@ -141,5 +146,46 @@ describe("GET and PUT /app-api/notify-prefs", () => {
     expect(of(await (await as("amy", "default")).get(), "digest")?.enabled).toBe(true);
     expect(of(await (await as("amy", w2)).get(), "digest")?.enabled).toBe(false);
     expect((await rows("amy", "default")).results).toEqual([]);
+  });
+
+  it("an instance admin who is an editor member gets the editor's defaults, not an admin's", async () => {
+    const ivy = await as("ivy");
+    expect(of(await ivy.get(), "needs_you")).toEqual({ grp: "needs_you", enabled: false, isDefault: true });
+    expect(of(await ivy.put({ grp: "needs_you", enabled: true }), "needs_you")).toEqual({
+      grp: "needs_you",
+      enabled: true,
+      isDefault: false,
+    });
+    expect((await rows("ivy")).results).toEqual([{ grp: "needs_you", enabled: 1 }]);
+  });
+
+  it("an instance admin who isn't a member there gets a 403 on both, and no row is written", async () => {
+    const ina = await as("ina", "default");
+    const msg = "you get no notifications from a workspace you're not a member of";
+    for (const r of [await ina.get(), await ina.put({ grp: "problems", enabled: false })])
+      expect([r.status, r.json.error]).toEqual([403, msg]);
+    expect((await rows("ina")).results).toEqual([]);
+  });
+
+  it("an agent key is refused on both, and writes no row", async () => {
+    const key = "bongsu_notifyPrefsAgentKeyNotifyP";
+    await env.DB.prepare(
+      "INSERT INTO api_keys (id, name, key_hash, scopes, workspace_id) VALUES ('kn', 'kn', ?1, '[\"read\",\"draft\",\"plan\",\"reschedule\"]', 'default')",
+    )
+      .bind(await sha256Hex(key))
+      .run();
+    for (const [method, body] of [
+      ["GET", undefined],
+      ["PUT", JSON.stringify({ grp: "problems", enabled: false })],
+    ] as const) {
+      const r = await exports.default.fetch("https://scheduler.test/app-api/notify-prefs", {
+        method,
+        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        ...(body ? { body } : {}),
+      });
+      expect(r.status, method).toBe(401);
+    }
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM notify_prefs").first("n")).toBe(0);
+    await env.DB.prepare("DELETE FROM api_keys WHERE id = 'kn'").run();
   });
 });
