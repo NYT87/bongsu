@@ -129,6 +129,8 @@ export const en = {
   "settings.connectBroken": "needs reconnecting",
   "settings.connected": { one: "Connected {label}: {n} account.", other: "Connected {label}: {n} accounts." },
   "settings.connectFailed": "Not connected: {error}",
+  "settings.connectBrowserHint":
+    "If you connected from the app on your home screen, open Bongsu in the phone's browser (Safari on iPhone) and connect from there.",
   "settings.connectNone": "Nothing connected yet.",
   "settings.zone": "Time zone",
   "settings.zoneShown": "Times are shown and entered in",

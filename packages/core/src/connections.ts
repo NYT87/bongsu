@@ -24,6 +24,8 @@ export class ConnectError extends Error {
   constructor(
     message: string,
     readonly back?: ConnectBack,
+    /** "browser": the flow's cookie didn't come back. It tells the app to suggest the phone's own browser, nothing else. */
+    readonly hint?: "browser",
   ) {
     super(message);
   }
@@ -241,7 +243,7 @@ export async function takeState(env: Env, flow: string, q: CallbackQuery, browse
     .bind(stateHash)
     .first<{ browser_hash: string | null }>();
   if (!pending?.browser_hash || !browser || !sameHash(await sha256Hex(browser), pending.browser_hash))
-    throw new ConnectError(INVALID);
+    throw new ConnectError(INVALID, undefined, "browser");
   const st = await env.DB.prepare(
     `UPDATE oauth_states SET used_at = ?1 WHERE state_hash = ?2 AND used_at IS NULL
      RETURNING provider, user_id, workspace_id, verifier, connection_id, expires_at`,

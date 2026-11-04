@@ -273,6 +273,7 @@ describe("a flow finishes only in the browser that started it", () => {
       const r = await callback("instagram", { code: "ig-code", state: stateOf(theirs) }, browser);
       expect(r.status).toBe(302);
       expect(backParams(r.location).error).toMatch(/isn't valid/);
+      expect(backParams(r.location).hint).toBe("browser"); // lets the app suggest the phone's own browser
       expect(r.location).toMatch(/\/dashboard\/connections\?/);
       expect(r.setCookies[0]).toMatch(/^bongsu_oauth=x; Path=\/admin-api\/connect\/instagram\/callback;.*Max-Age=0$/);
     }
@@ -289,6 +290,16 @@ describe("a flow finishes only in the browser that started it", () => {
       backParams((await callback("instagram", { code: "ig-code", state: stateOf(mine) }, myCookie)).location),
     ).toMatchObject({ connected: "@demo_cycling" });
     expect(w.igCodes).toHaveLength(2);
+  });
+
+  it("a scheme-less PUBLIC_URL is an error redirect, not a 500", async () => {
+    e = { ...e, PUBLIC_URL: "bongsu.example.com" };
+    const r = await callback("instagram", { code: "ig-code", state: "whatever" });
+    expect(r.status).toBe(302);
+    // (the redirect is as scheme-less as the setting, so read its query rather than parse it as a URL)
+    const q = new URLSearchParams((r.location ?? "").split("?")[1]);
+    expect(q.get("error")).toBeTruthy();
+    expect(q.get("hint")).toBeNull(); // the other refusals don't carry the browser hint
   });
 
   it("refuses a flow started before the browser was kept (no browser_hash)", async () => {

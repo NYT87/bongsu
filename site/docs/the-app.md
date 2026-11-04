@@ -176,6 +176,9 @@ YouTube** sign in with the account and bring you back to Settings, where the acc
 you're in. If a button says the instance admin has to add its OAuth app first, ask them: the Meta and Google apps are
 set up once for the whole instance ([The dashboard](the-dashboard.md#oauth-apps)). Editors don't see this.
 
+If connecting from the app installed on your home screen says to start again, your phone probably opened the sign-in in
+a separate browser. Open Bongsu in the phone's browser (Safari on iPhone) and connect from there.
+
 ## Pausing a workspace and resuming
 
 **Settings → Publishing** has **Pause this workspace**: "Stops this workspace's Reels, posts and Shorts comments until

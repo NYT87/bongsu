@@ -446,14 +446,14 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   app.get("/admin-api/connect/:provider/callback", async (c) => {
     const provider = c.req.param("provider") ?? "";
     const browser = readOauthCookie(c.req.header("Cookie"));
-    const path = connectCallbackPath(c.env.PUBLIC_URL, provider);
-    if (path) c.header("Set-Cookie", oauthCookie("x", path, 0)); // used once, whatever the outcome
     const back = (q: Record<string, string>, to: ConnectBack = "dashboard") =>
       c.redirect(
         `${origin(c)}${to === "app" ? "/#/settings" : "/dashboard/connections"}?${new URLSearchParams(q)}`,
         302,
       );
     try {
+      const path = connectCallbackPath(c.env.PUBLIC_URL, provider);
+      if (path) c.header("Set-Cookie", oauthCookie("x", path, 0)); // used once, whatever the outcome
       const r = await finishConnect(
         c.env,
         fetcher,
@@ -477,7 +477,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       );
       return back({ connected: r.label, accounts: String(r.accounts.length) }, r.back);
     } catch (e) {
-      return back({ error: (e as Error).message.slice(0, 300) }, e instanceof ConnectError ? e.back : undefined);
+      const hint: Record<string, string> = e instanceof ConnectError && e.hint ? { hint: e.hint } : {};
+      return back(
+        { error: (e as Error).message.slice(0, 300), ...hint },
+        e instanceof ConnectError ? e.back : undefined,
+      );
     }
   });
 
@@ -485,10 +489,10 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   // who started it and the flow's cookie that it's back in the same browser.
   app.get("/admin-api/media-stores/drive/callback", async (c) => {
     const browser = readOauthCookie(c.req.header("Cookie"));
-    c.header("Set-Cookie", oauthCookie("x", callbackPath(driveRedirectUri(c.env.PUBLIC_URL)), 0));
     const back = (q: Record<string, string>) =>
       c.redirect(`${origin(c)}/dashboard/media?${new URLSearchParams(q)}`, 302);
     try {
+      c.header("Set-Cookie", oauthCookie("x", callbackPath(driveRedirectUri(c.env.PUBLIC_URL)), 0));
       const r = await finishDriveConnect(
         c.env,
         fetcher,

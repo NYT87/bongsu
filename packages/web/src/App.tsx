@@ -4123,7 +4123,10 @@ function ConnectCard() {
     if (connected === null && error === null) return;
     if (connected !== null)
       setMsg({ text: t("settings.connected", { label: connected, n: Number(q.get("accounts") ?? 0) }), ok: true });
-    else setMsg({ text: t("settings.connectFailed", { error: error ?? "" }), ok: false });
+    else {
+      const hint = q.get("hint") === "browser" ? ` ${t("settings.connectBrowserHint")}` : "";
+      setMsg({ text: t("settings.connectFailed", { error: error ?? "" }) + hint, ok: false });
+    }
     // a reload shouldn't say it again
     history.replaceState(history.state, "", "#/settings");
   }, []);

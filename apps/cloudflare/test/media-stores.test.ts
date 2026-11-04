@@ -216,7 +216,13 @@ describe("Connect Google Drive", () => {
     w.drivePut("UPLOADS/inbox/keep.txt", { md5: "k", mimeType: "text/plain" });
     const state = url.searchParams.get("state")!;
     // a YouTube callback can't finish a Drive flow
-    const wrong = await call(`/admin-api/connect/youtube/callback?code=g-code&state=${state}`, undefined, false);
+    // (sent with the Drive flow's cookie, as the starting browser could: the flow check refuses it, not the cookie)
+    const wrong = await call(
+      `/admin-api/connect/youtube/callback?code=g-code&state=${state}`,
+      undefined,
+      false,
+      driveFlow,
+    );
     expect(new URL(wrong.location!).searchParams.get("error")).toMatch(/isn't valid/);
 
     const url2 = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
