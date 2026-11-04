@@ -2882,8 +2882,8 @@ export function Workspaces(_: Props) {
   const [email, setEmail] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // an invite link to copy: a new workspace's first admin (then `after` goes on into it), or an admin added
-  const [made, setMade] = useState<{ url: string; email: string; after?: () => void } | null>(null);
+  // an invite link to copy: a new workspace's first admin, or an admin added
+  const [made, setMade] = useState<{ url: string; email: string } | null>(null);
   const zones = Intl.supportedValuesOf?.("timeZone") ?? [];
   const show = (f: typeof form) => {
     setForm(f);
@@ -2903,8 +2903,8 @@ export function Workspaces(_: Props) {
         const r = await withFreshCheck(() =>
           api<{ invite?: { url: string } }>("workspaces", { name, timezone: tz, admin: adminIsMe ? "me" : to }),
         );
-        // the session now works in the new workspace: into it, after copying its first admin's link
-        if (r.invite) setMade({ url: r.invite.url, email: to, after: () => workIn("start") });
+        // with "me" as its admin, the session now works in it; one made for someone else waits in this list
+        if (r.invite) setMade({ url: r.invite.url, email: to });
         else workIn("start");
       } else if (form.kind === "rename") {
         await api(`workspaces/${encodeURIComponent(form.w.id)}`, { name });
@@ -2939,14 +2939,7 @@ export function Workspaces(_: Props) {
     >
       {made && (
         <Card>
-          <SecretOnce
-            title={`Invite link for ${made.email}`}
-            value={made.url}
-            onDone={() => {
-              setMade(null);
-              made.after?.();
-            }}
-          />
+          <SecretOnce title={`Invite link for ${made.email}`} value={made.url} onDone={() => setMade(null)} />
           <p className="muted small">They join as an admin with it: it works once, for 7 days.</p>
         </Card>
       )}
@@ -3154,7 +3147,8 @@ export function FirstWorkspace({
   onSignOut,
 }: {
   state: State;
-  onDone: () => void;
+  /** `invited`: its first admin is someone else, so it waits on the Workspaces page. */
+  onDone: (invited: boolean) => void;
   onSignOut: () => void;
 }) {
   const zones = Intl.supportedValuesOf?.("timeZone") ?? [];
@@ -3195,10 +3189,14 @@ export function FirstWorkspace({
         <Card>
           <h1>Send them the invite</h1>
           <p className="muted">
-            The workspace is ready. Its first admin joins with this link (it works once, for 7 days); meanwhile you can
-            set it up yourself.
+            The workspace is ready. Its first admin joins with this link (it works once, for 7 days); meanwhile it waits
+            on your Workspaces page, where Open lets you set it up yourself.
           </p>
-          <SecretOnce title={`Invite link for ${email.trim().toLowerCase()}`} value={link} onDone={onDone} />
+          <SecretOnce
+            title={`Invite link for ${email.trim().toLowerCase()}`}
+            value={link}
+            onDone={() => onDone(true)}
+          />
         </Card>
       </main>
     );
@@ -3218,7 +3216,7 @@ export function FirstWorkspace({
       );
       // their link, to copy, before going on
       if (r.invite) setLink(r.invite.url);
-      else onDone();
+      else onDone(false);
     } catch (e) {
       setErr(errorText(e));
     } finally {

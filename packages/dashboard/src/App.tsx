@@ -76,10 +76,10 @@ export function App() {
   const [state, setState] = useState<State | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [section, setSection] = useState(sectionOf);
-  // the first page once in a workspace: Get started
-  const toStart = () => {
-    history.replaceState(null, "", "/dashboard/start");
-    setSection("start");
+  // the first page once in a workspace: Get started; a workspace made for someone else waits on Workspaces
+  const toStart = (where: "start" | "workspaces" = "start") => {
+    history.replaceState(null, "", `/dashboard/${where}`);
+    setSection(where);
   };
   // a 403 with `app: true` (api.ts): this person is a creator, who works in the app
   const [appOnly, setAppOnly] = useState(false);
@@ -150,8 +150,8 @@ export function App() {
     return (
       <FirstWorkspace
         state={state}
-        onDone={() => {
-          toStart();
+        onDone={(invited) => {
+          toStart(invited ? "workspaces" : "start");
           load();
         }}
         onSignOut={load}

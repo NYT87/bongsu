@@ -150,9 +150,10 @@ describe("pause per workspace", () => {
     expect([await jobState(a), await jobState(b)]).toEqual(["container_created", "pending"]);
     expect(await status(KEY_B)).toMatchObject({ paused: true });
     expect(await status(KEY_A)).toMatchObject({ paused: false });
-    // the tick says why B waits, in B's audit
-    const held = await env.DB.prepare("SELECT workspace_id FROM audit WHERE action = 'paused'").all();
-    expect(held.results).toEqual([{ workspace_id: "b" }]);
+    // the pause is in B's audit once, when it happened: the tick's runs (two parts, every few minutes) add nothing
+    await tick(e, { fetch: w.fetch, now: later(6) }, "shorts");
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'paused'").first("n")).toBe(0);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'pause'").first("n")).toBe(1);
     // the digest says so, for B only
     expect((await buildDigest(e, w.fetch, later(5), { workspaceId: "b", timezone: "Europe/Madrid" })).text).toContain(
       "Publishing is paused",

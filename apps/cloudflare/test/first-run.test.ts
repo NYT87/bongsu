@@ -137,7 +137,7 @@ describe("the first run", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces").first("n")).toBe(0);
   });
 
-  it("invites someone else as the new workspace's first admin, and opens it for the instance admin", async () => {
+  it("invites someone else as the new workspace's first admin; it waits on the instance admin's Workspaces page", async () => {
     await bootstrap();
     const made = await call("/admin-api/workspaces", {
       name: "Demo Running",
@@ -147,11 +147,15 @@ describe("the first run", () => {
     expect(made.status).toBe(200);
     const invite = made.json.invite as { url: string };
     expect(invite.url).toMatch(/^https:\/\/bongsu\.test\/dashboard\/invite\/[A-Za-z0-9_-]{43}$/);
-    // nobody's a member until the invite is accepted; the instance admin works in it meanwhile, as its admin
+    // nobody's a member until the invite is accepted; the instance admin's session stays where it was (in no
+    // workspace here), and "open" on the Workspaces page goes into it, as its admin
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM memberships").first("n")).toBe(0);
     expect(
       await env.DB.prepare("SELECT workspace_id, email, role FROM invites").first<Record<string, unknown>>(),
     ).toEqual({ workspace_id: made.json.id, email: "runner@example.com", role: "admin" });
+    expect(await env.DB.prepare("SELECT workspace_id FROM sessions").first("workspace_id")).toBeNull();
+    expect((await call("/admin-api/state")).json).toMatchObject({ noWorkspace: true });
+    expect((await call(`/admin-api/workspaces/${made.json.id}/open`, {})).status).toBe(200);
     expect((await call("/admin-api/state")).json).toMatchObject({ noWorkspace: false, role: "admin" });
     const token = invite.url.split("/").pop();
     expect((await call(`/admin-api/invite/${token}`)).json).toEqual({ workspace: "Demo Running", role: "admin" });

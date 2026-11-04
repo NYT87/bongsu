@@ -227,10 +227,8 @@ export async function tick(
   try {
     const c = new Ctx(env, deps);
     c.stores = await mediaStores(env, deps.fetch);
+    // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
     c.held = await heldWorkspaces(env.DB);
-    // a paused workspace hears why it waits; an archived one is simply left alone
-    for (const [ws, why] of c.held)
-      if (why === "paused") await audit(env.DB, nowS, "paused", `workspace:${ws}`, { part }, ws);
     if (part === "shorts") {
       await shortsComments(c);
       await env.DB.prepare("DELETE FROM audit WHERE at < ?1")

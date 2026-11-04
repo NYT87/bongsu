@@ -138,8 +138,14 @@ export async function inviteVerify(
       if (d?.invite !== invite || !d.userId) return false;
       // the email has an account: they sign in with it instead (said the same way as any other failure)
       if (await env.DB.prepare("SELECT 1 FROM users WHERE email = ?1").bind(i.email).first()) return false;
-      // the user before the passkey, which names them, and the membership, which needs them
-      await createUser(env.DB, { id: d.userId, email: i.email, name: d.name ?? null }, nowS);
+      // the user before the passkey, which names them, and the membership, which needs them. Two acceptances racing
+      // past the check above: the second one's user breaks the unique email, refused like any other failure
+      try {
+        await createUser(env.DB, { id: d.userId, email: i.email, name: d.name ?? null }, nowS);
+      } catch (e) {
+        if (await env.DB.prepare("SELECT 1 FROM users WHERE email = ?1").bind(i.email).first()) return false;
+        throw e;
+      }
       try {
         joined = { userId: d.userId, ...(await acceptInvite(env.DB, token, d.userId, nowS)) };
       } catch (e) {

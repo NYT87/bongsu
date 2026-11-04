@@ -1244,9 +1244,12 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         admin === "me"
           ? null
           : await createInvite(c.env, fetcher, { workspaceId: id, email: admin, role: "admin", invitedBy: me }, nowS());
-      if (!invite) await addMember(c.env.DB, id, me, "admin", nowS());
-      // the creator works in it from the next request on (an instance admin acts in any workspace as its admin)
-      await setSessionWorkspace(c.env.DB, c.get("token"), id);
+      // its admin being "me", the creator works in it from the next request on; one made for someone else waits on the
+      // Workspaces page (spec section 0.4), where "open" goes into it
+      if (!invite) {
+        await addMember(c.env.DB, id, me, "admin", nowS());
+        await setSessionWorkspace(c.env.DB, c.get("token"), id);
+      }
       // the instance's row: the request may have no workspace, and the new one isn't where it was made
       await audit(c, "workspace_create", id, { name, timezone, admin }, me, null);
       if (invite) await audit(c, "invite_create", admin, { role: "admin", mailed: invite.mailed }, me, id);

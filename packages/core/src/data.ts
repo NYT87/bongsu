@@ -597,7 +597,7 @@ export async function clearPaused(db: Db, workspaceId: string): Promise<boolean>
     .first());
 }
 
-/** Why the scheduler leaves a workspace alone this run: it's paused (and says so in its audit), or archived. */
+/** Why the scheduler leaves a workspace alone this run: it's paused (audited when it was paused), or archived. */
 export type Held = "paused" | "archived";
 
 /** The workspaces the scheduler leaves alone this run: the paused ones and the archived ones. Read once per run

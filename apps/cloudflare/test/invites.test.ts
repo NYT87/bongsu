@@ -4,6 +4,7 @@
 import { env } from "cloudflare:workers";
 import { authenticate } from "@bongsu/api/agent/auth";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
+import { NEW_FAILED } from "@bongsu/api/pwa/invite";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
@@ -264,6 +265,56 @@ describe("invites", () => {
     expect(await member("default", "ada")).toBe("admin");
     expect((await req("dashboard", v.cookie, "/admin-api/state")).json).toMatchObject({ role: "editor" });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM users WHERE email = 'ada@example.com'").first("n")).toBe(1);
+  });
+
+  it("two sign-ups racing for one email: the second gets the usual refusal, not an error", async () => {
+    const ada = await dash("ada");
+    const token = tokenOf((await ada("/admin-api/invites", { email: "race@example.com", role: "editor" })).json.url);
+    const site = out("dashboard");
+    const o = await site(`/admin-api/invite/${token}/options`, { name: "Race" });
+    // the other sign-up's user lands between this one's "is the email free?" and its own user
+    const db = e.DB;
+    let armed = true;
+    const racing = new Proxy(db, {
+      get(t, p) {
+        if (p === "prepare")
+          return (sql: string) => {
+            const st = t.prepare(sql);
+            if (!armed || !sql.startsWith("SELECT 1 FROM users WHERE email")) return st;
+            armed = false;
+            return {
+              bind: () => ({
+                first: async () => {
+                  await t
+                    .prepare(
+                      "INSERT INTO users (id, email, name, created_at) VALUES ('other', 'race@example.com', 'Other', 0)",
+                    )
+                    .run();
+                  return null;
+                },
+              }),
+            };
+          };
+        const v = Reflect.get(t, p);
+        return typeof v === "function" ? v.bind(t) : v;
+      },
+    });
+    e = { ...e, DB: racing };
+    const v = await site(`/admin-api/invite/${token}/verify`, {
+      mode: "new",
+      challengeId: (o.json.register as { challengeId: string }).challengeId,
+      response: { id: "race-key" },
+    });
+    e = { ...e, DB: db };
+    expect(armed).toBe(false);
+    expect([v.status, v.json]).toEqual([400, NEW_FAILED]);
+    expect(await env.DB.prepare("SELECT id FROM users WHERE email = 'race@example.com'").all()).toMatchObject({
+      results: [{ id: "other" }],
+    });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys WHERE id = 'race-key'").first("n")).toBe(0);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = 'default'").first("n"),
+    ).toBe(2);
   });
 
   it("refuses an invite used, revoked or older than 7 days", async () => {
