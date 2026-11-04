@@ -16,7 +16,7 @@ It posts Instagram Reels, photos, carousels, Stories and Trial Reels, and commen
   like a post.
 - **Trial Reels.** For accounts that qualify, a Reel can be shared as a Trial Reel, shown to people who don't follow
   you first. Each account has a default and each Reel its own switch.
-- **Notifications.** A push to the installed app and, if you like, a webhook such as ntfy, plus a daily digest.
+- **Notifications.** A push to the installed app and, if you like, an ntfy topic per workspace, plus a daily digest.
 - **Results and comments.** A day after a post goes out, its first results are stored. New comments appear in the
   app, where you can reply.
 

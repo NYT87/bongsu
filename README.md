@@ -48,7 +48,7 @@ beacon towers that carried a signal from peak to peak across the country.)
   SQLite or Postgres.
 - **Media stays on your storage:** a Google Drive folder (files dropped in its inbox become drafts) or a local
   directory.
-- **Notifications:** web push to the installed app, optionally a webhook such as ntfy, and a daily digest.
+- **Notifications:** web push to the installed app, optionally an ntfy topic per workspace, and a daily digest.
 - **Results and comments:** each post's first results a day after it goes out; new comments in the app, answered from
   there.
 - **Your own name and colour** for the app, set at build time.
