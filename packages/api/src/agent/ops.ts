@@ -123,12 +123,31 @@ function askedDue(b: Record<string, unknown>, format: Format | null, tz: string,
   }
 }
 
+/** The app's caller is the signed-in person (its id is theirs); a CLI token (a person's) or an agent key is a key. */
+const inApp = (c: OpCtx) => !!c.caller.userId && c.caller.id === c.caller.userId;
+
 export async function audit(c: OpCtx, action: string, target: string | null, detail: unknown) {
   await c.env.DB.prepare(
-    "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
   )
-    .bind(nowS(c), `key:${c.caller.id}`, action, target, JSON.stringify(detail), c.caller.workspaceId)
+    .bind(
+      nowS(c),
+      inApp(c) ? `user:${c.caller.id}` : `key:${c.caller.id}`,
+      action,
+      target,
+      JSON.stringify(detail),
+      c.caller.userId ?? null,
+      c.caller.workspaceId,
+    )
     .run();
+}
+
+/** Who a person is, to people: their name, else their email. */
+async function personName(c: OpCtx, userId: string): Promise<string> {
+  const u = await c.env.DB.prepare("SELECT name, email FROM users WHERE id = ?1")
+    .bind(userId)
+    .first<{ name: string | null; email: string | null }>();
+  return u?.name || u?.email || "someone";
 }
 
 // ---------------------------------------------------------------- reads
@@ -672,8 +691,7 @@ export async function pause(c: OpCtx, reason: string) {
     c.env.DB,
     c.caller.workspaceId,
     reason || "paused",
-    // the app's caller is the signed-in person (its id is theirs); a CLI token or an agent key is a key
-    c.caller.userId && c.caller.id === c.caller.userId ? "owner" : `API key "${c.caller.name}"`,
+    inApp(c) ? await personName(c, c.caller.id) : `API key "${c.caller.name}"`,
     c.now,
   );
   if (!set) return { paused: true, already: true };

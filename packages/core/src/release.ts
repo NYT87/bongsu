@@ -64,7 +64,7 @@ export async function moveRelease(env: Env, fetcher: typeof fetch, req: ReleaseR
   )
     .bind(
       nowS,
-      actor.kind === "owner" ? "owner" : `key:${actor.id}`,
+      actor.kind === "owner" ? `user:${actor.userId ?? "?"}` : `key:${actor.id}`,
       `youtube:${videoId}`,
       JSON.stringify({ account: account.id, title: upload.title, from, to }),
       actor.kind === "owner" ? actor.userId : null,

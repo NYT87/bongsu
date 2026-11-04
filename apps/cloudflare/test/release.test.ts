@@ -107,7 +107,7 @@ describe("moveRelease", () => {
       target: string;
       detail: string;
     }>();
-    expect(row).toMatchObject({ actor: "owner", target: "youtube:v-sched" });
+    expect(row).toMatchObject({ actor: "user:owner", target: "youtube:v-sched" });
     expect(JSON.parse(row?.detail ?? "")).toEqual({
       account: "main",
       title: "Lisbon Short",
@@ -286,7 +286,7 @@ describe("the PWA", () => {
       user_id: string | null;
     }>();
     const user = await env.DB.prepare("SELECT user_id FROM sessions").first<{ user_id: string }>();
-    expect(row).toEqual({ actor: "owner", user_id: user?.user_id });
+    expect(row).toEqual({ actor: `user:${user?.user_id}`, user_id: user?.user_id });
     expect(row?.user_id).toBeTruthy();
   });
 

@@ -28,8 +28,8 @@ People, roles, invites and workspaces (Phase 13, part 1).
   to work in it. An archived workspace stops completely (nothing publishes, keys and members are refused, no digest,
   no comments or metrics read). A workspace's own admins rename it in Settings. An instance admin in no workspace
   lands on the Instance pages.
-- **Audit.** A workspace's log shows only its own rows; instance admins also read the instance's (new workspaces,
-  media stores, OAuth apps, instance admins).
+- **Audit.** A workspace's log shows only its own rows, each naming the person who acted, in the app as in the
+  dashboard; instance admins also read the instance's (new workspaces, media stores, OAuth apps, instance admins).
 - **Connect from the app.** Admins and creators connect Instagram and YouTube from the app's Settings with the
   instance's OAuth apps; a connection lands in the workspace the flow started from.
 - **Pause per workspace.** **Pause this workspace** and **Resume with passkey** act on one workspace; the others go on

@@ -2348,6 +2348,8 @@ interface Entry {
   action: string;
   target: string | null;
   detail: string | null;
+  /** The person who acted (name, else email), when a person did. */
+  who: string | null;
 }
 
 export function Audit({ state }: Props) {
@@ -2422,7 +2424,7 @@ export function Audit({ state }: Props) {
                         {when(e.at)}
                       </td>
                       <td data-label="Who" className="small">
-                        {e.actor}
+                        {e.who ?? e.actor}
                       </td>
                       <td data-label="What">
                         {e.action.replaceAll("_", " ")}

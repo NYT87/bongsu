@@ -46,6 +46,7 @@ export async function scheduleDraft(
   nowS: number,
   tz: string,
   workspaceId: string,
+  userId: string,
 ): Promise<{ key: string }> {
   const d = await env.DB.prepare(
     "SELECT id, kind, account, payload, status, workspace_id FROM drafts WHERE id = ?1 AND workspace_id = ?2",
@@ -134,8 +135,8 @@ export async function scheduleDraft(
   await env.DB.batch([
     env.DB.prepare("UPDATE drafts SET status = 'approved', updated_at = ?1 WHERE id = ?2").bind(nowS, id),
     env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'owner', 'draft_schedule', ?2, ?3, ?4)",
-    ).bind(nowS, key, JSON.stringify({ draft: id, due_at: due }), workspaceId),
+      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'draft_schedule', ?3, ?4, ?5, ?6)",
+    ).bind(nowS, `user:${userId}`, key, JSON.stringify({ draft: id, due_at: due }), userId, workspaceId),
   ]);
   return { key };
 }
@@ -147,6 +148,7 @@ export async function editTexts(
   b: Record<string, unknown>,
   nowS: number,
   workspaceId: string,
+  userId: string,
 ): Promise<{ key: string }> {
   const i = await getItem(env.DB, key, workspaceId);
   if (!i) throw new ScheduleError(404, `${key} isn't planned`);
@@ -168,8 +170,8 @@ export async function editTexts(
       workspaceId,
     ),
     env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'owner', 'edit_texts', ?2, '{}', ?3)",
-    ).bind(nowS, key, workspaceId),
+      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'edit_texts', ?3, '{}', ?4, ?5)",
+    ).bind(nowS, `user:${userId}`, key, userId, workspaceId),
   ]);
   return { key };
 }

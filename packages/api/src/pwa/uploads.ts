@@ -65,6 +65,7 @@ export async function draftFromUploads(
   b: Record<string, unknown>,
   nowS: number,
   workspaceId: string,
+  userId: string,
 ): Promise<{ id: string }> {
   const ids = Array.isArray(b.files) ? b.files.map(String) : [];
   if (!ids.length || ids.length > 10) throw new UploadError(400, "1 to 10 files");
@@ -108,8 +109,8 @@ export async function draftFromUploads(
       "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'pwa', 'owner', 'draft', ?5, ?5, ?6)",
     ).bind(id, kind, account, JSON.stringify(payload), nowS, workspaceId),
     env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'owner', 'draft_upload', ?2, ?3, ?4)",
-    ).bind(nowS, id, JSON.stringify({ kind, files: files.length }), workspaceId),
+      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'draft_upload', ?3, ?4, ?5, ?6)",
+    ).bind(nowS, `user:${userId}`, id, JSON.stringify({ kind, files: files.length }), userId, workspaceId),
   ]);
   return { id };
 }

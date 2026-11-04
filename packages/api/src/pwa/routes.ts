@@ -112,21 +112,24 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   const opctx = (c: C): ops.OpCtx => ({ env: c.env, fetch: fetcher, now: new Date(), caller: me(c) });
   /** The signed-in user's time zone (their own, else the workspace's): what the app shows and takes times in. */
   const zone = (c: C) => callerZone(c.env.DB, me(c).workspaceId, me(c).userId);
-  /** An audit row of the caller's, in their workspace; a signed-out route's (a new passkey) names its user and, without
-   *  a workspace, is the instance's. */
-  const audit = (c: C, action: string, target: string | null, detail: unknown, userId?: string) =>
-    c.env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, 'owner', ?2, ?3, ?4, ?5, ?6)",
+  /** An audit row of the caller's (`user:<id>`, as the dashboard writes it), in their workspace; a signed-out route's
+   *  (a new passkey) names its user and, without a workspace, is the instance's. */
+  const audit = (c: C, action: string, target: string | null, detail: unknown, userId?: string) => {
+    const who = userId ?? c.get("caller")?.userId ?? null;
+    return c.env.DB.prepare(
+      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
       .bind(
         nowS(),
+        `user:${who ?? "?"}`,
         action,
         target,
         JSON.stringify(detail),
-        userId ?? c.get("caller")?.userId ?? null,
+        who,
         c.get("caller")?.workspaceId ?? null,
       )
       .run();
+  };
   /** Sets (or, with null, removes) one of an item's platform options; returns the item, or null when it isn't one of
    *  the workspace's. The options are read and written whole (no database-specific JSON functions). */
   const setOption = async (c: C, key: string, name: string, value: unknown) => {
@@ -469,7 +472,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   app.post(
     "/app-api/drafts/:id/schedule",
     owned(async (c) =>
-      scheduleDraft(c.env, c.req.param("id") ?? "", await body(c), nowS(), await zone(c), me(c).workspaceId),
+      scheduleDraft(c.env, c.req.param("id") ?? "", await body(c), nowS(), await zone(c), me(c).workspaceId, userOf(c)),
     ),
   );
   // Uploads from the app: the store's upload target per file (the browser sends the bytes straight to it), then the draft.
@@ -479,17 +482,18 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   );
   app.post(
     "/app-api/drafts/new",
-    owned(async (c) => draftFromUploads(c.env, fetcher, await body(c), nowS(), me(c).workspaceId)),
+    owned(async (c) => draftFromUploads(c.env, fetcher, await body(c), nowS(), me(c).workspaceId, userOf(c))),
   );
   // What went wrong on a device (upload failures): kept in the audit log of the caller's workspace, read in the
   // dashboard's audit page.
   app.post("/app-api/client-error", async (c) => {
     const b = await body(c);
     await c.env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, 'owner', 'client_error', NULL, ?2, ?3, ?4)",
+      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'client_error', NULL, ?3, ?4, ?5)",
     )
       .bind(
         nowS(),
+        `user:${userOf(c)}`,
         JSON.stringify({ msg: String(b.msg ?? "").slice(0, 300), detail: b.detail ?? null }).slice(0, 2000),
         me(c).userId ?? null,
         me(c).workspaceId,
@@ -570,7 +574,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     "/app-api/item/texts",
     owned(async (c) => {
       const b = await body(c);
-      return editTexts(c.env, String(b.key ?? ""), b, nowS(), me(c).workspaceId);
+      return editTexts(c.env, String(b.key ?? ""), b, nowS(), me(c).workspaceId, userOf(c));
     }),
   );
 

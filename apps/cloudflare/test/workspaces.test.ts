@@ -506,6 +506,8 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
         "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ina3', 'ina3@example.com', 'Ina', 0, 1) ON CONFLICT (id) DO NOTHING",
         "INSERT INTO users (id, email, name, created_at) VALUES ('ed', 'ed@example.com', 'Ed', 0) ON CONFLICT (id) DO NOTHING",
         "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ed', 'editor', 0) ON CONFLICT DO NOTHING",
+        "INSERT INTO users (id, email, name, created_at) VALUES ('cleo', 'cleo@example.com', 'Cleo', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'cleo', 'creator', 0) ON CONFLICT DO NOTHING",
         "DELETE FROM audit",
       ].map((q) => env.DB.prepare(q)),
     );
@@ -536,13 +538,20 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     // B's admin and editor: none of A's rows, none of the instance's, and no way to ask for them; a device's error
     // in B's app is B's
     expect((await send("ed", "pwa", "/app-api/client-error", { msg: "upload failed" })).status).toBe(200);
+    // and a creator's pause names her, in the log as in the pause itself: not "owner"
+    expect((await send("cleo", "pwa", "/app-api/pause", { reason: "checking" })).status).toBe(200);
+    const paused = await env.DB.prepare("SELECT paused FROM workspace_settings WHERE workspace_id = 'b'").first<string>(
+      "paused",
+    );
+    await env.DB.prepare("UPDATE workspace_settings SET paused = NULL WHERE workspace_id = 'b'").run();
+    expect(JSON.parse(paused ?? "{}")).toMatchObject({ by: "Cleo" });
     for (const who of ["bea", "ed"]) {
       const log = await as(who, "dashboard", "/admin-api/audit");
       expect(log.status, who).toBe(200);
-      expect(
-        (log.json.entries as { action: string }[]).map((x) => x.action),
-        who,
-      ).toEqual(["client_error"]);
+      expect(log.json.entries, who).toEqual([
+        expect.objectContaining({ action: "pause", actor: "user:cleo", user_id: "cleo", who: "Cleo" }),
+        expect.objectContaining({ action: "client_error", actor: "user:ed", user_id: "ed", who: "Ed" }),
+      ]);
       expect((await as(who, "dashboard", "/admin-api/audit?instance=1")).status, who).toBe(403);
     }
     // the instance admin, in no workspace (A's admin is someone else): the instance's rows

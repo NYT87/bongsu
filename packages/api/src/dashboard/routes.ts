@@ -1629,14 +1629,25 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // admins, sign-ins outside any workspace) only to instance admins, on their own (?instance=1)
       const instance = c.req.query("instance") === "1";
       if (instance && !c.get("instanceAdmin")) throw new AdminError(403, "only an instance admin can do this");
+      // who: the person who acted (their name, else their email), when a person did
       const r = await c.env.DB.prepare(
-        `SELECT id, at, actor, action, target, detail FROM audit
-         WHERE (CAST(?1 AS BIGINT) IS NULL OR id < ?1)
-           AND (workspace_id = ?2 OR (CAST(?2 AS TEXT) IS NULL AND workspace_id IS NULL))
-         ORDER BY id DESC LIMIT 50`,
+        `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id, COALESCE(u.name, u.email) AS who
+         FROM audit a LEFT JOIN users u ON u.id = a.user_id
+         WHERE (CAST(?1 AS BIGINT) IS NULL OR a.id < ?1)
+           AND (a.workspace_id = ?2 OR (CAST(?2 AS TEXT) IS NULL AND a.workspace_id IS NULL))
+         ORDER BY a.id DESC LIMIT 50`,
       )
         .bind(before, instance ? null : ws(c))
-        .all<{ id: number; at: number; actor: string; action: string; target: string | null; detail: string | null }>();
+        .all<{
+          id: number;
+          at: number;
+          actor: string;
+          action: string;
+          target: string | null;
+          detail: string | null;
+          user_id: string | null;
+          who: string | null;
+        }>();
       return { entries: r.results };
     }),
   );

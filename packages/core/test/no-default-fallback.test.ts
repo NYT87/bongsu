@@ -1,7 +1,7 @@
 // No workspace and no user is chosen for anyone (docs/superpowers/specs/2026-11-04-phase13-people-roles-design.md,
 // section 0): a fresh instance has no `default` workspace and no `owner` user, so code acting for a caller, an item
 // or an account uses theirs. DEFAULT_WORKSPACE stays only as the exported constant (existing instances' data and the
-// tests read it); "owner" as a user id appears nowhere. The audit actor 'owner' (the app's label) isn't a user id.
+// tests read it); "owner" as a user id appears nowhere. ('owner@app', the app's label on an edit, isn't a user id.)
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
