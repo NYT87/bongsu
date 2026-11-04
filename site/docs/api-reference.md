@@ -16,7 +16,7 @@ Keys look like `bongsu_<random>`. The database keeps only their sha256, a name a
 | `read` | status, queue, items, jobs, notifications, drafts |
 | `draft` | create and withdraw drafts |
 | `plan` | add, update, remove plan items and their texts; list Shorts comments (the owner approves their text); record manual posts and comments |
-| `pause` | pause the scheduler (resuming is owner-only) |
+| `pause` | pause publishing in the key's workspace (resuming needs a person's passkey, in the app) |
 | `reschedule` | move a scheduled YouTube video's release date, at least 1 hour ahead; not given by default |
 
 Create one in the dashboard ([Keys & tokens](the-dashboard.md#keys--tokens)): **Keys & tokens** → **Agent keys** → **Create a key**, name it after the agent or machine using it and tick
@@ -41,10 +41,10 @@ accounts, plan, drafts, jobs and Shorts list. Items of other workspaces look abs
 
 ## CLI tokens
 
-A person's own token for the `bongsu` command line, made in **Keys & tokens** → **Your CLI tokens** (with a
-fresh passkey check) for 30, 90 or 365 days. It looks like `bongsu_cli_<random>` and works wherever an agent key does,
-but acts as its person, with their role's rights in the workspace, read on every request: an owner's token can also
-approve and resume. It stops working when it expires, when it's revoked, or when its person leaves the workspace.
+A person's own token for the `bongsu` command line, made in **Keys & tokens** → **Your CLI tokens** (with a fresh
+passkey check) for 30, 90 or 365 days. It looks like `bongsu_cli_<random>` and works wherever an agent key does, but
+acts as its person, with their role's rights in the workspace, read on every request: an admin's or creator's token can
+also approve and resume. It stops working when it expires, when it's revoked, or when its person leaves the workspace.
 Agent keys never get those rights.
 
 ## MCP
@@ -153,7 +153,7 @@ Three REST routes are not tools: MCP never lists them. They exist for the `bongs
 
 | Route | Needs | What it does |
 |---|---|---|
-| `GET /v1/approve/<key>` | a CLI token with `approve` (owner, admin, approver) | What would be approved: texts, media names and checksums, lint checks, `due`/`due_at`, and a `snapshot` |
+| `GET /v1/approve/<key>` | a CLI token with `approve` (admin, creator, instance admin) | What would be approved: texts, media names and checksums, lint checks, `due`/`due_at`, and a `snapshot` |
 | `POST /v1/approve` | the same | Body `{ key, snapshot }`. Approves only if the item still matches the snapshot (else 409 `changed`); answers `{ approved, key, due }` |
 | `GET /v1/export?texts=1` | `read` | Every plan item of the workspace as `{ items }`; `texts=1` adds the texts |
 

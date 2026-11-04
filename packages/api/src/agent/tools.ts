@@ -207,7 +207,8 @@ export const TOOLS: Tool[] = [
   {
     name: "list_drafts",
     scope: "read",
-    description: "Drafts proposed by agents, waiting for the owner (status draft, or withdrawn/approved/refused).",
+    description:
+      "Drafts proposed by agents, waiting for a person to review them (status draft, or withdrawn/approved/refused).",
     inputSchema: obj({ status: { type: "string", enum: ["draft", "withdrawn", "approved", "refused"] } }),
     run: (c, a) => ops.listDrafts(c, { status: a.status as string | undefined }),
   },
@@ -215,7 +216,7 @@ export const TOOLS: Tool[] = [
     name: "create_draft",
     scope: "draft",
     description:
-      "Propose a Reel, photo, carousel or Shorts comment for the owner to review. A draft is never published by itself: only the owner can approve.",
+      "Propose a Reel, photo, carousel or Shorts comment for a person to review. A draft is never published by itself: only a person with a passkey (an admin or creator of the workspace) approves.",
     inputSchema: obj(
       {
         kind: { type: "string", enum: ["reel", "photo", "carousel", "shorts_comment"] },
@@ -254,7 +255,7 @@ export const TOOLS: Tool[] = [
     name: "plan_add",
     scope: "plan",
     description:
-      "Add a post to the plan (not approved: the owner approves it). format is one of the account's platform formats (list_accounts shows them; Instagram: video, image, carousel, story); leave it out for a post whose media decide (one image, several = carousel, one video). The older kind (reel / post) still works. Pass its texts (caption, comment, comment2, alt) to put them straight into the scheduler, which posts only its own copy; without them, the owner adds them in the app or with bongsu texts set. One item per account per hour: a date/time in an hour the account already uses is refused (409); several a day at different hours are fine. folder: project under channels/ (vlogs/CONTENT/20260823_LISBON); name: the Reel's base or the post dir (posts/carousel3_green).",
+      "Add a post to the plan (not approved: a person approves it). format is one of the account's platform formats (list_accounts shows them; Instagram: video, image, carousel, story); leave it out for a post whose media decide (one image, several = carousel, one video). The older kind (reel / post) still works. Pass its texts (caption, comment, comment2, alt) to put them straight into the scheduler, which posts only its own copy; without them, a person adds them in the app or with bongsu texts set. One item per account per hour: a date/time in an hour the account already uses is refused (409); several a day at different hours are fine. folder: project under channels/ (vlogs/CONTENT/20260823_LISBON); name: the Reel's base or the post dir (posts/carousel3_green).",
     inputSchema: obj(
       {
         format: {
@@ -410,7 +411,8 @@ export const TOOLS: Tool[] = [
   {
     name: "pause_scheduler",
     scope: "pause",
-    description: "Stop all publishing now. Only the owner can resume.",
+    description:
+      "Stop publishing in this workspace now (other workspaces go on). Only a person can resume, in the app.",
     inputSchema: obj({ reason: { type: "string" } }, ["reason"]),
     run: (c, a) => ops.pause(c, String(a.reason)),
   },

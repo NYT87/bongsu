@@ -1,7 +1,8 @@
 # What agents can do
 
 An agent works through an agent key, and the key's scopes decide what it may do. What it can never do doesn't depend on
-the scopes: **approve, resume publishing, and manage keys are yours alone**, and they need your passkey.
+the scopes: **no agent key approves, resumes publishing or manages keys**. Those are people's: in the app with their
+passkey, and approving also with their own CLI token ([`bongsu approve`](cli.md)), as their role allows.
 
 ## What a key can do
 
@@ -23,8 +24,8 @@ hour ahead. Each move is recorded and you are notified.
 - **Resume** after a pause, or create, change or revoke keys.
 - **Publish.** The scheduler publishes, and only what you approved.
 
-A person's CLI token is different: it acts as its person ([The command line](cli.md)). An owner's token can approve
-from a terminal; an agent key never can.
+A person's CLI token is different: it acts as its person ([The command line](cli.md)). An admin's or creator's token can
+approve from a terminal; an agent key never can.
 
 ## Why a change needs a new approval
 
@@ -34,7 +35,7 @@ out, so the post goes back to **Re-approve** and nothing is published until you 
 change, the post stays approved and you approve the comments.
 
 An approval is also good for one account: removing a post and planning it again for another account needs a new one.
-The owner's view of this is in [The phone app](the-app.md#after-a-change) and [How it works](how-it-works.md).
+What you see of this is in [The phone app](the-app.md#after-a-change) and [How it works](how-it-works.md).
 
 ## Drafts
 

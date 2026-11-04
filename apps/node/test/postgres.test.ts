@@ -73,8 +73,20 @@ beforeAll(async () => {
   const applied = await migratePostgres(driver, join(__dirname, "../../../migrations/postgres"));
   expect(applied).toContain("0009_baseline.sql");
   expect(await migratePostgres(driver, join(__dirname, "../../../migrations/postgres"))).toEqual([]);
-  // the baseline brings the default workspace and its owner, as SQLite's migrations do
-  expect(await db.prepare("SELECT role FROM memberships WHERE user_id = 'owner'").first()).toEqual({ role: "owner" });
+  // a fresh instance has no workspace or user (0018 drops the baseline's empty seed): the tests' own, as on SQLite
+  expect(await db.prepare("SELECT COUNT(*) AS n FROM users").first()).toEqual({ n: 0 });
+  await db.batch([
+    db.prepare("INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Default', 0) ON CONFLICT DO NOTHING"),
+    db.prepare(
+      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 0) ON CONFLICT DO NOTHING",
+    ),
+    db.prepare(
+      "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', NULL, 'Owner', 0, 1) ON CONFLICT DO NOTHING",
+    ),
+    db.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', 0) ON CONFLICT DO NOTHING",
+    ),
+  ]);
   await db
     .prepare(
       "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",
@@ -106,7 +118,16 @@ describe("Bongsu on Postgres (PGlite)", () => {
       response: { id: "laptop" },
     });
     expect(v.status).toBe(200);
-    expect((await call("/admin-api/state")).json).toMatchObject({ signedIn: true, bootstrapNeeded: false });
+    expect((await call("/admin-api/state")).json).toMatchObject({
+      signedIn: true,
+      bootstrapNeeded: false,
+      instanceAdmin: true,
+      noWorkspace: true,
+    });
+    // the first run: the instance admin creates the first workspace, and works in it
+    const made = await call("/admin-api/workspaces", { name: "Demo Travel", timezone: "Asia/Seoul", admin: "me" });
+    expect(made.status).toBe(200);
+    expect((await call("/admin-api/state")).json).toMatchObject({ noWorkspace: false, role: "admin" });
     const overview = await call("/admin-api/overview");
     expect(overview.json).toMatchObject({ accounts: 0, keys: 0, passkeys: 1 });
     await call("/admin-api/settings", { timezone: "Asia/Seoul", digestHour: 7 });
@@ -124,8 +145,13 @@ describe("Bongsu on Postgres (PGlite)", () => {
     expect((await call("/admin-api/accounts")).status).toBe(200);
     expect((await call("/admin-api/connections")).status).toBe(200);
     expect((await call("/admin-api/passkeys")).status).toBe(200);
+    // a workspace's audit holds only its own rows; the setup's rows are the instance's, for an instance admin
     const audit = (await call("/admin-api/audit")).json.entries as { action: string }[];
-    expect(audit.map((a) => a.action)).toEqual(expect.arrayContaining(["bootstrap", "settings", "key_create"]));
+    const actions = audit.map((a) => a.action);
+    expect(actions).toEqual(expect.arrayContaining(["settings", "key_create", "token_create"]));
+    expect(actions).not.toContain("bootstrap");
+    const instance = (await call("/admin-api/audit?instance=1")).json.entries as { action: string }[];
+    expect(instance.map((a) => a.action)).toContain("bootstrap");
   });
 
   it("the app's API on a session", async () => {

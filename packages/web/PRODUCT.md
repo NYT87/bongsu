@@ -28,7 +28,7 @@ in seconds.
 ## Positioning
 
 A one-person control room for the creator's own pipeline, not a general social-media scheduler. Its plan comes from the
-creator's repo and Drive (captions, `*.comment.txt`, `alt.txt`, media), every post needs the owner's passkey approval,
+creator's repo and Drive (captions, `*.comment.txt`, `alt.txt`, media), every post needs a person's passkey approval,
 and it covers both YouTube (Shorts comments) and Instagram in one queue.
 
 ## Operating Context
@@ -57,12 +57,13 @@ and it covers both YouTube (Shorts comments) and Instagram in one queue.
 
 ## Capabilities and Constraints
 
-- Passkey sign-in (WebAuthn). **Only the owner approves and resumes**, each with a fresh passkey assertion; agent keys
-  can plan but never approve. Holding a single item needs no passkey (it only stops it; the approval is kept).
+- Passkey sign-in (WebAuthn). **Only a person approves and resumes** (the workspace's admins and creators; never an
+  editor), each with a fresh passkey assertion; agent keys can plan but never approve. Holding a single item needs no
+  passkey (it only stops it; the approval is kept).
 - Rescheduling an approved item needs a new approval.
-- The owner moves a YouTube video's release date with a passkey. Agent keys can only with the `reschedule` scope and at
+- A person moves a YouTube video's release date with a passkey. Agent keys can only with the `reschedule` scope and at
   least an hour's lead.
-- **Pause** stops all publishing; only the owner resumes, in the app.
+- **Pause** stops publishing in this workspace (the others go on); only an admin or creator resumes, in the app.
 - Publishing is immediate on Instagram's side and can't be undone through the API, so approval and the preview of
   exactly what will go out (media, caption, alt text, comment, account, time) matter more than speed.
 - Cloudflare Workers + D1 on the free plan; media reaches Instagram through signed links to Drive. Posted media moves to
@@ -81,6 +82,6 @@ and it covers both YouTube (Shorts comments) and Instagram in one queue.
 
 1. **Nothing goes out unseen.** Show exactly what will be published, where and when, before it can be approved.
 2. **Phone first, seconds per check.** Today's state and the next action are reachable with one thumb.
-3. **The owner holds the keys.** Approve, resume and anything irreversible need the passkey; automation proposes, the
-   owner decides.
+3. **People hold the keys.** Approve, resume and anything irreversible need a person's passkey; automation proposes,
+   people decide.
 4. **Honest state.** Failures, holds, missing media and paused publishing are shown plainly, never hidden behind success.

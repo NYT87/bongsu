@@ -73,7 +73,7 @@ beforeEach(async () => {
     "INSERT INTO users (id, name, created_at) VALUES ('bea', 'Bea', 0) ON CONFLICT (id) DO NOTHING",
   ).run();
   await env.DB.prepare(
-    "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'viewer', 0) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'viewer'",
+    "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'editor', 0) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'editor'",
   ).run();
   e = await testEnv(env, {
     VAPID_PUBLIC_KEY: k.VAPID_PUBLIC_KEY,
@@ -158,7 +158,7 @@ describe("push delivery", () => {
       "INSERT INTO users (id, name, created_at) VALUES ('cho', 'Cho', 0) ON CONFLICT (id) DO NOTHING",
     ).run();
     await env.DB.prepare(
-      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'cho', 'viewer', 0) ON CONFLICT DO NOTHING",
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'cho', 'editor', 0) ON CONFLICT DO NOTHING",
     ).run();
     await subscribe(FCM("cho"), "cho", "default");
     const bea = await asUser("bea");

@@ -29,7 +29,15 @@ const postgresDb = async () => {
 async function fill(db: Db) {
   const s = (sql: string, ...v: unknown[]) => db.prepare(sql).bind(...v);
   await db.batch([
-    s("UPDATE users SET email = 'owner@example.com' WHERE id = 'owner'"),
+    // a fresh database has no workspace or user (0018): the instance's own
+    s("INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Default', 0)"),
+    s(
+      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 0)",
+    ),
+    s(
+      "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', 'owner@example.com', 'Owner', 0, 1)",
+    ),
+    s("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', 0)"),
     s("INSERT INTO users (id, email, name, created_at) VALUES ('bea', 'bea@example.com', 'Bea', 5)"),
     s("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'bea', 'editor', 5)"),
     s(

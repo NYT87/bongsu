@@ -11,6 +11,9 @@ import { steps as dropOldStats } from "./0014_drop_labels_manual_stats";
 import { steps as dropReports } from "./0015_drop_reports";
 import { steps as workspaceNotify } from "./0016_workspace_notify";
 import { steps as mediaStore } from "./0017_media_store";
+import { steps as people } from "./0018_people";
+import { steps as oauthStateWorkspace } from "./0019_oauth_state_workspace";
+import { steps as oauthStateBrowser } from "./0020_oauth_state_browser";
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -32,4 +35,7 @@ export const MIGRATIONS: Migration[] = [
   { name: "0015_drop_reports", steps: dropReports },
   { name: "0016_workspace_notify", steps: workspaceNotify },
   { name: "0017_media_store", steps: mediaStore },
+  { name: "0018_people", steps: people },
+  { name: "0019_oauth_state_workspace", steps: oauthStateWorkspace },
+  { name: "0020_oauth_state_browser", steps: oauthStateBrowser },
 ];

@@ -1,6 +1,10 @@
 // The scheduler's tick, run by the cron every 5 minutes.
 //
-//   lock → paused? → discover due items → advance active jobs one step each → Shorts comments → prune audit
+//   lock → held workspaces (paused, archived) → discover due items → advance active jobs one step each → Shorts comments
+//   → prune audit
+//
+// A held workspace's (paused or archived) accounts aren't discovered, its jobs aren't advanced and its Shorts comments
+// wait; the other workspaces go on as usual.
 //
 // Everything it reads is in D1 (src/data.ts): the plan, approvals, posted log, Shorts comments and the texts
 // (captions, comments, alt texts; a repo item's are copied there by an importer); the media is in the media store. Nothing
@@ -11,17 +15,18 @@
 // dry-run (DRY_RUN != "0") nothing is written outside the jobs/audit tables: each item ends as a done job with
 // dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
 
-import { type Account, DEFAULT_WORKSPACE, findAccount, listAccounts } from "./accounts";
+import { type Account, findAccount, listAccounts } from "./accounts";
 import { AUDIT_KEEP_S, CATCH_UP_S, JOBS_PER_TICK, JOBS_PER_TICK_MAX, LINK_TTL_S, MAX_POLLS } from "./constants";
 import {
   contentPaths,
   dueItems,
   getItem,
+  type Held,
+  heldWorkspaces,
   isPosted,
   itemDue,
   itemOptions,
   latestApprovals,
-  pausedState,
   pendingShorts,
   readText,
   recordCommented,
@@ -138,6 +143,8 @@ interface JobRow {
 class Ctx {
   /** The instance's media stores, read at the start of the run (tick). */
   stores!: MediaStores;
+  /** The workspaces this run leaves alone (data.ts heldWorkspaces), read once at its start. */
+  held = new Map<string, Held>();
   note: Notifier;
   dry: boolean;
   nowS: number;
@@ -151,13 +158,13 @@ class Ctx {
     this.dry = env.DRY_RUN !== "0";
     this.note = notifier(env, deps.fetch, this.nowS);
   }
-  /** The provider that reaches the job's account (its connection), looked up once per run. Jobs queued before the
-   *  providers name only a Composio connection. */
-  async provider(p: Payload): Promise<Provider> {
-    const k = `${p.workspaceId ?? DEFAULT_WORKSPACE}/${p.username ?? p.account}`;
+  /** The provider that reaches the job's account (its connection, in the job's workspace), looked up once per run.
+   *  Jobs queued before the providers name only a Composio connection. */
+  async provider(p: Payload, workspaceId: string): Promise<Provider> {
+    const k = `${workspaceId}/${p.username ?? p.account}`;
     let pr = this.providers.get(k);
     if (!pr) {
-      const a = p.username ? await findAccount(this.env.DB, p.username, p.workspaceId ?? DEFAULT_WORKSPACE) : null;
+      const a = p.username ? await findAccount(this.env.DB, p.username, workspaceId) : null;
       pr =
         (a && (await providerFor(this.env, this.deps.fetch, a))) ??
         new InstagramProvider(
@@ -220,10 +227,8 @@ export async function tick(
   try {
     const c = new Ctx(env, deps);
     c.stores = await mediaStores(env, deps.fetch);
-    if (await pausedState(env.DB)) {
-      await audit(env.DB, nowS, "paused", "settings:paused", {});
-      return { status: "paused" };
-    }
+    // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
+    c.held = await heldWorkspaces(env.DB);
     if (part === "shorts") {
       await shortsComments(c);
       await env.DB.prepare("DELETE FROM audit WHERE at < ?1")
@@ -232,14 +237,20 @@ export async function tick(
       return { status: "ok", detail: { part, dry_run: c.dry } };
     }
     // every account on a platform Bongsu publishes to (YouTube's are only commented on, below)
-    for (const a of await listAccounts(env.DB)) if (platform(a.platform)?.formats.length) await discover(c, a);
+    for (const a of await listAccounts(env.DB))
+      if (platform(a.platform)?.formats.length && !c.held.has(a.workspaceId)) await discover(c, a);
+    // a held workspace's jobs wait where they are, and don't take the run's share from the others
     const active = await env.DB.prepare(
-      "SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1 ORDER BY due_at LIMIT ?2",
+      `SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1
+         AND workspace_id NOT IN ${jsonList(env.DB, 3)} ORDER BY due_at LIMIT ?2`,
     )
-      .bind(nowS, jobsPerTick(env))
+      .bind(nowS, jobsPerTick(env), JSON.stringify([...c.held.keys()]))
       .all<JobRow>();
     for (const job of active.results) await advance(c, job);
-    return { status: "ok", detail: { part, advanced: active.results.length, dry_run: c.dry } };
+    return {
+      status: "ok",
+      detail: { part, advanced: active.results.length, held: [...c.held.keys()], dry_run: c.dry },
+    };
   } finally {
     await release(env.DB, lock, holder);
   }
@@ -261,6 +272,8 @@ interface Candidate {
   dueAt: number;
   payload: Payload;
   mediaCount: number;
+  /** The account's workspace: the job's. */
+  workspaceId: string;
 }
 
 async function discover(c: Ctx, a: Account) {
@@ -281,6 +294,7 @@ async function discover(c: Ctx, a: Account) {
       format: i.format ?? null,
       dueAt: at,
       mediaCount: i.format === "video" ? 1 : 0,
+      workspaceId: a.workspaceId,
       payload: {
         ...base,
         postedKey: shortKey(i.item_key),
@@ -392,11 +406,11 @@ async function create(c: Ctx, cand: Candidate, a: Approval | undefined) {
       c.dry ? 1 : 0,
       JSON.stringify(payload),
       c.nowS,
-      cand.payload.workspaceId ?? DEFAULT_WORKSPACE,
+      cand.workspaceId,
     )
     .first<{ id: number }>();
   if (r && v.state !== "pending") {
-    await c.note.send(N.jobVerdict(cand.key, v.state, v.reason), cand.payload.workspaceId ?? DEFAULT_WORKSPACE);
+    await c.note.send(N.jobVerdict(cand.key, v.state, v.reason), cand.workspaceId);
     await c.setJob(r.id, { notified: true });
   }
 }
@@ -554,12 +568,19 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
 
   if (c.dry) {
     await c.setJob(job.id, { state: "done", dry_run: 1, last_error: "dry run: nothing published" });
-    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, {
-      kind: job.kind,
-      account: p.account,
-      media: media.length,
-      location: p.location,
-    });
+    await audit(
+      c.env.DB,
+      c.nowS,
+      "would_publish",
+      job.item_key,
+      {
+        kind: job.kind,
+        account: p.account,
+        media: media.length,
+        location: p.location,
+      },
+      job.workspace_id,
+    );
     await c.note.send(
       N.dryRunPublish(
         job.item_key,
@@ -602,7 +623,7 @@ function postOptions(p: Payload, format: Format): Record<string, unknown> {
 
 /** The provider's first step; its state goes with the job (payload.step) for check and finish on the next runs. */
 async function startPublishing(c: Ctx, job: JobRow, p: Payload, post: OutgoingPost) {
-  const pr = await c.provider(p);
+  const pr = await c.provider(p, job.workspace_id);
   const step = await pr.start(post);
   const next: Payload = {
     ...p,
@@ -644,7 +665,14 @@ async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
   if (v.problem) return refuse(c, job, `trial copy: ${v.problem}`);
   if (c.dry) {
     await c.setJob(job.id, { state: "done", dry_run: 1, last_error: "dry run: trial copy not posted" });
-    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, { kind: "trial", account: p.account, media: 1 });
+    await audit(
+      c.env.DB,
+      c.nowS,
+      "would_publish",
+      job.item_key,
+      { kind: "trial", account: p.account, media: 1 },
+      job.workspace_id,
+    );
     return;
   }
   const m = p.approval!.media[0];
@@ -665,12 +693,12 @@ async function queueTrial(c: Ctx, job: JobRow, p: Payload) {
     `INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id)
      VALUES (?1, 'video', ?2, ?3, 'pending', 0, ?4, ?3, ?3, ?5) ON CONFLICT (item_key) DO NOTHING`,
   )
-    .bind(`trial:${job.item_key}`, p.account, c.nowS, JSON.stringify(payload), p.workspaceId ?? DEFAULT_WORKSPACE)
+    .bind(`trial:${job.item_key}`, p.account, c.nowS, JSON.stringify(payload), job.workspace_id)
     .run();
 }
 
 async function stepContainer(c: Ctx, job: JobRow, p: Payload) {
-  const pr = await c.provider(p);
+  const pr = await c.provider(p, job.workspace_id);
   const step = p.step ?? (await legacyStep(c, job, p));
   const next = await pr.check(step);
   if (next.state === "failed") return failStep(c, job, p, pr, next);
@@ -703,7 +731,14 @@ async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step
       last_error: "dry run: nothing published (the container stays unpublished)",
       payload: { ...p, step },
     });
-    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, { kind: job.kind, account: p.account });
+    await audit(
+      c.env.DB,
+      c.nowS,
+      "would_publish",
+      job.item_key,
+      { kind: job.kind, account: p.account },
+      job.workspace_id,
+    );
     await c.note.send(N.dryRunPublish(job.item_key, job.kind, p.account), job.workspace_id);
     return;
   }
@@ -755,12 +790,19 @@ async function pollWait(c: Ctx, job: JobRow, pr: Provider) {
 /** A comment under the live post, exactly as approved: the text is read again and must still hash to the approval's
  *  (an agent can edit it between the post and this run); nothing goes out in dry run. Never fatal, the post is live:
  *  the note says what didn't happen, for the owner to do by hand. */
-async function postComment(c: Ctx, p: Payload, what: string, text: string | null, approvedSha: string | null) {
+async function postComment(
+  c: Ctx,
+  job: JobRow,
+  p: Payload,
+  what: string,
+  text: string | null,
+  approvedSha: string | null,
+) {
   if (!text && !approvedSha) return "";
   if ((text ? await sha256Hex(text) : null) !== approvedSha) return ` (the ${what} changed after approval: not posted)`;
   if (c.dry) return ` (dry run: ${what} not posted)`;
   try {
-    await (await c.provider(p)).comment?.(p.mediaId!, text!);
+    await (await c.provider(p, job.workspace_id)).comment?.(p.mediaId!, text!);
     return "";
   } catch (e) {
     return ` (${what} failed: ${(e as Error).message}; post it by hand)`;
@@ -776,7 +818,7 @@ async function stepPublished(c: Ctx, job: JobRow, p: Payload) {
   if (!p.commented) {
     const caption = captionText((await c.read(p.captionPath)) ?? "");
     const comment = commentText(caption, await c.read(p.commentPath));
-    const note = await postComment(c, p, "self-comment", comment, p.approval?.commentSha256 ?? null);
+    const note = await postComment(c, job, p, "self-comment", comment, p.approval?.commentSha256 ?? null);
     p.commented = true;
     firstNote = note;
     await c.setJob(job.id, { payload: p, last_error: note || null });
@@ -784,7 +826,7 @@ async function stepPublished(c: Ctx, job: JobRow, p: Payload) {
   if (!p.commented2) {
     // the second comment, right after the first (only when it has text)
     const comment2 = p.comment2Path ? comment2Text(await c.read(p.comment2Path)) : null;
-    const note = await postComment(c, p, "second comment", comment2, p.approval?.comment2Sha256 ?? null);
+    const note = await postComment(c, job, p, "second comment", comment2, p.approval?.comment2Sha256 ?? null);
     p.commented2 = true;
     await c.setJob(job.id, { payload: p, ...(note ? { last_error: `${firstNote}${note}`.trim() } : {}) });
   }
@@ -845,7 +887,9 @@ async function shortsVerdict(r: ShortRow, channel: string, a: Approval | undefin
  *  post does; one refused for the lack of it is taken up again once approved. */
 async function shortsComments(c: Ctx) {
   let budget = 2; // comments per tick (each costs ~3 subrequests)
-  const accounts = (await listAccounts(c.env.DB)).filter((a) => platform(a.platform)?.features.commentOnExisting);
+  const accounts = (await listAccounts(c.env.DB)).filter(
+    (a) => platform(a.platform)?.features.commentOnExisting && !c.held.has(a.workspaceId),
+  );
   for (const s of accounts) {
     if (budget <= 0) return;
     const pending = await pendingShorts(c.env.DB, s.id);

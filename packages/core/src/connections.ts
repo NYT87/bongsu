@@ -3,19 +3,42 @@
 // verifier server side (oauth_states, single use), and a finished flow's grant becomes a connection (credentials
 // encrypted with ENCRYPTION_KEY) plus the accounts it reaches: existing rows are found again by their platform id, so a
 // reconnect keeps each account's plan and settings. Providers only supply the exchange (providers/index.ts).
-import { DEFAULT_WORKSPACE, listAccounts } from "./accounts";
+import { listAccounts } from "./accounts";
 import { decryptSecret, encryptSecret } from "./crypto";
 import type { Db, DbStatement } from "./db";
 import type { Env } from "./env";
 import { sha256Hex } from "./formats/approved";
 import { connectSpecs, providerRegistration } from "./providers/index";
 import type { ConnectSpec, Grant } from "./providers/types";
-import { userWorkspace } from "./workspaces";
+import { mayConnect } from "./roles";
+import { sessionWorkspace } from "./workspaces";
 
 /** How long a started flow stays usable. */
 export const STATE_S = 15 * 60;
 
-export class ConnectError extends Error {}
+/** Where a flow's callback sends the browser back: the dashboard's Connections page, or the app's Settings. */
+export type ConnectBack = "dashboard" | "app";
+
+/** A flow that can't go on. `back` is where it started, once the state says so (an unknown state doesn't). */
+export class ConnectError extends Error {
+  constructor(
+    message: string,
+    readonly back?: ConnectBack,
+    /**
+     * "browser": the state is unknown or used, the flow's cookie is missing or doesn't match, or the flow was started
+     * before its browser was kept (no browser_hash, from before migration 0020). Those are one condition on purpose:
+     * telling them apart would let a caller without the cookie probe whether a state exists.
+     * It only tells the app to suggest the phone's own browser.
+     */
+    readonly hint?: "browser",
+  ) {
+    super(message);
+  }
+}
+
+// A flow started in the app keeps "<provider>@app" as its name (oauth_states.provider): the callback is the same URL
+// either way (the one registered in the OAuth app), and only the way back differs.
+const APP_FLOW = "@app";
 
 const b64url = (b: Uint8Array) =>
   btoa(String.fromCharCode(...b))
@@ -31,6 +54,21 @@ export const redirectUri = (publicUrl: string, provider: string) =>
 /** Where Google sends the browser back after Connect Google Drive (the media store; media/manage.ts). */
 export const driveRedirectUri = (publicUrl: string) =>
   `${publicUrl.replace(/\/$/, "")}/admin-api/media-stores/drive/callback`;
+
+/** The path a flow's browser cookie is sent to: exactly its callback (the redirect URL's path). */
+export const callbackPath = (redirect: string) => new URL(redirect).pathname;
+
+/** The callback path of a provider's connect flow; null for a name no provider has (no cookie was set for it). */
+export const connectCallbackPath = (publicUrl: string, provider: string) =>
+  providerRegistration(provider)?.connect ? callbackPath(redirectUri(publicUrl, provider)) : null;
+
+/** A started flow: the URL to send the browser to, and the random value to keep in that browser's cookie (sent only to
+ *  `cookiePath`, the callback) so that only the browser that started the flow can finish it. */
+export interface StartedFlow {
+  url: string;
+  browser: string;
+  cookiePath: string;
+}
 
 // ---- OAuth apps
 
@@ -103,12 +141,13 @@ async function appFor(env: Env, provider: string) {
 
 // ---- the flow
 
-/** Starts an OAuth flow: the URL to send the browser to. `reconnect` names the connection it renews. */
+/** Starts an OAuth flow: the URL to send the browser to and its browser cookie. `reconnect` names the connection it
+ *  renews; the callback saves the connection in `workspaceId` and sends the browser `back` to where it started. */
 export async function startConnect(
   env: Env,
   provider: string,
-  o: { userId: string; workspaceId: string; reconnect?: string | null; nowS: number },
-) {
+  o: { userId: string; workspaceId: string; back: ConnectBack; reconnect?: string | null; nowS: number },
+): Promise<StartedFlow> {
   const reg = providerRegistration(provider);
   const spec = reg?.connect;
   if (!reg?.exchange || !spec?.authorizeUrl) throw new ConnectError(`${provider} has no authorization flow`);
@@ -120,29 +159,46 @@ export async function startConnect(
     if (c?.provider !== provider) throw new ConnectError("no such connection to reconnect");
   }
   return authorizeUrl(env, spec, app, {
-    flow: provider,
+    flow: o.back === "app" ? `${provider}${APP_FLOW}` : provider,
     userId: o.userId,
+    workspaceId: o.workspaceId,
     connectionId: o.reconnect ?? null,
     nowS: o.nowS,
   });
 }
 
-/** Starts any OAuth flow: keeps its state (hashed) and PKCE verifier, single use, for STATE_S; returns the URL to send
- *  the browser to. `flow` names what the callback finishes (a provider, or "media:drive"). */
+/** Starts any OAuth flow: keeps its state (hashed), its PKCE verifier and the hash of the starting browser's cookie,
+ *  single use, for STATE_S; returns the URL to send the browser to and the cookie's value and path. `flow` names what
+ *  the callback finishes (a provider, or "media:drive"); `workspaceId` is where it connects into (null: the instance,
+ *  as Drive). */
 export async function authorizeUrl(
   env: Env,
   spec: Pick<ConnectSpec, "authorizeUrl" | "scopes" | "scopeSeparator" | "pkce" | "authorizeParams">,
   app: { clientId: string; redirectUri: string },
-  o: { flow: string; userId: string; connectionId: string | null; nowS: number },
-) {
+  o: { flow: string; userId: string; workspaceId: string | null; connectionId: string | null; nowS: number },
+): Promise<StartedFlow> {
   await env.DB.prepare("DELETE FROM oauth_states WHERE expires_at < ?1").bind(o.nowS).run(); // flows never finished
   const state = random();
   const verifier = spec.pkce ? random(48) : null;
+  // The state alone would let anyone finish the flow: a provider link sent to someone else would connect their account
+  // into the sender's workspace. The callback also wants this value back from the starting browser's cookie.
+  const browser = random();
   await env.DB.prepare(
-    `INSERT INTO oauth_states (state_hash, provider, user_id, verifier, connection_id, created_at, expires_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+    `INSERT INTO oauth_states (state_hash, provider, user_id, workspace_id, verifier, connection_id, created_at,
+       expires_at, browser_hash)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
   )
-    .bind(await sha256Hex(state), o.flow, o.userId, verifier, o.connectionId, o.nowS, o.nowS + STATE_S)
+    .bind(
+      await sha256Hex(state),
+      o.flow,
+      o.userId,
+      o.workspaceId,
+      verifier,
+      o.connectionId,
+      o.nowS,
+      o.nowS + STATE_S,
+      await sha256Hex(browser),
+    )
     .run();
   const url = new URL(spec.authorizeUrl ?? "");
   url.searchParams.set("client_id", app.clientId);
@@ -156,7 +212,7 @@ export async function authorizeUrl(
     url.searchParams.set("code_challenge_method", "S256");
   }
   for (const [k, v] of Object.entries(spec.authorizeParams ?? {})) url.searchParams.set(k, v);
-  return url.toString();
+  return { url: url.toString(), browser, cookiePath: callbackPath(app.redirectUri) };
 }
 
 /** What a provider sends back to a callback. */
@@ -167,49 +223,99 @@ export interface CallbackQuery {
   errorDescription?: string | null;
 }
 
-/** The callback's checks: the state is this flow's, unused and in time, and a code came instead of an error. Uses the
- *  state up; returns who started the flow, the PKCE verifier and the code. */
-export async function takeState(env: Env, flow: string, q: CallbackQuery, nowS: number) {
+// Compares two hashes without returning early on the first difference.
+function sameHash(a: string, b: string) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+const INVALID = "this sign-in link isn't valid (or was used already, or opened in another browser): start again";
+
+/** The callback's checks: the state is this flow's, unused and in time, came back to the browser that started it
+ *  (`browser`: its cookie), and a code came instead of an error. Uses the state up; returns who started the flow and
+ *  where (the workspace, the app it goes back to), the PKCE verifier and the code. The flow started in the dashboard or
+ *  the app: either is this flow's. */
+export async function takeState(env: Env, flow: string, q: CallbackQuery, browser: string | null, nowS: number) {
   if (!q.state) throw new ConnectError("the provider sent no state: start again from the dashboard");
+  const stateHash = await sha256Hex(q.state);
+  // The browser first, before the state is used up: another browser (or none) leaves it to the one that started it.
+  // A flow started before browser_hash existed (NULL) can't be checked, so it's refused too.
+  const pending = await env.DB.prepare(
+    "SELECT browser_hash FROM oauth_states WHERE state_hash = ?1 AND used_at IS NULL",
+  )
+    .bind(stateHash)
+    .first<{ browser_hash: string | null }>();
+  if (!pending?.browser_hash || !browser || !sameHash(await sha256Hex(browser), pending.browser_hash))
+    throw new ConnectError(INVALID, undefined, "browser");
   const st = await env.DB.prepare(
     `UPDATE oauth_states SET used_at = ?1 WHERE state_hash = ?2 AND used_at IS NULL
-     RETURNING provider, user_id, verifier, connection_id, expires_at`,
+     RETURNING provider, user_id, workspace_id, verifier, connection_id, expires_at`,
   )
-    .bind(nowS, await sha256Hex(q.state))
+    .bind(nowS, stateHash)
     .first<{
       provider: string;
       user_id: string;
+      workspace_id: string | null;
       verifier: string | null;
       connection_id: string | null;
       expires_at: number;
     }>();
-  if (!st || st.provider !== flow)
-    throw new ConnectError("this sign-in link isn't valid (or was used already): start again");
-  if (st.expires_at < nowS) throw new ConnectError("that took too long: start again");
+  if (!st || (st.provider !== flow && st.provider !== `${flow}${APP_FLOW}`)) throw new ConnectError(INVALID);
+  const back: ConnectBack = st.provider === flow ? "dashboard" : "app";
+  if (st.expires_at < nowS) throw new ConnectError("that took too long: start again", back);
   if (q.error)
     throw new ConnectError(
       q.error === "access_denied"
         ? "you cancelled, or didn't allow access"
         : `${flow}: ${q.errorDescription ?? q.error}`,
+      back,
     );
-  if (!q.code) throw new ConnectError("the provider sent no code");
-  return { userId: st.user_id, verifier: st.verifier, connectionId: st.connection_id, code: q.code };
+  if (!q.code) throw new ConnectError("the provider sent no code", back);
+  return {
+    userId: st.user_id,
+    workspaceId: st.workspace_id,
+    back,
+    verifier: st.verifier,
+    connectionId: st.connection_id,
+    code: q.code,
+  };
 }
 
-/** The provider's redirect back: checks the state (this provider's, unused, in time), exchanges the code and saves
- *  the grant in the workspace of the user who started the flow. `error` is what the provider sent instead of a code
- *  (the owner cancelled, the app was refused). */
-export async function finishConnect(env: Env, fetcher: typeof fetch, provider: string, q: CallbackQuery, nowS: number) {
-  const st = await takeState(env, provider, q, nowS);
-  const reg = providerRegistration(provider)!;
-  const workspaceId = await userWorkspace(env.DB, st.userId);
-  if (!workspaceId) throw new ConnectError("the user who started this belongs to no workspace");
-  const grant = await reg.exchange!(fetcher, await appFor(env, provider), st.code, st.verifier, nowS);
-  return {
-    userId: st.userId,
-    workspaceId,
-    ...(await saveGrant(env, provider, grant, nowS, st.connectionId, workspaceId)),
-  };
+/** The provider's redirect back: checks the state (this provider's, unused, in time, back in the browser that started
+ *  it: `browser` is its cookie), exchanges the code and saves the grant in the workspace the flow was started from, if
+ *  the user who started it may still connect there (a member as an admin or a creator, or an instance admin, and the
+ *  workspace not archived). `error` is what the provider sent instead of a code (the person cancelled, the app was
+ *  refused). A failure past the state says where to go `back`. */
+export async function finishConnect(
+  env: Env,
+  fetcher: typeof fetch,
+  provider: string,
+  q: CallbackQuery,
+  browser: string | null,
+  nowS: number,
+) {
+  const st = await takeState(env, provider, q, browser, nowS);
+  try {
+    const where = st.workspaceId
+      ? await sessionWorkspace(env.DB, { userId: st.userId, workspaceId: st.workspaceId })
+      : null;
+    // sessionWorkspace falls back to the user's first workspace: only the one the flow started from will do
+    if (!where || where.workspaceId !== st.workspaceId || !mayConnect(where.role))
+      throw new ConnectError("you can't connect accounts in that workspace any more (or it was archived)");
+    const workspaceId = where.workspaceId;
+    const reg = providerRegistration(provider)!;
+    const grant = await reg.exchange!(fetcher, await appFor(env, provider), st.code, st.verifier, nowS);
+    return {
+      userId: st.userId,
+      workspaceId,
+      back: st.back,
+      ...(await saveGrant(env, provider, grant, nowS, st.connectionId, workspaceId)),
+    };
+  } catch (e) {
+    throw new ConnectError((e as Error).message, st.back);
+  }
 }
 
 /** A pasted token or Composio connected-account id → a connection. */
@@ -219,7 +325,7 @@ export async function pasteConnect(
   provider: string,
   value: string,
   nowS: number,
-  workspaceId = DEFAULT_WORKSPACE,
+  workspaceId: string,
 ) {
   const reg = providerRegistration(provider);
   if (!reg?.paste) throw new ConnectError(`${provider} can't be connected by pasting`);
@@ -241,7 +347,7 @@ export async function saveGrant(
   g: Grant,
   nowS: number,
   reconnect: string | null,
-  ws = DEFAULT_WORKSPACE,
+  ws: string,
 ) {
   if (!g.accounts.length) throw new ConnectError("the grant reaches no account");
   const db = env.DB;
@@ -336,7 +442,7 @@ export async function saveGrant(
 
 /** Removes a connection: its accounts stay (with their plans) but can't publish until connected again; the grant is
  *  revoked at the provider where it allows that. */
-export async function removeConnection(env: Env, fetcher: typeof fetch, id: string, workspaceId = DEFAULT_WORKSPACE) {
+export async function removeConnection(env: Env, fetcher: typeof fetch, id: string, workspaceId: string) {
   const c = await env.DB.prepare(
     "SELECT provider, label, credentials FROM connections WHERE id = ?1 AND workspace_id = ?2",
   )

@@ -1,5 +1,5 @@
 // Passkeys (sign-in to the PWA and the dashboard, a fresh assertion for every approval), with @simplewebauthn/server.
-// Each belongs to a user (passkeys.user_id); the PWA's single owner is the user "owner".
+// Each belongs to a user (passkeys.user_id): the one a registration's options are made for.
 // The verify functions are injectable so tests can stand in for a real authenticator.
 import type { Db } from "@bongsu/core/db";
 import {
@@ -60,20 +60,14 @@ export async function takeChallenge(
   return row ? { challenge: row.challenge, data: row.data ? JSON.parse(row.data) : null } : null;
 }
 
-/** Who a new passkey is for (the owner by default; a dashboard user by email). */
+/** Who a new passkey is for. */
 export interface PasskeyUser {
   id: string;
   name?: string | null;
   email?: string | null;
 }
 
-export async function registrationOptions(
-  db: Db,
-  rpID: string,
-  nowS: number,
-  data?: unknown,
-  user: PasskeyUser = { id: "owner" },
-) {
+export async function registrationOptions(db: Db, rpID: string, nowS: number, data: unknown, user: PasskeyUser) {
   const existing = await db
     .prepare("SELECT id, transports FROM passkeys WHERE user_id = ?1")
     .bind(user.id)
@@ -82,7 +76,7 @@ export async function registrationOptions(
     rpName: "Bongsu",
     rpID,
     userName: user.email ?? user.id,
-    userDisplayName: user.name ?? (user.id === "owner" ? "Owner" : user.id),
+    userDisplayName: user.name ?? user.email ?? user.id,
     attestationType: "none",
     userID: Uint8Array.from(new TextEncoder().encode(`bongsu-${user.id}`)),
     excludeCredentials: existing.results.map((r) => ({
@@ -95,7 +89,8 @@ export async function registrationOptions(
 }
 
 /** Verifies a new passkey; `claim(data)` runs first with the challenge's bound data (e.g. to use up the setup code)
- *  and can veto. */
+ *  and can veto. The passkey is the user's the challenge names (its data's userId), else `userId`'s; with neither,
+ *  nothing is saved. */
 export async function verifyRegistration(
   db: Db,
   v: Verifiers,
@@ -106,7 +101,7 @@ export async function verifyRegistration(
   name: string,
   nowS: number,
   claim: (data: unknown) => Promise<boolean> = async () => true,
-  userId = "owner",
+  userId?: string,
 ): Promise<boolean> {
   const ch = await takeChallenge(db, challengeId, "setup", nowS);
   if (!ch) return false;
@@ -121,6 +116,7 @@ export async function verifyRegistration(
   const c = r.registrationInfo.credential;
   // a setup code made in the dashboard names its user in the challenge's data
   const owner = (ch.data as { userId?: string } | null)?.userId ?? userId;
+  if (!owner) return false;
   await db
     .prepare(
       "INSERT INTO passkeys (id, public_key, counter, transports, name, created_at, user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",

@@ -1,10 +1,10 @@
 // The dashboard's sections (DESIGN.md, Layout). Each gets the instance state and `go` to move to another section.
-import { startRegistration } from "@simplewebauthn/browser";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import type { State } from "./App";
-import { api, when, withFreshCheck } from "./api";
+import { api, manages, when, withFreshCheck } from "./api";
 import { GuideLink } from "./docs";
-import { Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
+import { Brand, Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
 
 interface Props {
   state: State;
@@ -35,8 +35,10 @@ interface Setup {
 const setupDone = (s: Setup) => Object.values(s).filter(Boolean).length;
 const SETUP_STEPS = 5;
 
-export function Overview({ go }: Props) {
+export function Overview({ state, go }: Props) {
   const { data, error, reload } = useLoad<Overview>("overview");
+  // an editor sees the numbers; setting up and the connections are the admins' (an editor can't open those pages)
+  const admin = manages(state);
   const conns = data ? Object.values(data.connections).reduce((a, b) => a + b, 0) : 0;
   const broken = (data?.connections.broken ?? 0) + (data?.connections.expiring ?? 0);
   return (
@@ -45,7 +47,7 @@ export function Overview({ go }: Props) {
         <Loading error={error} retry={reload} />
       ) : (
         <div className="overview">
-          {setupDone(data.setup) < SETUP_STEPS && (
+          {admin && setupDone(data.setup) < SETUP_STEPS && (
             <div className="banner setup" role="status">
               <span>
                 <strong>Finish setting up:</strong> {setupDone(data.setup)} of {SETUP_STEPS} done.
@@ -61,21 +63,21 @@ export function Overview({ go }: Props) {
               label="Connections"
               value={conns}
               note={broken ? `${broken} need attention` : undefined}
-              onClick={() => go("connections")}
+              onClick={admin ? () => go("connections") : undefined}
             />
             <Stat label="Waiting for approval" value={data.waitingApproval} note="Approve in the Bongsu app" />
             <Stat label="Agent keys" value={data.keys} onClick={() => go("keys")} />
           </div>
           <Card title="Needs you">
             <ul className="todo">
-              {conns === 0 && (
+              {admin && conns === 0 && (
                 <Todo
                   text="Connect an account to publish to."
                   action="Connect an account"
                   onClick={() => go("connections")}
                 />
               )}
-              {broken > 0 && (
+              {admin && broken > 0 && (
                 <Todo
                   text={`${broken} connection(s) are expiring or broken.`}
                   action="Reconnect"
@@ -101,7 +103,7 @@ export function Overview({ go }: Props) {
                 />
               )}
               {/* Dry run isn't repeated here: the banner above every page says it. */}
-              {conns > 0 && !broken && data.passkeys >= 2 && data.recoveryCodesLeft >= 3 && (
+              {(!admin || (conns > 0 && !broken)) && data.passkeys >= 2 && data.recoveryCodesLeft >= 3 && (
                 <li className="muted">Nothing: all good.</li>
               )}
             </ul>
@@ -478,6 +480,8 @@ interface StoreInfo {
   lastError: string | null;
   lastCheckedAt: string | null;
   waitingApprovals: number;
+  /** The workspace that gets the drafts of new projects dropped in its inbox; null: they wait. */
+  inboxWorkspace: string | null;
 }
 const STORE_NAME: Record<string, string> = {
   drive: "Google Drive",
@@ -516,6 +520,7 @@ export function Media({ go }: Props) {
     offered: string[];
     googleApp: boolean;
     encryptionKeySet: boolean;
+    workspaces: { id: string; name: string }[];
   }>("media-stores");
   const { confirm, dialog } = useConfirm();
   const [err, setErr] = useState<string | null>(null);
@@ -577,6 +582,7 @@ export function Media({ go }: Props) {
                       <th>Store</th>
                       <th>Status</th>
                       <th>Checked</th>
+                      <th>Inbox feeds</th>
                       <th className="right">
                         <span className="vh">Actions</span>
                       </th>
@@ -597,6 +603,31 @@ export function Media({ go }: Props) {
                         </td>
                         <td data-label="Checked" className="small nowrap">
                           {s.lastCheckedAt ? when(Date.parse(s.lastCheckedAt) / 1000) : "—"}
+                        </td>
+                        <td data-label="Inbox feeds">
+                          {/* a project a plan has goes to that plan's workspace; this one gets the others */}
+                          <select
+                            aria-label={`The workspace ${STORE_NAME[s.kind]}'s inbox feeds`}
+                            title="Drafts of projects in UPLOADS/inbox that no plan has yet go to this workspace"
+                            value={s.inboxWorkspace ?? ""}
+                            onChange={(e) => {
+                              const id = e.target.value || null;
+                              const name = data.workspaces.find((w) => w.id === id)?.name;
+                              act(
+                                () => api(`media-stores/${s.kind}/inbox`, { workspace: id }),
+                                id
+                                  ? `New projects in ${STORE_NAME[s.kind]}'s inbox go to ${name ?? id} now.`
+                                  : `New projects in ${STORE_NAME[s.kind]}'s inbox wait now.`,
+                              );
+                            }}
+                          >
+                            <option value="">No workspace: they wait</option>
+                            {data.workspaces.map((w) => (
+                              <option key={w.id} value={w.id}>
+                                {w.name}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="right nowrap">
                           <button
@@ -1719,7 +1750,18 @@ const SCOPE_HELP: Record<string, string> = {
   resume: "resume publishing",
 };
 
-export function Keys(_: Props) {
+export function Keys({ state }: Props) {
+  // an editor has only their own CLI tokens here; the workspace's agent keys are its admins'
+  if (!manages(state))
+    return (
+      <Page title="Keys & tokens" intro="Your CLI tokens act as you, with your role's rights.">
+        <CliTokens />
+      </Page>
+    );
+  return <AgentKeys />;
+}
+
+function AgentKeys() {
   const toast = useToast();
   const { data, error, reload } = useLoad<{ scopes: string[]; keys: Key[] }>("keys");
   const [creating, setCreating] = useState(false);
@@ -2030,6 +2072,273 @@ function CliTokens() {
   );
 }
 
+// ---- Members
+
+interface Member {
+  userId: string;
+  email: string | null;
+  name: string | null;
+  role: string;
+  /** Only in an instance admin's list: whether this member is one too. */
+  instanceAdmin?: boolean;
+}
+interface Invite {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: number;
+}
+const ROLES = ["admin", "editor", "creator"] as const;
+const ROLE_HELP: Record<string, string> = {
+  admin: "Admin: everything in the workspace, including its people, connections and settings.",
+  editor: "Editor: the plan and the texts, in the dashboard and the app; can't approve.",
+  creator: "Creator: the plan, the texts and approving, in the Bongsu app.",
+};
+const roleName = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
+
+export function Members({ state }: Props) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{ members: Member[]; invites: Invite[] }>("members");
+  const [inviting, setInviting] = useState(false);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<string>("editor");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [made, setMade] = useState<{ url: string; email: string; mailed: boolean } | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const invite = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await withFreshCheck(() => api<{ url: string; mailed: boolean }>("invites", { email, role }));
+      setMade({ ...r, email: email.trim().toLowerCase() });
+      setInviting(false);
+      setEmail("");
+      reload();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const changeRole = async (m: Member, next: string) => {
+    setErr(null);
+    try {
+      await withFreshCheck(() => api(`members/${encodeURIComponent(m.userId)}`, { role: next }));
+      toast({ ok: true, text: `${m.name ?? m.email ?? m.userId} is now ${next === "admin" ? "an" : "a"} ${next}.` });
+    } catch (e) {
+      setErr(errorText(e));
+    }
+    reload();
+  };
+  const me = state.user?.id;
+  return (
+    <Page
+      title="Members"
+      intro="The people who work in this workspace, and their roles. An invite is a link that works once, for 7 days."
+    >
+      {made && (
+        <Card>
+          <SecretOnce title={`Invite link for ${made.email}`} value={made.url} onDone={() => setMade(null)} />
+          <p className="muted small">
+            {made.mailed ? "It was emailed to them too." : "Send it to them yourself: email isn't set up here."}
+          </p>
+        </Card>
+      )}
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
+      <Card
+        title="People"
+        actions={
+          !inviting &&
+          !made && (
+            <button type="button" onClick={() => setInviting(true)}>
+              Invite someone
+            </button>
+          )
+        }
+      >
+        {inviting && (
+          <form onSubmit={invite} className="inset">
+            <Field label="Their email" help="The invite is for this email: it's how they sign in.">
+              {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
+            </Field>
+            <Field label="Role" help={ROLE_HELP[role]}>
+              {(p) => (
+                <select {...p} value={role} onChange={(e) => setRole(e.target.value)}>
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {roleName(r)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+            <div className="actions">
+              <button type="button" onClick={() => setInviting(false)}>
+                Cancel
+              </button>
+              <button className="primary" type="submit" aria-disabled={busy}>
+                {busy ? "Making the link…" : "Make the invite link"}
+              </button>
+            </div>
+          </form>
+        )}
+        {!data ? (
+          <Loading error={error} retry={reload} />
+        ) : (
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Role</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.members.map((m) => (
+                  <tr key={m.userId}>
+                    <td>
+                      <div>
+                        {m.name ?? m.email ?? m.userId}
+                        {m.userId === me && <span className="muted"> (you)</span>}
+                      </div>
+                      {m.name && m.email && <div className="muted small">{m.email}</div>}
+                    </td>
+                    <td data-label="Role">
+                      <select
+                        aria-label={`Role of ${m.name ?? m.email ?? m.userId}`}
+                        value={m.role}
+                        onChange={(e) => changeRole(m, e.target.value)}
+                      >
+                        {ROLES.map((r) => (
+                          <option key={r} value={r}>
+                            {roleName(r)}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="right">
+                      {state.instanceAdmin && m.instanceAdmin !== undefined && (
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={() =>
+                            confirm({
+                              title: m.instanceAdmin
+                                ? `Remove ${m.name ?? m.email ?? m.userId} as an instance admin?`
+                                : `Make ${m.name ?? m.email ?? m.userId} an instance admin?`,
+                              detail: m.instanceAdmin
+                                ? "They keep their role in this workspace, but no longer see the instance's workspaces, media stores and OAuth apps."
+                                : "They'll manage the whole instance: every workspace (as its admin), the media stores, the OAuth apps and who the instance admins are.",
+                              verb: m.instanceAdmin ? "Remove instance admin" : "Make instance admin",
+                              run: async () => {
+                                await withFreshCheck(() =>
+                                  api("instance-admins", { userId: m.userId, on: !m.instanceAdmin }),
+                                );
+                                toast({
+                                  ok: true,
+                                  text: `${m.name ?? m.email ?? m.userId} ${m.instanceAdmin ? "is no longer" : "is now"} an instance admin.`,
+                                });
+                                // their own: the sidebar's Instance group goes with it
+                                if (m.userId === me && m.instanceAdmin) location.reload();
+                                else reload();
+                              },
+                            })
+                          }
+                        >
+                          {m.instanceAdmin ? "Remove instance admin" : "Make instance admin"}
+                        </button>
+                      )}{" "}
+                      <button
+                        type="button"
+                        className="link danger"
+                        onClick={() =>
+                          confirm({
+                            title: `Remove ${m.name ?? m.email ?? m.userId}?`,
+                            detail:
+                              "They leave this workspace at once: signed out of it, their CLI tokens for it revoked and their devices no longer notified. They can be invited again.",
+                            verb: "Remove",
+                            run: async () => {
+                              await withFreshCheck(() => api(`members/${encodeURIComponent(m.userId)}/remove`, {}));
+                              toast({ ok: true, text: `${m.name ?? m.email ?? m.userId} removed.` });
+                              reload();
+                            },
+                          })
+                        }
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      {data && data.invites.length > 0 && (
+        <Card title="Pending invites">
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Expires</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.invites.map((i) => (
+                  <tr key={i.id}>
+                    <td>{i.email}</td>
+                    <td data-label="Role">{roleName(i.role)}</td>
+                    <td data-label="Expires" className="small">
+                      {when(i.expiresAt)}
+                    </td>
+                    <td className="right">
+                      <button
+                        type="button"
+                        className="link danger"
+                        onClick={() =>
+                          confirm({
+                            title: `Revoke the invite for ${i.email}?`,
+                            detail: "Its link stops working at once. You can invite them again.",
+                            verb: "Revoke",
+                            run: async () => {
+                              await withFreshCheck(() => api(`invites/${encodeURIComponent(i.id)}/revoke`, {}));
+                              toast({ ok: true, text: `Invite for ${i.email} revoked.` });
+                              reload();
+                            },
+                          })
+                        }
+                      >
+                        Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+      {dialog}
+    </Page>
+  );
+}
+
 // ---- Audit
 
 interface Entry {
@@ -2039,26 +2348,59 @@ interface Entry {
   action: string;
   target: string | null;
   detail: string | null;
+  /** The person who acted (name, else email), when a person did. */
+  who: string | null;
 }
 
-export function Audit(_: Props) {
+export function Audit({ state }: Props) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState(true);
-  const load = (before?: number) =>
-    api<{ entries: Entry[] }>(`audit${before ? `?before=${before}` : ""}`)
+  // the workspace's log, or (instance admins only) the instance's: new workspaces, media stores, OAuth apps, instance
+  // admins. In no workspace, only the instance's.
+  const [instance, setInstance] = useState(state.noWorkspace);
+  const load = (before?: number) => {
+    const q = new URLSearchParams({
+      ...(before ? { before: String(before) } : {}),
+      ...(instance ? { instance: "1" } : {}),
+    }).toString();
+    return api<{ entries: Entry[] }>(`audit${q ? `?${q}` : ""}`)
       .then((r) => {
         setEntries((old) => (before ? [...(old ?? []), ...r.entries] : r.entries));
         setMore(r.entries.length === 50);
         setError(null);
       })
       .catch((e: Error) => setError(e.message));
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloads when the log shown changes
   useEffect(() => {
+    setEntries(null);
     load();
-  }, []);
+  }, [instance]);
   return (
-    <Page title="Audit" intro="Every change to this instance: who, what, when.">
-      <Card>
+    <Page
+      title="Audit"
+      intro={
+        instance
+          ? "Every change to this instance: who, what, when."
+          : "Every change to this workspace: who, what, when."
+      }
+    >
+      <Card
+        actions={
+          state.instanceAdmin &&
+          !state.noWorkspace && (
+            <select
+              aria-label="Which log"
+              value={instance ? "instance" : "workspace"}
+              onChange={(e) => setInstance(e.target.value === "instance")}
+            >
+              <option value="workspace">This workspace</option>
+              <option value="instance">The instance</option>
+            </select>
+          )
+        }
+      >
         {!entries ? (
           <Loading error={error} retry={() => load()} />
         ) : entries.length === 0 ? (
@@ -2082,7 +2424,7 @@ export function Audit(_: Props) {
                         {when(e.at)}
                       </td>
                       <td data-label="Who" className="small">
-                        {e.actor}
+                        {e.who ?? e.actor}
                       </td>
                       <td data-label="What">
                         {e.action.replaceAll("_", " ")}
@@ -2131,7 +2473,13 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
   );
 }
 
-export function GetStarted({ go }: Props) {
+/** A Get started step that's the instance's (OAuth apps, media stores): its instance admin's to set up, for every
+ *  workspace, so a workspace's admin has nothing to open there. */
+const InstanceStep = () => (
+  <p className="muted small">Your instance admin sets this up, for every workspace: ask them if it's still to do.</p>
+);
+
+export function GetStarted({ state, go }: Props) {
   const { data, error, reload } = useLoad<Overview>("overview");
   const settings = useLoad<{ timezone: string; digestHour: number }>("settings");
   const toast = useToast();
@@ -2209,26 +2557,34 @@ export function GetStarted({ go }: Props) {
               app for YouTube (the page shows the exact redirect URLs to register). Connecting through Composio needs
               neither.
             </p>
-            <div className="actions">
-              <button type="button" className={data.setup.oauthApp ? "" : "primary"} onClick={() => go("apps")}>
-                Open OAuth apps
-              </button>
-            </div>
+            {state.instanceAdmin ? (
+              <div className="actions">
+                <button type="button" className={data.setup.oauthApp ? "" : "primary"} onClick={() => go("apps")}>
+                  Open OAuth apps
+                </button>
+              </div>
+            ) : (
+              <InstanceStep />
+            )}
           </Step>
           <Step n={3} title="Where your media live" done={data.setup.mediaStore}>
             <p className="muted">
               Your Reels and photos stay in a store you control: Google Drive, an S3-compatible bucket (AWS, R2, B2,
               MinIO) or, with Docker, this server's disk. Bongsu reads them from there and publishes them.
             </p>
-            <div className="actions">
-              <button
-                type="button"
-                className={data.setup.oauthApp && !data.setup.mediaStore ? "primary" : ""}
-                onClick={() => go("media")}
-              >
-                Open Media
-              </button>
-            </div>
+            {state.instanceAdmin ? (
+              <div className="actions">
+                <button
+                  type="button"
+                  className={data.setup.oauthApp && !data.setup.mediaStore ? "primary" : ""}
+                  onClick={() => go("media")}
+                >
+                  Open Media
+                </button>
+              </div>
+            ) : (
+              <InstanceStep />
+            )}
           </Step>
           <Step n={4} title="Connect an account" done={data.setup.connection}>
             <p className="muted">An Instagram account or a YouTube channel to publish to.</p>
@@ -2400,6 +2756,7 @@ function NtfyCard({
 
 export function Settings(_: Props) {
   const { data, error, reload } = useLoad<{
+    name: string;
     timezone: string;
     digestHour: number;
     dryRun: boolean;
@@ -2407,12 +2764,14 @@ export function Settings(_: Props) {
     ntfy: { set: boolean; host: string | null };
     encryptionKeySet: boolean;
   }>("settings");
+  const [name, setName] = useState("");
   const [tz, setTz] = useState("");
   const [hour, setHour] = useState(8);
   const [err, setErr] = useState<string | null>(null);
   const toast = useToast();
   useEffect(() => {
     if (data) {
+      setName(data.name);
       setTz(data.timezone);
       setHour(data.digestHour);
     }
@@ -2422,7 +2781,7 @@ export function Settings(_: Props) {
     e.preventDefault();
     setErr(null);
     try {
-      await api("settings", { timezone: tz, digestHour: hour });
+      await api("settings", { name, timezone: tz, digestHour: hour });
       toast({ ok: true, text: "Settings saved." });
       reload();
     } catch (e) {
@@ -2437,6 +2796,9 @@ export function Settings(_: Props) {
         <>
           <Card title="Workspace">
             <form onSubmit={save}>
+              <Field label="Name" help="Who or what the workspace is for. Everyone in it sees this name.">
+                {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />}
+              </Field>
               <Field label="Time zone" help="Each person can pick their own in the Bongsu app; this is the default.">
                 {(p) => (
                   <select {...p} value={tz} onChange={(e) => setTz(e.target.value)}>
@@ -2490,5 +2852,547 @@ export function Settings(_: Props) {
         </>
       )}
     </Page>
+  );
+}
+
+// ---- Workspaces (instance admins)
+
+interface WorkspaceRow {
+  id: string;
+  name: string;
+  members: number;
+  accounts: number;
+  createdAt: number;
+  archivedAt: number | null;
+}
+
+/** After the session's workspace changed (opened, or just made), the whole dashboard reloads in it. */
+const workIn = (section = "") => location.assign(`/dashboard/${section}`);
+
+/** Every workspace of the instance: create, rename, add an admin, archive or restore, and open one to work in it. */
+export function Workspaces(_: Props) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{ workspaces: WorkspaceRow[] }>("workspaces");
+  const { confirm, dialog } = useConfirm();
+  // what the form above the table does: make one, rename one, or add an admin to one
+  const [form, setForm] = useState<{ kind: "create" } | { kind: "rename" | "admin"; w: WorkspaceRow } | null>(null);
+  const [name, setName] = useState("");
+  const [tz, setTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
+  const [adminIsMe, setAdminIsMe] = useState(true);
+  const [email, setEmail] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  // an invite link to copy: a new workspace's first admin, or an admin added
+  const [made, setMade] = useState<{ url: string; email: string } | null>(null);
+  const zones = Intl.supportedValuesOf?.("timeZone") ?? [];
+  const show = (f: typeof form) => {
+    setForm(f);
+    setErr(null);
+    setName(f && f.kind === "rename" ? f.w.name : "");
+    setEmail("");
+    setAdminIsMe(true);
+  };
+  const submit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy || !form) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const to = email.trim().toLowerCase();
+      if (form.kind === "create") {
+        const r = await withFreshCheck(() =>
+          api<{ invite?: { url: string } }>("workspaces", { name, timezone: tz, admin: adminIsMe ? "me" : to }),
+        );
+        // with "me" as its admin, the session now works in it; one made for someone else waits in this list
+        if (r.invite) setMade({ url: r.invite.url, email: to });
+        else workIn("start");
+      } else if (form.kind === "rename") {
+        await api(`workspaces/${encodeURIComponent(form.w.id)}`, { name });
+        toast({ ok: true, text: `Renamed to ${name.trim()}.` });
+      } else {
+        const r = await withFreshCheck(() =>
+          api<{ url: string }>(`workspaces/${encodeURIComponent(form.w.id)}/admins`, { email: to }),
+        );
+        setMade({ url: r.url, email: to });
+      }
+      setForm(null);
+      reload();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const open = async (w: WorkspaceRow) => {
+    setErr(null);
+    try {
+      await api(`workspaces/${encodeURIComponent(w.id)}/open`, {});
+      workIn();
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  return (
+    <Page
+      title="Workspaces"
+      intro="Every workspace of this instance. Open one to work in it as its admin; archive one to stop it completely."
+    >
+      {made && (
+        <Card>
+          <SecretOnce title={`Invite link for ${made.email}`} value={made.url} onDone={() => setMade(null)} />
+          <p className="muted small">They join as an admin with it: it works once, for 7 days.</p>
+        </Card>
+      )}
+      {err && !form && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
+      <Card
+        title="All workspaces"
+        actions={
+          !form &&
+          !made && (
+            <button type="button" onClick={() => show({ kind: "create" })}>
+              Create a workspace
+            </button>
+          )
+        }
+      >
+        {form && (
+          <form onSubmit={submit} className="inset">
+            {form.kind !== "admin" && (
+              <Field
+                label={form.kind === "create" ? "Name" : `New name for ${form.w.name}`}
+                help="Who or what it's for: a brand, a client, a team."
+              >
+                {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />}
+              </Field>
+            )}
+            {form.kind === "create" && (
+              <>
+                <Field
+                  label="Time zone"
+                  help="How its plan's times are shown and entered. Each person can pick their own."
+                >
+                  {(p) => (
+                    <select {...p} value={tz} onChange={(e) => setTz(e.target.value)}>
+                      {(zones.includes(tz) ? zones : [tz, ...zones]).map((z) => (
+                        <option key={z}>{z}</option>
+                      ))}
+                    </select>
+                  )}
+                </Field>
+                <fieldset>
+                  <legend>Its first admin</legend>
+                  <label className="check">
+                    <input type="radio" name="admin" checked={adminIsMe} onChange={() => setAdminIsMe(true)} />
+                    <span>Me</span>
+                  </label>
+                  <label className="check">
+                    <input type="radio" name="admin" checked={!adminIsMe} onChange={() => setAdminIsMe(false)} />
+                    <span>
+                      Someone else <span className="muted">who gets an invite link</span>
+                    </span>
+                  </label>
+                </fieldset>
+              </>
+            )}
+            {(form.kind === "admin" || (form.kind === "create" && !adminIsMe)) && (
+              <Field
+                label={form.kind === "admin" ? `Email of ${form.w.name}'s new admin` : "Their email"}
+                help="They get an invite link, to join as an admin."
+              >
+                {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
+              </Field>
+            )}
+            {err && (
+              <p className="error" role="alert">
+                {err}
+              </p>
+            )}
+            <div className="actions">
+              <button type="button" onClick={() => show(null)}>
+                Cancel
+              </button>
+              <button className="primary" type="submit" aria-disabled={busy}>
+                {form.kind === "create"
+                  ? busy
+                    ? "Creating…"
+                    : "Create the workspace"
+                  : form.kind === "rename"
+                    ? "Rename"
+                    : busy
+                      ? "Making the link…"
+                      : "Make the invite link"}
+              </button>
+            </div>
+          </form>
+        )}
+        {!data ? (
+          <Loading error={error} retry={reload} />
+        ) : (
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Workspace</th>
+                  <th className="right">Members</th>
+                  <th className="right">Accounts</th>
+                  <th>Created</th>
+                  <th>Status</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.workspaces.map((w) => (
+                  <tr key={w.id}>
+                    <td>
+                      <div>{w.name}</div>
+                      <div className="muted small mono">{w.id}</div>
+                    </td>
+                    <td data-label="Members" className="right">
+                      {w.members}
+                    </td>
+                    <td data-label="Accounts" className="right">
+                      {w.accounts}
+                    </td>
+                    <td data-label="Created" className="small">
+                      {when(w.createdAt)}
+                    </td>
+                    <td data-label="Status">
+                      {w.archivedAt ? (
+                        <Pill status="disabled" label={`Archived ${when(w.archivedAt)}`} />
+                      ) : (
+                        <Pill status="ok" label="Active" />
+                      )}
+                    </td>
+                    <td className="right">
+                      {!w.archivedAt && (
+                        <button type="button" className="link" onClick={() => open(w)}>
+                          Open
+                        </button>
+                      )}
+                      <button type="button" className="link" onClick={() => show({ kind: "rename", w })}>
+                        Rename
+                      </button>
+                      {!w.archivedAt && (
+                        <button type="button" className="link" onClick={() => show({ kind: "admin", w })}>
+                          Add an admin
+                        </button>
+                      )}
+                      {w.archivedAt ? (
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={() =>
+                            confirm({
+                              title: `Restore ${w.name}?`,
+                              detail:
+                                "It comes back as it was: its approved posts publish again (late ones within the catch-up window), its agent keys work and its members can open it.",
+                              verb: "Restore",
+                              run: async () => {
+                                await withFreshCheck(() => api(`workspaces/${encodeURIComponent(w.id)}/restore`, {}));
+                                toast({ ok: true, text: `${w.name} restored.` });
+                                reload();
+                              },
+                            })
+                          }
+                        >
+                          Restore
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="link danger"
+                          onClick={() =>
+                            confirm({
+                              title: `Archive ${w.name}?`,
+                              detail:
+                                "It stops completely: nothing in it publishes, its agent keys and CLI tokens stop working and its members can't open it. Its data stays; restoring brings it back as it was.",
+                              verb: "Archive",
+                              run: async () => {
+                                await withFreshCheck(() => api(`workspaces/${encodeURIComponent(w.id)}/archive`, {}));
+                                toast({ ok: true, text: `${w.name} archived.` });
+                                reload();
+                              },
+                            })
+                          }
+                        >
+                          Archive
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      {dialog}
+    </Page>
+  );
+}
+
+// ---- No workspace yet
+
+/** Signed in, in no workspace. An instance admin creates the first one (the first run: a name, a time zone and its
+ *  first admin, them or someone invited by email); anyone else waits for an invite. In place of the sidebar. */
+export function FirstWorkspace({
+  state,
+  onDone,
+  onSignOut,
+}: {
+  state: State;
+  /** `invited`: its first admin is someone else, so it waits on the Workspaces page. */
+  onDone: (invited: boolean) => void;
+  onSignOut: () => void;
+}) {
+  const zones = Intl.supportedValuesOf?.("timeZone") ?? [];
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const [name, setName] = useState("");
+  const [tz, setTz] = useState(here);
+  const [adminIsMe, setAdminIsMe] = useState(true);
+  const [email, setEmail] = useState("");
+  const [link, setLink] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    document.title = "Your first workspace · Bongsu dashboard";
+  }, []);
+  const signOut = async () => {
+    await api("signout", {});
+    onSignOut();
+  };
+  if (!state.instanceAdmin)
+    return (
+      <main className="centered">
+        <Brand />
+        <Card>
+          <h1>You're not in a workspace yet</h1>
+          <p className="muted">An admin of a workspace invites you to it: ask them for an invite link.</p>
+          <div className="actions stacked">
+            <button type="button" className="link" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
+        </Card>
+      </main>
+    );
+  if (link)
+    return (
+      <main className="centered">
+        <Brand />
+        <Card>
+          <h1>Send them the invite</h1>
+          <p className="muted">
+            The workspace is ready. Its first admin joins with this link (it works once, for 7 days); meanwhile it waits
+            on your Workspaces page, where Open lets you set it up yourself.
+          </p>
+          <SecretOnce
+            title={`Invite link for ${email.trim().toLowerCase()}`}
+            value={link}
+            onDone={() => onDone(true)}
+          />
+        </Card>
+      </main>
+    );
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return; // one workspace per click
+    setBusy(true);
+    setErr(null);
+    try {
+      // making someone an admin asks for a fresh passkey check
+      const r = await withFreshCheck(() =>
+        api<{ invite?: { url: string } }>("workspaces", {
+          name,
+          timezone: tz,
+          admin: adminIsMe ? "me" : email.trim().toLowerCase(),
+        }),
+      );
+      // their link, to copy, before going on
+      if (r.invite) setLink(r.invite.url);
+      else onDone(false);
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="centered">
+      <Brand />
+      <Card>
+        <h1>Create your first workspace</h1>
+        <p className="muted">
+          A workspace holds the accounts, the plan and the people who work on them. You can make more later.
+        </p>
+        <form onSubmit={create}>
+          <Field label="Name" help="Who or what it's for: a brand, a client, a team.">
+            {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />}
+          </Field>
+          <Field label="Time zone" help="How the plan's times are shown and entered. Each person can pick their own.">
+            {(p) => (
+              <select {...p} value={tz} onChange={(e) => setTz(e.target.value)}>
+                {(zones.includes(tz) ? zones : [tz, ...zones]).map((z) => (
+                  <option key={z}>{z}</option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <fieldset>
+            <legend>Its first admin</legend>
+            <label className="check">
+              <input type="radio" name="admin" checked={adminIsMe} onChange={() => setAdminIsMe(true)} />
+              <span>Me</span>
+            </label>
+            <label className="check">
+              <input type="radio" name="admin" checked={!adminIsMe} onChange={() => setAdminIsMe(false)} />
+              <span>
+                Someone else <span className="muted">who gets an invite link</span>
+              </span>
+            </label>
+          </fieldset>
+          {!adminIsMe && (
+            <Field label="Their email">
+              {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
+            </Field>
+          )}
+          {err && (
+            <p className="error" role="alert">
+              {err}
+            </p>
+          )}
+          <div className="actions stacked">
+            <button className="primary" type="submit" aria-disabled={busy}>
+              {busy ? "Creating…" : "Create the workspace"}
+            </button>
+            <button type="button" className="link" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
+        </form>
+      </Card>
+    </main>
+  );
+}
+
+// ---- Accepting an invite (/dashboard/invite/<token>), signed out
+
+/** Joining a workspace from an invite link: a name and a new passkey, or the passkey of the account the invite was
+ *  sent to. The page doesn't know (and the server doesn't say) whether that account exists: the person picks. */
+export function AcceptInvite({ token, onDone }: { token: string; onDone: () => void }) {
+  const [invite, setInvite] = useState<{ workspace: string; role: string } | null>(null);
+  const [gone, setGone] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const path = `invite/${encodeURIComponent(token)}`;
+  useEffect(() => {
+    document.title = "Join a workspace · Bongsu dashboard";
+    api<{ workspace: string; role: string }>(path)
+      .then(setInvite)
+      .catch((e) => setGone(errorText(e)));
+  }, [path]);
+  const join = async (mode: "new" | "existing") => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      type Ceremony = { options: never; challengeId: string };
+      const o = await api<{ register: Ceremony; signIn: Ceremony }>(`${path}/options`, { name });
+      const c = mode === "new" ? o.register : o.signIn;
+      const response =
+        mode === "new"
+          ? await startRegistration({ optionsJSON: c.options })
+          : await startAuthentication({ optionsJSON: c.options });
+      const r = await api<{ recoveryCodes?: string[] }>(`${path}/verify`, {
+        mode,
+        challengeId: c.challengeId,
+        response,
+        device: navigator.userAgent.includes("Mac") ? "Mac" : "this computer",
+      });
+      if (r.recoveryCodes) setCodes(r.recoveryCodes);
+      else onDone();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (codes)
+    return (
+      <main className="centered">
+        <Brand />
+        <Card>
+          <h1>You're in</h1>
+          <p className="muted">
+            If you ever lose every passkey, one of these codes signs you in (each works once). Keep them somewhere safe,
+            away from this computer.
+          </p>
+          <SecretOnce title="Recovery codes" lines={codes} onDone={onDone} />
+        </Card>
+      </main>
+    );
+  return (
+    <main className="centered">
+      <Brand />
+      <Card>
+        {gone ? (
+          <>
+            <h1>This invite doesn't work</h1>
+            <p className="muted">
+              It was used already, revoked, or is older than 7 days. Ask the person who invited you for a new link.
+            </p>
+          </>
+        ) : !invite ? (
+          <Loading />
+        ) : (
+          <>
+            <h1>Join {invite.workspace}</h1>
+            <p className="muted">
+              You're invited as {invite.role === "admin" ? "an" : "a"} {invite.role}. {ROLE_HELP[invite.role]}
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                join("new");
+              }}
+            >
+              <h2>New to Bongsu</h2>
+              <Field label="Your name">
+                {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />}
+              </Field>
+              <p className="help">
+                Your passkey (this device's fingerprint, face or PIN) signs you in from now on, with the email the
+                invite was sent to; no password.
+              </p>
+              <div className="actions stacked">
+                <button className="primary" type="submit" aria-disabled={busy}>
+                  {busy ? "Waiting for the passkey…" : "Create my passkey and join"}
+                </button>
+              </div>
+            </form>
+            <h2>Already have a Bongsu account?</h2>
+            <p className="muted">Sign in with its passkey: the account must have the email this invite was sent to.</p>
+            <div className="actions stacked">
+              <button type="button" onClick={() => join("existing")} aria-disabled={busy}>
+                Sign in with my passkey and join
+              </button>
+            </div>
+            {err && (
+              <p className="error" role="alert">
+                {err}
+              </p>
+            )}
+          </>
+        )}
+      </Card>
+    </main>
   );
 }

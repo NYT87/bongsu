@@ -1,6 +1,6 @@
 // Post metrics: the schedule rule and the series math (pure), then the sampler that takes the samples (database and
 // providers, run by the inbox cron).
-import { type Account, instagramAccounts, youtubeAccounts } from "./accounts";
+import { type Account, workingAccounts } from "./accounts";
 import { channelUploads, YT_TTL_S } from "./calendar";
 import type { Upload } from "./clients/youtube";
 import {
@@ -275,7 +275,8 @@ async function stampFailure(env: Env, itemKeys: string[], nowS: number) {
  */
 async function uploadLists(env: Env, deps: { fetch: typeof fetch }, nowS: number) {
   const cached = await settingsLike(env, "yt_uploads:");
-  const accounts = await youtubeAccounts(env.DB);
+  // an archived workspace stops completely: its channels aren't read
+  const accounts = await workingAccounts(env.DB, "youtube");
   const age = (a: Account) => cached.get(a.id)?.updated_at ?? Number.NEGATIVE_INFINITY;
   const refresh = new Set(
     accounts
@@ -327,7 +328,7 @@ export async function sampleMetrics(
     if (next <= nowS) found.push({ ...c, next });
   };
 
-  const accounts = new Map((await instagramAccounts(env.DB)).map((a) => [a.id, a]));
+  const accounts = new Map((await workingAccounts(env.DB, "instagram")).map((a) => [a.id, a]));
   const rows = await env.DB.prepare(
     `SELECT x.item_key, x.account, x.media_id, x.published,
             (SELECT MAX(m.taken_at) FROM post_metrics m WHERE m.item_key = x.item_key) AS last_at

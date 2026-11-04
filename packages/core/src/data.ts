@@ -1,7 +1,7 @@
 // The plan data in D1 (see migrations/0001_init.sql): what's planned, approved, posted, the Shorts comments and
 // the pause switch. D1 is the source of truth; the repo only holds the content (captions, comments, alt texts).
 
-import { DEFAULT_WORKSPACE, findAccount, trialCapable, trialDefaultOn } from "./accounts";
+import { findAccount, trialCapable, trialDefaultOn } from "./accounts";
 import type { Db } from "./db";
 import type { Approval, MediaRef } from "./formats/approved";
 import {
@@ -23,7 +23,7 @@ export const defaultTime = (format: Format | null | undefined) => (format === "v
 export interface PlanItem {
   /** An opaque id: nothing parses it (older keys look like "reel:<project>/<base>"). */
   item_key: string;
-  workspace_id?: string;
+  workspace_id: string;
   account: string;
   folder: string;
   name: string;
@@ -70,7 +70,7 @@ export const keyClass = (format: Format | null | undefined) => (format === "vide
 export async function trialDefault(
   db: Db,
   accountId: string,
-  workspaceId = DEFAULT_WORKSPACE,
+  workspaceId: string,
 ): Promise<{ capable: boolean; on: boolean }> {
   const a = await findAccount(db, accountId, workspaceId, "instagram");
   if (!a || !trialCapable(a)) return { capable: false, on: false };
@@ -82,7 +82,7 @@ export async function trialFor(
   db: Db,
   i: Pick<PlanItem, "account" | "options" | "workspace_id">,
 ): Promise<{ capable: boolean; on: boolean; byDefault: boolean; explicit: boolean }> {
-  const d = await trialDefault(db, i.account, i.workspace_id ?? DEFAULT_WORKSPACE);
+  const d = await trialDefault(db, i.account, i.workspace_id);
   const t = itemOptions(i).trial;
   const explicit = typeof t === "boolean";
   return { capable: d.capable, byDefault: d.on, explicit, on: d.capable && (explicit ? t === true : d.on) };
@@ -490,23 +490,14 @@ export async function recordPosted(
     publishedAt: number;
     /** Now, in unix seconds. */
     recordedAt: number;
-    workspaceId?: string;
+    workspaceId: string;
   },
 ): Promise<boolean> {
   const r = await db
     .prepare(
       "INSERT INTO posted (item_key, account, media_id, permalink, source, published_at, workspace_id, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT (item_key) DO NOTHING RETURNING item_key",
     )
-    .bind(
-      p.key,
-      p.account,
-      p.mediaId,
-      p.permalink,
-      p.source,
-      p.publishedAt,
-      p.workspaceId ?? DEFAULT_WORKSPACE,
-      p.recordedAt,
-    )
+    .bind(p.key, p.account, p.mediaId, p.permalink, p.source, p.publishedAt, p.workspaceId, p.recordedAt)
     .first();
   return !!r;
 }
@@ -550,32 +541,73 @@ export async function recordCommented(
     threadId: string | null;
     label: string | null;
     source: "scheduler" | "manual" | "import";
-    workspaceId?: string;
+    workspaceId: string;
   },
 ) {
   await db
     .prepare(
       "INSERT INTO shorts_commented (video_id, channel, date_pt, thread_id, label, source, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (video_id) DO NOTHING",
     )
-    .bind(c.video, c.channel, c.datePt, c.threadId, c.label, c.source, c.workspaceId ?? DEFAULT_WORKSPACE)
+    .bind(c.video, c.channel, c.datePt, c.threadId, c.label, c.source, c.workspaceId)
     .run();
 }
 
 // ---------------------------------------------------------------- pause switch
+// Each workspace pauses on its own (workspace_settings.paused: {reason, by, at}, NULL while running): the tick skips a
+// paused workspace's jobs and Shorts comments, and every other workspace goes on publishing.
 
-export async function pausedState(db: Db): Promise<{ reason: string; by: string; at: string } | null> {
-  const r = await db.prepare("SELECT value FROM settings WHERE key = 'paused'").first<{ value: string }>();
-  return r ? JSON.parse(r.value) : null;
+export async function pausedState(
+  db: Db,
+  workspaceId: string,
+): Promise<{ reason: string; by: string; at: string } | null> {
+  const r = await db
+    .prepare("SELECT paused FROM workspace_settings WHERE workspace_id = ?1")
+    .bind(workspaceId)
+    .first<{ paused: string | null }>();
+  return r?.paused ? JSON.parse(r.paused) : null;
 }
 
-export async function setPaused(db: Db, reason: string, by: string, now: Date): Promise<boolean> {
+/** Pauses the workspace; false when it already was. A workspace without settings yet gets them (the defaults
+ *  workspaceSettings reads for one without). */
+export async function setPaused(db: Db, workspaceId: string, reason: string, by: string, now: Date): Promise<boolean> {
   const r = await db
-    .prepare("INSERT INTO settings (key, value) VALUES ('paused', ?1) ON CONFLICT (key) DO NOTHING RETURNING key")
-    .bind(JSON.stringify({ reason: reason.slice(0, 300), by, at: now.toISOString() }))
+    .prepare(
+      `INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at, paused)
+       VALUES (?1, 'UTC', 8, 'en', ?2, ?3)
+       ON CONFLICT (workspace_id) DO UPDATE SET paused = excluded.paused, updated_at = excluded.updated_at
+       WHERE workspace_settings.paused IS NULL
+       RETURNING workspace_id`,
+    )
+    .bind(
+      workspaceId,
+      Math.floor(now.getTime() / 1000),
+      JSON.stringify({ reason: reason.slice(0, 300), by, at: now.toISOString() }),
+    )
     .first();
   return !!r;
 }
 
-export async function clearPaused(db: Db): Promise<boolean> {
-  return !!(await db.prepare("DELETE FROM settings WHERE key = 'paused' RETURNING key").first());
+/** Resumes the workspace; false when it wasn't paused. */
+export async function clearPaused(db: Db, workspaceId: string): Promise<boolean> {
+  return !!(await db
+    .prepare(
+      "UPDATE workspace_settings SET paused = NULL WHERE workspace_id = ?1 AND paused IS NOT NULL RETURNING workspace_id",
+    )
+    .bind(workspaceId)
+    .first());
+}
+
+/** Why the scheduler leaves a workspace alone this run: it's paused (audited when it was paused), or archived. */
+export type Held = "paused" | "archived";
+
+/** The workspaces the scheduler leaves alone this run: the paused ones and the archived ones. Read once per run
+ *  (tick). */
+export async function heldWorkspaces(db: Db): Promise<Map<string, Held>> {
+  const r = await db
+    .prepare(
+      `SELECT w.id, w.archived_at FROM workspaces w LEFT JOIN workspace_settings s ON s.workspace_id = w.id
+       WHERE w.archived_at IS NOT NULL OR s.paused IS NOT NULL`,
+    )
+    .all<{ id: string; archived_at: number | null }>();
+  return new Map(r.results.map((x) => [x.id, x.archived_at === null ? "paused" : "archived"]));
 }

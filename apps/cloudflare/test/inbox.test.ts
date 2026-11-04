@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { cleanMedia } from "@bongsu/core/cleanup";
 import { scanInbox } from "@bongsu/core/inbox";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -10,8 +11,8 @@ const OLD = "2026-10-20T02:00:00Z",
 const drafts = async () =>
   (
     await env.DB.prepare(
-      "SELECT kind, account, payload, source FROM drafts ORDER BY json_extract(payload, '$.title')",
-    ).all<{ kind: string; account: string; payload: string; source: string }>()
+      "SELECT kind, account, payload, source, workspace_id FROM drafts ORDER BY json_extract(payload, '$.title')",
+    ).all<{ kind: string; account: string; payload: string; source: string; workspace_id: string }>()
   ).results.map((d) => ({ ...d, payload: JSON.parse(d.payload) }));
 
 let w: World;
@@ -53,7 +54,10 @@ describe("the Drive inbox", () => {
     w.drivePut("UPLOADS/inbox/_posted/old.mp4", { md5: MD5, mimeType: "video/mp4", modified: OLD });
     w.drivePut("UPLOADS/inbox/20990101_NEW/pic.jpg", { md5: "p", mimeType: "image/jpeg", modified: OLD });
 
-    const r = await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
+    const e = await testEnv(env);
+    // a project no plan has yet goes to the workspace the store's inbox feeds
+    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'default' WHERE kind = 'drive'").run();
+    const r = await scanInbox(e, { fetch: w.fetch, now: NOW });
     expect(r.drafted.sort()).toEqual(["20260201_RUN/3_gear", "20260201_RUN/short9_new", "20990101_NEW/pic"]);
     expect(r.waiting).toBe(2);
     const d = await drafts();
@@ -79,6 +83,71 @@ describe("the Drive inbox", () => {
     expect((await scanInbox(await testEnv(env), { fetch: w.fetch, now: later })).drafted).toEqual([
       "20260201_RUN/still_uploading",
     ]);
+  });
+
+  it("drafts a known project into its plan's workspace, an unknown one into the store's inbox workspace, and waits without one", async () => {
+    const e = await testEnv(env);
+    await env.DB.prepare(
+      "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO NOTHING",
+    ).run();
+    await upsertConnection(
+      env.DB,
+      { id: "c_b", workspaceId: "b", provider: "composio", kind: "composio", externalRef: "instagram_conn-b2" },
+      0,
+    );
+    await upsertAccount(
+      env.DB,
+      { id: "b_shop", workspaceId: "b", platform: "instagram", handle: "b_shop", connectionId: "c_b" },
+      0,
+    );
+    await planItem({ folder: "b_shop/CONTENT/20261101_SHOP", name: "short1_x", account: "b_shop", workspaceId: "b" });
+    w.drivePut("UPLOADS/inbox/20261101_SHOP/new.mp4", { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    w.drivePut("UPLOADS/inbox/20990101_NEW/pic.jpg", { md5: "p", mimeType: "image/jpeg", modified: OLD });
+
+    // the known project goes to its plan's workspace; the unknown one waits: the store feeds no workspace
+    const r = await scanInbox(e, { fetch: w.fetch, now: NOW });
+    expect(r).toEqual({ drafted: ["20261101_SHOP/new"], waiting: 1 });
+    expect((await drafts()).map((d) => [d.payload.title, d.workspace_id, d.account])).toEqual([
+      ["20261101_SHOP/new", "b", "b_shop"],
+    ]);
+    // b's notice is b's: nothing reaches the default workspace's topic
+    expect(w.notifications).toEqual([]);
+    const notes = await env.DB.prepare("SELECT workspace_id FROM audit WHERE action = 'notify'").all<{
+      workspace_id: string;
+    }>();
+    expect(notes.results.map((n) => n.workspace_id)).toEqual(["b"]);
+
+    // the store's inbox feeds b from now on: the waiting draft goes there, on b's first Instagram account
+    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'b' WHERE kind = 'drive'").run();
+    expect((await scanInbox(e, { fetch: w.fetch, now: NOW })).drafted).toEqual(["20990101_NEW/pic"]);
+    expect((await drafts()).map((d) => [d.payload.title, d.workspace_id, d.account])).toEqual([
+      ["20261101_SHOP/new", "b", "b_shop"],
+      ["20990101_NEW/pic", "b", "b_shop"],
+    ]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM drafts WHERE workspace_id = 'default'").first("n")).toBe(0);
+  });
+
+  it("drafts nothing into an archived workspace: its projects and a store feeding it wait", async () => {
+    const e = await testEnv(env);
+    await env.DB.prepare(
+      "INSERT INTO workspaces (id, name, created_at) VALUES ('old', 'Old', 0) ON CONFLICT (id) DO NOTHING",
+    ).run();
+    await planItem({ folder: "demo_travel/CONTENT/20261101_OLD", name: "short1_x", workspaceId: "old" });
+    w.drivePut("UPLOADS/inbox/20261101_OLD/new.mp4", { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    w.drivePut("UPLOADS/inbox/20990101_NEW/pic.jpg", { md5: "p", mimeType: "image/jpeg", modified: OLD });
+    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'old' WHERE kind = 'drive'").run();
+    // archived (its UI comes later): nobody can open it
+    await env.DB.prepare("UPDATE workspaces SET archived_at = 1 WHERE id = 'old'").run();
+    try {
+      expect(await scanInbox(e, { fetch: w.fetch, now: NOW })).toEqual({ drafted: [], waiting: 2 });
+      expect(await drafts()).toEqual([]);
+      expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'notify'").first("n")).toBe(0);
+      // the planned project stays the archived workspace's even when the store feeds a live one
+      await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'default' WHERE kind = 'drive'").run();
+      expect((await scanInbox(e, { fetch: w.fetch, now: NOW })).drafted).toEqual(["20990101_NEW/pic"]);
+    } finally {
+      await env.DB.prepare("UPDATE workspaces SET archived_at = NULL WHERE id = 'old'").run();
+    }
   });
 
   it("does nothing without an inbox folder", async () => {

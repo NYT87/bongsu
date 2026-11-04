@@ -101,7 +101,7 @@ Who did what, when: approvals, connections, keys, settings, notifications.
 |---|---|---|---|---|
 | `id` | serial | no |  | primary key |
 | `at` | timestamp | no | now |  |
-| `actor` | text | no |  | 'cron', 'owner', or an api key id |
+| `actor` | text | no |  | 'cron', 'user:<id>' (a person) or 'key:<id>' (an agent key) |
 | `action` | text | no |  |  |
 | `target` | text | yes |  |  |
 | `detail` | json | yes |  | JSON |
@@ -217,6 +217,25 @@ Files the Drive inbox already turned into drafts, so they aren't drafted twice.
 
 Primary key: (store, media_id).
 
+## `invites`
+
+Invitations to a workspace: the link's token (its sha256), for one email and role, single use.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `token_hash` | id | no |  | primary key |
+| `workspace_id` | id | no |  | → `workspaces.id` |
+| `email` | text | no |  |  |
+| `role` | text: admin / editor / creator | no |  |  |
+| `invited_by` | text | no |  | users.id |
+| `created_at` | timestamp | no |  |  |
+| `expires_at` | timestamp | no |  |  |
+| `used_at` | timestamp | yes |  |  |
+| `used_by` | text | yes |  | users.id |
+| `revoked_at` | timestamp | yes |  |  |
+
+Index `invites_workspace`: (workspace_id).
+
 ## `jobs`
 
 One per plan item due to go out: the publishing state machine the tick advances.
@@ -285,6 +304,7 @@ The instance's media stores, one per kind: settings, encrypted credentials, last
 | `last_checked_at` | timestamp | yes |  |  |
 | `updated_at` | timestamp | no |  |  |
 | `updated_by` | text | yes |  |  |
+| `inbox_workspace` | text | yes |  | the workspace the inbox feeds for a project no plan has; NULL: none |
 
 ## `memberships`
 
@@ -294,7 +314,7 @@ Who belongs to which workspace, and with what role.
 |---|---|---|---|---|
 | `workspace_id` | id | no |  | primary key; → `workspaces.id` |
 | `user_id` | id | no |  | primary key; → `users.id` |
-| `role` | text: owner / admin / approver / editor / viewer | no |  |  |
+| `role` | text: admin / editor / creator | no |  |  |
 | `created_at` | timestamp | no |  |  |
 
 Primary key: (workspace_id, user_id).
@@ -325,6 +345,8 @@ OAuth flows in progress: the state's hash, the PKCE verifier, who started it. Si
 | `created_at` | timestamp | no |  |  |
 | `expires_at` | timestamp | no |  |  |
 | `used_at` | timestamp | yes |  |  |
+| `workspace_id` | text | yes |  | the workspace the flow connects into; NULL: the instance's (Drive) |
+| `browser_hash` | text | yes |  | sha256 of the cookie set in the browser that started the flow |
 
 ## `passkeys`
 
@@ -483,6 +505,7 @@ Signed-in sessions of the app and the dashboard (the token's sha256).
 | `user_id` | text | no | "owner" |  |
 | `app` | text: pwa / dashboard | no | "pwa" |  |
 | `verified_at` | timestamp | yes |  |  |
+| `workspace_id` | text | yes |  | the workspace the session works in; NULL: the user's first |
 
 Index `sessions_expires`: (expires_at).
 
@@ -575,6 +598,7 @@ People: the first one owns the instance. Email identifies them; passkeys sign th
 | `name` | text | yes |  |  |
 | `created_at` | timestamp | no |  |  |
 | `timezone` | text | yes |  |  |
+| `instance_admin` | bool | no | 0 | runs the instance: workspaces, media stores, OAuth apps |
 
 ## `workspace_settings`
 
@@ -588,6 +612,7 @@ A workspace's time zone, daily digest hour and locale.
 | `locale` | text | no |  |  |
 | `updated_at` | timestamp | no |  |  |
 | `notify_url` | text | yes |  | the workspace's ntfy topic URL, encrypted; NULL: none |
+| `paused` | json | yes |  | {reason, by, at} while the workspace's publishing is paused; NULL: running |
 
 ## `workspaces`
 
@@ -598,3 +623,4 @@ Separate sets of accounts, each with its own people.
 | `id` | id | no |  | primary key |
 | `name` | text | no |  |  |
 | `created_at` | timestamp | no |  |  |
+| `archived_at` | timestamp | yes |  | archived: nothing publishes, no one signs in to it; NULL: active |

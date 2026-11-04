@@ -8,11 +8,13 @@ import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { clearTokenCache } from "@bongsu/core/clients/google";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
+import { sha256Hex } from "@bongsu/core/formats/approved";
 import { scanInbox } from "@bongsu/core/inbox";
+import { type Mail, registerMailer } from "@bongsu/core/mail";
 import { mediaStores } from "@bongsu/core/media/index";
 import { CHECK_EVERY_S, checkStores } from "@bongsu/core/media/manage";
 import { beforeEach, describe, expect, it } from "vitest";
-import { seedS3Store, TEST_S3_KEYS, TEST_S3_SETTINGS, testEnv, World } from "./world";
+import { joinDefault, seedS3Store, TEST_S3_KEYS, TEST_S3_SETTINGS, testEnv, UNBOOTSTRAP, World } from "./world";
 
 const fake: Verifiers = {
   registration: (async (o: { response: { id: string } }) => ({
@@ -30,45 +32,52 @@ const fake: Verifiers = {
 let e: Env;
 let w: World;
 let cookie = "";
-async function call(path: string, body?: unknown, withCookie = true) {
+/** The Drive flow's cookie (bongsu_oauth) in this browser, as the start sets it and the callback clears it. */
+let driveFlow = "";
+async function call(path: string, body?: unknown, withCookie = true, flowCookie?: string) {
+  const cookies = [cookie && withCookie ? cookie : "", flowCookie ?? ""].filter(Boolean).join("; ");
   const r = await adminRoutes(w.fetch, fake).request(
     `https://bongsu.test${path}`,
     {
       method: body === undefined ? "GET" : "POST",
-      headers: { "Content-Type": "application/json", ...(cookie && withCookie ? { Cookie: cookie } : {}) },
+      headers: { "Content-Type": "application/json", ...(cookies ? { Cookie: cookies } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     },
     e,
   );
-  const set = r.headers.get("Set-Cookie");
-  if (set && !set.includes("Max-Age=0")) cookie = set.split(";")[0];
+  const setCookies = r.headers.getSetCookie();
+  for (const set of setCookies) {
+    if (set.startsWith("bongsu_oauth=")) driveFlow = set.includes("Max-Age=0") ? "" : set.split(";")[0];
+    else if (!set.includes("Max-Age=0")) cookie = set.split(";")[0];
+  }
   const text = await r.text();
   return {
     status: r.status,
     location: r.headers.get("Location"),
+    setCookies,
     json: (text.startsWith("{") ? JSON.parse(text) : {}) as Record<string, unknown>,
   };
 }
+/** Google sending the browser back to Drive's callback: no dashboard cookie (SameSite=Strict), the flow's cookie
+ *  (SameSite=Lax) unless `flowCookie` says which to send. */
+const driveCallback = (q: string, flowCookie: string = driveFlow) =>
+  call(`/admin-api/media-stores/drive/callback?${q}`, undefined, false, flowCookie);
 const AT = new Date("2026-10-20T00:00:00Z");
 const S3_FORM = { ...TEST_S3_SETTINGS, ...TEST_S3_KEYS };
 
 beforeEach(async () => {
   cookie = "";
+  driveFlow = "";
   w = new World();
   await env.DB.batch(
     [
-      "DELETE FROM passkeys",
-      "DELETE FROM sessions",
-      "DELETE FROM challenges",
-      "DELETE FROM recovery_codes",
-      "DELETE FROM audit",
+      ...UNBOOTSTRAP,
       "DELETE FROM oauth_apps",
       "DELETE FROM oauth_states",
       "DELETE FROM approvals",
       "DELETE FROM drafts",
       "DELETE FROM inbox_seen",
       "DELETE FROM settings",
-      "UPDATE users SET email = NULL WHERE id = 'owner'",
     ].map((s) => env.DB.prepare(s)),
   );
   e = await testEnv(env, {
@@ -78,6 +87,7 @@ beforeEach(async () => {
   } as Partial<Env>);
   const o = await call("/admin-api/bootstrap/options", { token: "setup-token-123", email: "owner@example.com" });
   await call("/admin-api/bootstrap/verify", { challengeId: o.json.challengeId, response: { id: "laptop-key" } });
+  await joinDefault(); // the bootstrap makes an instance admin in no workspace
 });
 
 describe("the dashboard's Media page", () => {
@@ -156,6 +166,36 @@ describe("the dashboard's Media page", () => {
   });
 });
 
+describe("the workspace a store's inbox feeds", () => {
+  it("is chosen per store by an instance admin, among the workspaces; none leaves new projects waiting", async () => {
+    const listed = async () => (await call("/admin-api/media-stores")).json;
+    const first = await listed();
+    expect((first.stores as { kind: string; inboxWorkspace: string | null }[])[0]).toMatchObject({
+      kind: "drive",
+      inboxWorkspace: null,
+    });
+    expect(first.workspaces).toEqual(expect.arrayContaining([{ id: "default", name: expect.any(String) }]));
+    expect(await call("/admin-api/media-stores/drive/inbox", { workspace: "default" })).toMatchObject({
+      status: 200,
+      json: { inboxWorkspace: "default" },
+    });
+    expect((await listed()).stores).toEqual([expect.objectContaining({ kind: "drive", inboxWorkspace: "default" })]);
+    const audit = await env.DB.prepare(
+      "SELECT target, detail, workspace_id FROM audit WHERE action = 'media_store_inbox'",
+    ).first<{ target: string; detail: string; workspace_id: string | null }>();
+    expect(audit).toEqual({ target: "drive", detail: '{"workspace":"default"}', workspace_id: null });
+    // a workspace that doesn't exist, or a store that isn't set up, is refused
+    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: "nope" })).status).toBe(400);
+    expect((await call("/admin-api/media-stores/s3/inbox", { workspace: "default" })).status).toBe(400);
+    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: null })).json).toEqual({
+      inboxWorkspace: null,
+    });
+    // a workspace admin who isn't an instance admin can't choose it
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE email = 'owner@example.com'").run();
+    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: "default" })).status).toBe(403);
+  });
+});
+
 describe("Connect Google Drive", () => {
   it("asks Google for the drive scope with PKCE, and saves the grant as the Drive store", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
@@ -176,16 +216,18 @@ describe("Connect Google Drive", () => {
     w.drivePut("UPLOADS/inbox/keep.txt", { md5: "k", mimeType: "text/plain" });
     const state = url.searchParams.get("state")!;
     // a YouTube callback can't finish a Drive flow
-    const wrong = await call(`/admin-api/connect/youtube/callback?code=g-code&state=${state}`, undefined, false);
+    // (sent with the Drive flow's cookie, as the starting browser could: the flow check refuses it, not the cookie)
+    const wrong = await call(
+      `/admin-api/connect/youtube/callback?code=g-code&state=${state}`,
+      undefined,
+      false,
+      driveFlow,
+    );
     expect(new URL(wrong.location!).searchParams.get("error")).toMatch(/isn't valid/);
 
     const url2 = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
     w.googleChallenge = url2.searchParams.get("code_challenge")!;
-    const back = await call(
-      `/admin-api/media-stores/drive/callback?code=g-code&state=${url2.searchParams.get("state")}`,
-      undefined,
-      false,
-    );
+    const back = await driveCallback(`code=g-code&state=${url2.searchParams.get("state")}`);
     expect(back.location).toBe("https://bongsu.test/dashboard/media?connected=drive");
     const stores = await mediaStores(e, w.fetch);
     expect(stores.default?.id).toBe("drive");
@@ -197,18 +239,55 @@ describe("Connect Google Drive", () => {
     const url = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
     w.googleChallenge = url.searchParams.get("code_challenge")!;
     w.googleGrantScope = "https://www.googleapis.com/auth/drive.file";
-    const back = await call(
-      `/admin-api/media-stores/drive/callback?code=g-code&state=${url.searchParams.get("state")}`,
-      undefined,
-      false,
-    );
+    const back = await driveCallback(`code=g-code&state=${url.searchParams.get("state")}`);
     expect(new URL(back.location!).searchParams.get("error")).toMatch(/didn't grant access to Drive/);
+  });
+
+  it("finishes only in the browser that started it: no cookie, another flow's or a forged one spends no code", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
+    const first = await call("/admin-api/media-stores/drive/start", {});
+    const firstCookie = driveFlow;
+    const start = await call("/admin-api/media-stores/drive/start", {});
+    const mine = driveFlow;
+    expect(start.setCookies.find((x) => x.startsWith("bongsu_oauth="))).toMatch(
+      /^bongsu_oauth=[A-Za-z0-9_-]{43}; Path=\/admin-api\/media-stores\/drive\/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=900$/,
+    );
+    const url = new URL(start.json.url as string);
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    w.googleGrantScope = "https://www.googleapis.com/auth/drive";
+    w.drivePut("UPLOADS/inbox/keep.txt", { md5: "k", mimeType: "text/plain" });
+    const q = `code=g-code&state=${url.searchParams.get("state")}`;
+    for (const flowCookie of ["", firstCookie, "bongsu_oauth=forged-value-forged-value-forged-value-forged-va"]) {
+      const r = await driveCallback(q, flowCookie);
+      expect(new URL(r.location!).searchParams.get("error")).toMatch(/isn't valid/);
+      expect(r.setCookies).toEqual([
+        "bongsu_oauth=x; Path=/admin-api/media-stores/drive/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+      ]);
+    }
+    expect(w.googleCodes).toEqual([]); // Google's token endpoint was never called
+    expect((await mediaStores(e, w.fetch)).default?.id).not.toBe("drive");
+    // a flow started before the browser was kept can't finish, even with its cookie
+    const firstState = new URL(first.json.url as string).searchParams.get("state");
+    await env.DB.prepare(
+      "UPDATE oauth_states SET browser_hash = NULL WHERE provider = 'media:drive' AND state_hash <> ?1",
+    )
+      .bind(await sha256Hex(url.searchParams.get("state")!))
+      .run();
+    const old = await driveCallback(`code=g-code&state=${firstState}`, firstCookie);
+    expect(new URL(old.location!).searchParams.get("error")).toMatch(/isn't valid/);
+    expect(w.googleCodes).toEqual([]);
+    // the refusals didn't use the state up: in the browser that started it, the flow finishes
+    expect((await driveCallback(q, mine)).location).toBe("https://bongsu.test/dashboard/media?connected=drive");
+    expect(w.googleCodes).toHaveLength(1);
   });
 });
 
 describe("several stores side by side", () => {
   it("drafts what's dropped in the inbox of every store, each draft naming its store", async () => {
     await seedS3Store();
+    // "trip" is in no plan: the stores' inboxes feed the default workspace
+    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'default'").run();
     const env2 = { ...e };
     w.drivePut("UPLOADS/inbox/trip/fromdrive.mp4", {
       md5: "d1",
@@ -230,6 +309,7 @@ describe("several stores side by side", () => {
 
   it("keeps scanning the other stores when one fails", async () => {
     await seedS3Store();
+    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'default'").run();
     await w.s3.put("UPLOADS/inbox/trip/frombucket.mp4", "video", "video/mp4");
     w.googleRefuse = true; // the Drive grant was revoked
     const r = await scanInbox(e, { fetch: w.fetch, now: new Date(Date.now() + 3600_000) });
@@ -246,13 +326,63 @@ describe("several stores side by side", () => {
     clearTokenCache(); // the access token from the first check would still be good
     const later = new Date(AT.getTime() + (CHECK_EVERY_S + 60) * 1000);
     expect(await checkStores(e, { fetch: w.fetch, now: later })).toEqual({ checked: ["s3"], broken: ["drive"] });
-    expect(w.notifications.map((n) => n.title)).toEqual(["A media store needs attention"]);
+    // the stores are the instance's: its admins hear of it (the audit log, in no workspace), no workspace's topic
+    expect(w.notifications).toEqual([]);
+    const said = await env.DB.prepare(
+      "SELECT detail, workspace_id FROM audit WHERE action = 'notify' AND target = 'media_stores'",
+    ).all<{ detail: string; workspace_id: string | null }>();
+    expect(said.results.map((r) => [JSON.parse(r.detail).title, r.workspace_id])).toEqual([
+      ["A media store needs attention", null],
+    ]);
     const h = await createApp(w.fetch).request("/health", {}, e);
     expect(h.status).toBe(503);
     expect(((await h.json()) as { media_stores: unknown }).media_stores).toEqual([
       { kind: "drive", status: "broken", default: true },
       { kind: "s3", status: "ok", default: false },
     ]);
+  });
+
+  it("tells the instance admins when a store breaks", async () => {
+    const m = await testEnv(env, {
+      MAILER: "resend",
+      MAIL_FROM: "Bongsu <bongsu@example.com>",
+      RESEND_API_KEY: "re_test",
+    } as Partial<Env>);
+    // a workspace admin who isn't an instance admin isn't told: the stores aren't theirs
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, name, created_at) VALUES ('ada', 'ada@example.com', 'Ada', 0) ON CONFLICT (id) DO NOTHING",
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'ada', 'admin', 0) ON CONFLICT (workspace_id, user_id) DO NOTHING",
+    ).run();
+    w.googleRefuse = true;
+    clearTokenCache();
+    expect(await checkStores(m, { fetch: w.fetch, now: AT })).toEqual({ checked: [], broken: ["drive"] });
+    expect(w.mails).toEqual([
+      expect.objectContaining({
+        from: "Bongsu <bongsu@example.com>",
+        to: ["owner@example.com"],
+        subject: "Bongsu: a media store needs attention",
+        text: expect.stringMatching(/^drive: [\s\S]*\/dashboard\/media$/),
+      }),
+    ]);
+  });
+
+  it("writes no mail when no instance admin has an email, and still logs the notice", async () => {
+    // a mailer that sees every send (Resend's skips an empty list itself; another mailer may not)
+    const sent: Mail[] = [];
+    registerMailer("spy", () => ({ id: "spy", send: async (mail) => void sent.push(mail) }));
+    const m = await testEnv(env, { MAILER: "spy" } as Partial<Env>);
+    await env.DB.prepare("UPDATE users SET email = NULL WHERE instance_admin = 1").run();
+    w.googleRefuse = true;
+    clearTokenCache();
+    expect(await checkStores(m, { fetch: w.fetch, now: AT })).toEqual({ checked: [], broken: ["drive"] });
+    expect(sent).toEqual([]);
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM audit WHERE action = 'notify' AND target = 'media_stores' AND workspace_id IS NULL",
+      ).first("n"),
+    ).toBe(1);
   });
 
   it("isn't healthy without any store", async () => {

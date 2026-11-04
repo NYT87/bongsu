@@ -7,7 +7,7 @@ import type { Env } from "@bongsu/core/env";
 import { notifier } from "@bongsu/core/notify";
 import { checkNtfyUrl, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
 import { beforeEach, describe, expect, it } from "vitest";
-import { testEnv } from "./world";
+import { joinDefault, testEnv, UNBOOTSTRAP } from "./world";
 
 const fake: Verifiers = {
   registration: (async (o: { response: { id: string } }) => ({
@@ -57,17 +57,7 @@ const TOPIC = "https://ntfy.sh/bongsu-demo-topic-4f9a2c";
 beforeEach(async () => {
   cookie = "";
   posted = [];
-  await env.DB.batch(
-    [
-      "DELETE FROM passkeys",
-      "DELETE FROM sessions",
-      "DELETE FROM challenges",
-      "DELETE FROM recovery_codes",
-      "DELETE FROM audit",
-      "DELETE FROM settings WHERE key = 'bootstrap_done'",
-      "UPDATE users SET email = NULL WHERE id = 'owner'",
-    ].map((s) => env.DB.prepare(s)),
-  );
+  await env.DB.batch([...UNBOOTSTRAP].map((s) => env.DB.prepare(s)));
   await env.DB.prepare(
     "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO NOTHING",
   ).run();
@@ -83,6 +73,7 @@ beforeEach(async () => {
   await setWorkspaceNtfy(e, "b", null, 0);
   const o = await call("/admin-api/bootstrap/options", { token: "setup-token-123", email: "owner@example.com" });
   await call("/admin-api/bootstrap/verify", { challengeId: o.json.challengeId, response: { id: "laptop-key" } });
+  await joinDefault(); // the bootstrap makes an instance admin in no workspace
 });
 
 describe("a workspace's ntfy topic", () => {

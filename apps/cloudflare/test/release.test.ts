@@ -9,7 +9,7 @@ import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneToUnix } from "@bongsu/core/formats/time";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, testEnv, World } from "./world";
+import { clearPlan, joinDefault, testEnv, UNBOOTSTRAP, World } from "./world";
 
 let w: World;
 let yt: YouTube;
@@ -107,7 +107,7 @@ describe("moveRelease", () => {
       target: string;
       detail: string;
     }>();
-    expect(row).toMatchObject({ actor: "owner", target: "youtube:v-sched" });
+    expect(row).toMatchObject({ actor: "user:owner", target: "youtube:v-sched" });
     expect(JSON.parse(row?.detail ?? "")).toEqual({
       account: "main",
       title: "Lisbon Short",
@@ -286,7 +286,7 @@ describe("the PWA", () => {
       user_id: string | null;
     }>();
     const user = await env.DB.prepare("SELECT user_id FROM sessions").first<{ user_id: string }>();
-    expect(row).toEqual({ actor: "owner", user_id: user?.user_id });
+    expect(row).toEqual({ actor: `user:${user?.user_id}`, user_id: user?.user_id });
     expect(row?.user_id).toBeTruthy();
   });
 
@@ -296,14 +296,16 @@ describe("the PWA", () => {
     expect(w.ytUpdates).toEqual([]);
   });
 
-  it("an editor can't move it: moving a release date needs the reschedule scope", async () => {
+  it("an editor may move it too: release dates are the plan's, every role's (the reschedule scope)", async () => {
     const user = await env.DB.prepare("SELECT user_id FROM sessions").first<{ user_id: string }>();
+    // not an instance admin meanwhile, whose rights are an admin's whatever the role
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = ?1").bind(user?.user_id).run();
     await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = ?1").bind(user?.user_id).run();
     try {
-      expect((await post("/app-api/youtube/release/options", when)).status).toBe(403);
-      expect((await post("/app-api/youtube/release/verify", { challengeId: "x", response: {} })).status).toBe(403);
+      expect((await post("/app-api/youtube/release/options", when)).status).toBe(200);
     } finally {
-      await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = ?1").bind(user?.user_id).run();
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(user?.user_id).run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(user?.user_id).run();
     }
     expect(w.ytUpdates).toEqual([]);
   });
@@ -348,6 +350,7 @@ describe("the dashboard", () => {
     })) as unknown as Verifiers["authentication"],
   };
   let e: Env;
+  let me = "";
   const jar: Record<string, string> = {};
   const call = async (path: string, body?: unknown) => {
     const cookie = Object.entries(jar)
@@ -372,18 +375,7 @@ describe("the dashboard", () => {
 
   beforeEach(async () => {
     for (const k of Object.keys(jar)) delete jar[k];
-    await env.DB.batch(
-      [
-        "DELETE FROM passkeys",
-        "DELETE FROM sessions",
-        "DELETE FROM challenges",
-        "DELETE FROM recovery_codes",
-        "DELETE FROM audit",
-        "DELETE FROM settings WHERE key = 'bootstrap_done'",
-        "DELETE FROM users WHERE id != 'owner'",
-        "UPDATE users SET email = NULL, name = 'Owner' WHERE id = 'owner'",
-      ].map((s) => env.DB.prepare(s)),
-    );
+    await env.DB.batch(UNBOOTSTRAP.map((s) => env.DB.prepare(s)));
     e = await testEnv(env, {
       SETUP_TOKEN: "setup-token-123",
       PUBLIC_URL: "https://bongsu.test",
@@ -400,6 +392,7 @@ describe("the dashboard", () => {
       device: "laptop",
     });
     expect(b.status).toBe(200);
+    me = await joinDefault(); // the bootstrap makes an instance admin in no workspace
   });
 
   it("lists each channel's uploads in the user's zone", async () => {
@@ -442,7 +435,7 @@ describe("the dashboard", () => {
     expect(w.ytUpdates).toEqual([]);
   });
 
-  it("moves a release after a fresh passkey check, and a viewer can't", async () => {
+  it("moves a release after a fresh passkey check, an editor's too", async () => {
     const move = { date: "2099-11-06", time: "19:00" };
     await env.DB.prepare("UPDATE sessions SET verified_at = verified_at - ?1")
       .bind(FRESH_S + 5)
@@ -459,11 +452,14 @@ describe("the dashboard", () => {
     expect(w.ytUploads[0].publishAt).toBe("2099-11-06T10:00:00Z");
     expect((await call("/admin-api/videos/v-pub/release", move)).status).toBe(409);
     expect((await call("/admin-api/videos/v-none/release", move)).status).toBe(404);
-    await env.DB.prepare("UPDATE memberships SET role = 'viewer' WHERE user_id = 'owner'").run();
+    // an editor too (not an instance admin meanwhile, whose rights are an admin's whatever the role)
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = ?1").bind(me).run();
+    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = ?1").bind(me).run();
     try {
-      expect((await call("/admin-api/videos/v-sched/release", move)).status).toBe(403);
+      expect((await call("/admin-api/videos/v-sched/release", { date: "2099-11-07", time: "19:00" })).status).toBe(200);
     } finally {
-      await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = 'owner'").run();
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(me).run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(me).run();
     }
   });
 });

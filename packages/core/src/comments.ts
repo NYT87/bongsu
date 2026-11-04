@@ -3,7 +3,7 @@
 // (oldest-checked first), for 14 days after each went out. Ours (the self-comment, replies) are kept but never notified. Replies are sent from the app
 // (src/app/routes.ts → replyToComment).
 
-import { findAccount, listAccounts } from "./accounts";
+import { ARCHIVED, findAccount, listAccounts } from "./accounts";
 import type { Env } from "./env";
 import { notifier } from "./notify";
 import { providerFor } from "./providers/index";
@@ -44,15 +44,17 @@ export async function pollComments(
        WHERE at >= ?1 ON CONFLICT (media_id) DO NOTHING`).bind(since),
     env.DB.prepare("DELETE FROM comment_polls WHERE since < ?1").bind(since),
   ]);
+  // an archived workspace stops completely: its posts aren't watched (and don't take a run's places)
   const polls = await env.DB.prepare(
-    "SELECT media_id, platform, account, item_key, workspace_id FROM comment_polls ORDER BY checked_at LIMIT ?1",
+    `SELECT media_id, platform, account, item_key, workspace_id FROM comment_polls
+     WHERE workspace_id NOT IN (${ARCHIVED}) ORDER BY checked_at LIMIT ?1`,
   )
     .bind(PER_RUN)
     .all<Poll>();
   if (!polls.results.length) return { checked: 0, fresh: 0 };
 
   const yt = new Map<string, { pr: Provider; me: string | null }>();
-  const accounts = new Map((await listAccounts(env.DB, { all: true })).map((a) => [a.id, a]));
+  const accounts = new Map((await listAccounts(env.DB, { all: true, working: true })).map((a) => [a.id, a]));
   const fresh: { who: string; text: string; item: string | null; workspaceId: string }[] = [];
   for (const p of polls.results) {
     let found: Found[] = [];

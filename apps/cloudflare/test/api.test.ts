@@ -164,8 +164,10 @@ describe("drafts and pause", () => {
       await req("/v1/pause", KEY_ALL, { method: "POST", body: JSON.stringify({ reason: "caption typo" }) })
     ).json();
     expect(first).toMatchObject({ paused: true });
-    const row = await env.DB.prepare("SELECT value FROM settings WHERE key = 'paused'").first<{ value: string }>();
-    expect(JSON.parse(row!.value)).toMatchObject({ reason: "caption typo", by: 'API key "test k_all"' });
+    const row = await env.DB.prepare("SELECT paused FROM workspace_settings WHERE workspace_id = 'default'").first<{
+      paused: string;
+    }>();
+    expect(JSON.parse(row!.paused)).toMatchObject({ reason: "caption typo", by: 'API key "test k_all"' });
     expect(
       await (await req("/v1/pause", KEY_ALL, { method: "POST", body: JSON.stringify({ reason: "again" }) })).json(),
     ).toMatchObject({ already: true });
@@ -205,7 +207,11 @@ describe("MCP", () => {
     ).json()) as { result: { isError: boolean; content: { text: string }[] } };
     expect(denied.result).toMatchObject({ isError: true });
     expect(denied.result.content[0].text).toContain('"pause" scope');
-    expect(await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'paused'").first()).toBeNull();
+    expect(
+      await env.DB.prepare(
+        "SELECT paused FROM workspace_settings WHERE workspace_id = 'default' AND paused IS NOT NULL",
+      ).first(),
+    ).toBeNull();
   });
 
   it("rejects calls without a key", async () => {

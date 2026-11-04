@@ -12,6 +12,9 @@ export class ConfigError extends Error {}
 export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
   const publicUrl = vars.PUBLIC_URL?.replace(/\/$/, "");
   if (!publicUrl) throw new ConfigError("PUBLIC_URL is required: the instance's public https:// address");
+  // the OAuth callbacks' cookie paths are read from it: a scheme-less value would break every connect flow
+  if (!/^https:\/\/[^/]/.test(publicUrl) && !/^http:\/\/localhost(:\d+)?(\/|$)/.test(publicUrl))
+    throw new ConfigError(`PUBLIC_URL must be an absolute https:// address (got "${publicUrl}")`);
   const env: Env = {
     DB: db,
     ASSETS: assets,

@@ -47,6 +47,25 @@ export const en = {
   "sign.deviceError":
     "This device couldn't create the passkey ({detail}: {message}). Your setup code still works: try again. Chrome with Google Password Manager as the passkey provider is the most reliable.",
 
+  // signed in, in no workspace (removed, or not invited yet)
+  "noWorkspace.title": "You're not in a workspace yet",
+  "noWorkspace.detail": "An admin of a workspace invites you to it: ask them for an invite link, then open it here.",
+
+  // joining a workspace from an invite link (#/invite/<token>)
+  "invite.title": "Join {workspace}",
+  "invite.asRole": "You're invited as a {role}: the plan, the texts and approving.",
+  "invite.gone": "This invite doesn't work",
+  "invite.goneDetail":
+    "It was used already, revoked, or is older than 7 days. Ask the person who invited you for a new link.",
+  "invite.new": "New to Bongsu",
+  "invite.name": "Your name",
+  "invite.passkey": "Your passkey (this device's fingerprint, face or PIN) signs you in from now on; no password.",
+  "invite.create": "Create my passkey and join",
+  "invite.existing": "Already have a Bongsu account?",
+  "invite.existingDetail": "Sign in with its passkey: the account must have the email this invite was sent to.",
+  "invite.signIn": "Sign in with my passkey and join",
+  "invite.waiting": "Waiting for the passkey…",
+
   // empty lists and the no-account note
   "empty.scheduledBefore": "Nothing scheduled. Posts arrive from the inbox, from a draft, or from an agent: see",
   "empty.scheduledLink": "Drafts",
@@ -69,12 +88,13 @@ export const en = {
 
   // settings
   "settings.publishing": "Publishing",
-  "settings.pausedNote": "Paused: nothing is published until you resume.",
+  "settings.pausedNote": "Paused: nothing in this workspace is published until you resume.",
   "settings.resumeWithPasskey": "Resume with passkey",
   "settings.resumed": "Resumed: approved items go out at their time again; any overdue ones go out now.",
-  "settings.pauseNote": "Stops every Reel, post and Shorts comment until you resume. Approvals are kept.",
-  "settings.pauseLabel": "Pause everything",
-  "settings.pauseConfirm": "Pause all publishing?",
+  "settings.pauseNote":
+    "Stops this workspace's Reels, posts and Shorts comments until you resume. Approvals are kept; other workspaces keep publishing.",
+  "settings.pauseLabel": "Pause this workspace",
+  "settings.pauseConfirm": "Pause publishing in this workspace?",
   "settings.pauseDetail": "Nothing goes out until you resume here.",
   "settings.notifications": "Notifications",
   "settings.pushOn": "On here",
@@ -101,6 +121,17 @@ export const en = {
   "settings.mediaDefault": "default",
   "settings.mediaBroken": "needs attention",
   "settings.mediaNote": "Where the Reels and photos are read from. They're set up in the dashboard (Media).",
+  "settings.accounts": "Accounts",
+  "settings.accountsNote": "Connect the Instagram and YouTube accounts this workspace publishes to.",
+  "settings.connect": "Connect {label}",
+  "settings.reconnect": "Reconnect",
+  "settings.connectNoApp": "{label}: the instance admin has to add its OAuth app in the dashboard first.",
+  "settings.connectBroken": "needs reconnecting",
+  "settings.connected": { one: "Connected {label}: {n} account.", other: "Connected {label}: {n} accounts." },
+  "settings.connectFailed": "Not connected: {error}",
+  "settings.connectBrowserHint":
+    "If you connected from the app on your home screen, open Bongsu in the phone's browser (Safari on iPhone) and connect from there.",
+  "settings.connectNone": "Nothing connected yet.",
   "settings.zone": "Time zone",
   "settings.zoneShown": "Times are shown and entered in",
   "settings.zoneWorkspace": "(the workspace's)",

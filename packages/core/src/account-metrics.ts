@@ -120,7 +120,10 @@ export async function sampleAccounts(
   await env.DB.prepare("DELETE FROM settings WHERE key LIKE ?1 AND updated_at < ?2")
     .bind(`${FAILED}%`, nowS - METRICS_STOP_S)
     .run();
-  const accounts = (await listAccounts(env.DB)).filter((a) => a.platform === "instagram" || a.platform === "youtube");
+  // not an archived workspace's: it stops completely (a paused one only stops publishing)
+  const accounts = (await listAccounts(env.DB, { working: true })).filter(
+    (a) => a.platform === "instagram" || a.platform === "youtube",
+  );
   const last = new Map(
     (
       await env.DB.prepare("SELECT account, MAX(taken_at) AS at FROM account_metrics GROUP BY account").all<{

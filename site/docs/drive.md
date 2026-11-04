@@ -45,7 +45,9 @@ name at the top of your Drive.
 | `Bongsu app uploads/` | files uploaded from the app: a top-level folder Bongsu makes on first use |
 
 Planned items given by path (the first two rows) are looked up in the **default** store; drafts from the inbox and
-from the app remember the store their files are in.
+from the app remember the store their files are in. An inbox draft goes to the workspace whose plan has its project;
+a project no plan has yet goes to the workspace the store's **Inbox feeds** names (dashboard → Media), or waits
+until one is chosen.
 
 ## Uploads from the app
 

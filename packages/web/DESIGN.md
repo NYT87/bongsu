@@ -188,7 +188,7 @@ A quiet slate world with one green signal, three status colours, a separate chan
 - **OK Green** (light #15803d, dark #4ade80): approved, posted, done.
 - **Caution Amber** (light #b45309, dark #fbbf24): waiting on the owner. "Needs approval" and "Re-approve" pills, the
   Needs you heading, the tab count badges, the ring on a calendar dot, offline/stale notices.
-- **Stop Red** (light #b91c1c, dark #f87171): failed, error, paused and destructive buttons (Pause everything, Refuse).
+- **Stop Red** (light #b91c1c, dark #f87171): failed, error, paused and destructive buttons (Pause this workspace, Refuse).
   The paused banner is white text on the light value (#b91c1c) in both themes, so it keeps 4.5:1 in dark mode too.
 
 ### Channel code
@@ -332,7 +332,7 @@ Soft, thumb-sized and decisive; 44px minimum height everywhere.
   the action the screen exists for. Its label names the outcome ("Approve: publish Today 18:00 GMT+9", "Schedule").
 - **Default:** card-coloured with a hairline border and body text, for secondary actions.
 - **Danger:** card-coloured, Stop Red border and text. **Always asks once, in place** before acting: an inline red-edged
-  box ("Pause all publishing? Nothing goes out until you resume here.") with Cancel and the action.
+  box ("Pause publishing in this workspace? Nothing goes out until you resume here.") with Cancel and the action.
 - **Icon button:** 44px square (calendar month arrows).
 - **Disabled:** 50% opacity; a blocked Approve says why ("Fix 2 problems first").
 
@@ -451,7 +451,7 @@ and a time in the viewer's zone and **Save new date**. Saving asks for the passk
 - **Do** repeat channel, account, day and time (with the zone) right above any Approve button, and name the outcome on it.
 - **Do** use one row component for every list of items, with the channel dot and its label.
 - **Do** make every destructive action ask once, in place, next to the button.
-- **Do** offer "Hold this item" before reaching for "Pause everything".
+- **Do** offer "Hold this item" before reaching for "Pause this workspace".
 - **Do** say when data is offline or stale, with the time it was saved.
 - **Do** keep tap targets at least 44px high and inputs at 16px text.
 - **Do** put new UI text in `src/i18n.ts` and render it through `t()`; the rest of `App.tsx` moves in #144.

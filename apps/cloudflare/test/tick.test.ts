@@ -46,10 +46,10 @@ beforeEach(async () => {
 });
 
 describe("tick: guards", () => {
-  it("does nothing while paused", async () => {
+  it("does nothing for a paused workspace", async () => {
     await seedReel(w);
-    await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('paused', '{}')").run();
-    expect((await tick(await testEnv(env), { fetch: w.fetch, now: AT })).status).toBe("paused");
+    await env.DB.prepare("UPDATE workspace_settings SET paused = '{}' WHERE workspace_id = 'default'").run();
+    expect((await tick(await testEnv(env), { fetch: w.fetch, now: AT })).detail).toMatchObject({ held: ["default"] });
     expect(await jobs()).toEqual([]);
   });
 
@@ -127,7 +127,8 @@ describe("tick: dry run", () => {
     expect([j.state, j.dry_run]).toEqual(["done", 1]);
     expect(w.calls).toEqual([]);
     expect(await postedRows()).toEqual([]);
-    expect(await audits("would_publish")).toHaveLength(1);
+    // in the item's workspace's audit, where its people read it
+    expect(await audits("would_publish")).toEqual([expect.objectContaining({ workspace_id: "default" })]);
     expect(w.notifications.map((n) => n.title)).toEqual([`dry run: would publish ${KEY}`]);
   });
 });

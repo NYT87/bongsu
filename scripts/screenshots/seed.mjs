@@ -327,16 +327,23 @@ export async function seedDemo(scratchDir, now = new Date()) {
         )
         .run(row);
 
-    // ---- the workspace and its people (the migrations seed `default` and the owner)
+    // ---- the workspace and its people: a fresh database has none (the setup token makes the instance admin, who
+    // creates workspaces), so the demo creates its own `default` workspace and its owner, an instance admin
+    db.prepare("INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Demo Studio', ?)").run(nowS);
     db.prepare(
-      "UPDATE workspace_settings SET timezone = ?, digest_hour = 8, updated_at = ? WHERE workspace_id = 'default'",
+      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', ?, 8, 'en', ?)",
     ).run(ZONE, nowS);
-    db.prepare("UPDATE workspaces SET name = 'Demo Studio' WHERE id = 'default'").run();
-    // the media: the demo folder on the server's disk (MEDIA_DIR), the instance's only store
     db.prepare(
-      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', ?)",
+      "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', 'owner@example.com', 'Demo Owner', ?, 1)",
     ).run(nowS);
-    db.prepare("UPDATE users SET email = 'owner@example.com', name = 'Demo Owner' WHERE id = 'owner'").run();
+    db.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', ?)",
+    ).run(nowS);
+    // the media: the demo folder on the server's disk (MEDIA_DIR), the instance's only store. Its drive inbox lands in
+    // `default`, as migration 0018 sets it on an instance that has that workspace (the demo plants an inbox draft)
+    db.prepare(
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at, inbox_workspace) VALUES ('local', 1, '{}', 'ok', ?, 'default')",
+    ).run(nowS);
 
     // ---- accounts and how they are reached (no credentials: DRY_RUN never publishes, and the YouTube list is cached below)
     const conn = (id, provider, kind, label, extra) =>
@@ -674,6 +681,7 @@ export async function seedDemo(scratchDir, now = new Date()) {
         user_id: "owner",
         app,
         verified_at: nowS,
+        workspace_id: "default",
       });
   });
   try {

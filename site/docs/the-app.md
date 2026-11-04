@@ -14,6 +14,17 @@ fails doesn't use the code up.
 Then add the app to the home screen, which is also what lets it send notifications. Next time, **Sign in with
 passkey**. To add a second phone, use **Add a device** again; **Devices & passkeys** lists every passkey.
 
+If a workspace's admin invited you as a **creator**, you start from their invite link instead: it opens the app, and you
+make a passkey (or sign in with the one you already have) and join the workspace. The link works once, for 7 days; ask
+for a new one if it has run out. Admins and editors get their links to the [dashboard](the-dashboard.md#members).
+
+## What your role allows
+
+You have a role in each workspace. **Admins** and **creators** do everything in the app: plan, edit texts, drafts and
+release dates, approve, pause and resume, connect their accounts. **Editors** do the same except approving, pausing,
+resuming and connecting; they leave those to someone else. Either way, approving and resuming ask for your own
+passkey. See [Security](security.md#roles).
+
 ## Today and "Needs you"
 
 Today opens first. At the top is **Needs you**, and only when something waits on you:
@@ -157,13 +168,28 @@ each one's share of the period's gain. A row opens the post's Results or the vid
 is rounded by YouTube (three significant figures above 1,000), so a channel's daily changes are coarse; the videos'
 subscribers need the analytics scope (see [YouTube](youtube.md#2-connect-the-channel-from-the-dashboard)).
 
-## Pausing everything and resuming
+## Connecting accounts
 
-**Settings → Publishing** has **Pause everything**: "Stops every Reel, post and Shorts comment until you resume.
-Approvals are kept." It asks once. While paused, a red banner, "Publishing is paused.", sits under the top bar on every
-screen with a **Resume** link, and the approve button reads **Approve (held while paused)**. Only you resume, with
-**Resume with passkey**: approved items go out at their time again, and any overdue ones go out now (within the
-6-hour window). Agents may be allowed to pause, never to resume.
+Admins and creators connect their own accounts from **Settings → Accounts**: **Connect Instagram** and **Connect
+YouTube** sign in with the account and bring you back to Settings, where the accounts it reached are listed.
+**Reconnect** signs in again when a connection is marked "needs reconnecting". The accounts belong to the workspace
+you're in. If a button says the instance admin has to add its OAuth app first, ask them: the Meta and Google apps are
+set up once for the whole instance ([The dashboard](the-dashboard.md#oauth-apps)). Editors don't see this.
+
+If connecting from the app installed on your home screen says to start again, your phone probably opened the sign-in in
+a separate browser. Open Bongsu in the phone's browser (Safari on iPhone) and connect from there.
+
+## Pausing a workspace and resuming
+
+**Settings → Publishing** has **Pause this workspace**: "Stops this workspace's Reels, posts and Shorts comments until
+you resume. Approvals are kept; other workspaces keep publishing." It asks once. While paused, a red banner,
+"Publishing is paused.", sits under the top bar on every screen with a **Resume** link, and the approve button reads
+**Approve (held while paused)**. A person resumes, with **Resume with passkey**: approved items go out at their time
+again, and any overdue ones go out now (within the 6-hour window). Agents may be allowed to pause (their own
+workspace), never to resume.
+
+A pause holds one workspace only, and resuming releases only that one. Admins and creators may pause and resume;
+editors may not.
 
 ![Settings](assets/app/settings-light.png)
 

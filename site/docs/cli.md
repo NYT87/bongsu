@@ -105,7 +105,7 @@ comments: there is no separate `--comments` flag). The command prints the texts,
 checksums and the lint checks that didn't pass, then asks `approve? [y/N]`. `--yes` skips the question; without a
 terminal `--yes` is required. With `--json` the summary goes to stderr and the answer to stdout.
 
-Only a CLI token of an owner, admin or approver can approve, and only exactly what it was shown: if the texts, media
+Only a CLI token of an admin or a creator (or an instance admin) can approve, and only exactly what it was shown: if the texts, media
 or time change between the summary and the approval, the instance refuses (409) and you look again. If the item
 isn't ready (a check fails, no media), the problems are listed. An agent key can never approve, whatever its scopes.
 
@@ -119,7 +119,7 @@ bongsu ingest samples.json
 
 `stats` prints the series as a table (times in UTC); `--json` prints the API's answer. `ingest` sends a file shaped
 like [`ingest_metrics`](api-reference.md#stats) takes and says how many samples were added and how many were already
-there; a CLI token of an owner or admin has the `metrics` scope.
+there; a CLI token of an admin, an editor or a creator has the `metrics` scope.
 
 ### export
 
@@ -159,10 +159,8 @@ is explained in [Deploy on Cloudflare](deploy-cloudflare.md), section 6.
 
 | Token | Can |
 |---|---|
-| CLI token, owner or admin | Read, edit plans and texts, approve, plus draft, pause and resume in the API |
-| CLI token, approver | Read and approve |
-| CLI token, editor | Read, draft and plan: can `texts set`, cannot approve |
-| CLI token, viewer | Read only |
+| CLI token, admin or creator (or an instance admin) | Read, edit plans and texts, approve, plus draft, pause and resume in the API |
+| CLI token, editor | Read, draft, plan, move release dates and upload stats: can `texts set`, cannot approve, pause or resume |
 | Agent key | Only its scopes; never `approve` |
 
 `status`, `queue`, `texts get` and `export` need the `read` scope; `texts set` needs `plan`. A CLI token acts as its

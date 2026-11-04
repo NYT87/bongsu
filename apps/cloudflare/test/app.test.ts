@@ -326,7 +326,11 @@ describe("pause, resume and push", () => {
   it("pauses and resumes (in D1)", async () => {
     await signUp();
     await post("/app-api/pause", { reason: "checking captions" });
-    expect(await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'paused'").first()).not.toBeNull();
+    expect(
+      await env.DB.prepare(
+        "SELECT paused FROM workspace_settings WHERE workspace_id = 'default' AND paused IS NOT NULL",
+      ).first(),
+    ).not.toBeNull();
     expect((await post("/app-api/resume")).status).toBe(404); // no passkey-less resume
     const o = (await (await post("/app-api/resume/options")).json()) as { challengeId: string };
     expect(
@@ -337,7 +341,11 @@ describe("pause, resume and push", () => {
     expect(
       await (await post("/app-api/resume/verify", { challengeId: o2.challengeId, response: { id: "cred1" } })).json(),
     ).toMatchObject({ paused: false, wasPaused: true });
-    expect(await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'paused'").first()).toBeNull();
+    expect(
+      await env.DB.prepare(
+        "SELECT paused FROM workspace_settings WHERE workspace_id = 'default' AND paused IS NOT NULL",
+      ).first(),
+    ).toBeNull();
   });
 
   it("stores a device's push subscription", async () => {
@@ -753,15 +761,20 @@ describe("me.scopes", () => {
     const owner = (await (await call("/app-api/me")).json()) as { scopes: string[] };
     expect(owner.scopes).toEqual(expect.arrayContaining(["read", "approve", "resume", "reschedule"]));
     const user = await env.DB.prepare("SELECT user_id FROM passkeys LIMIT 1").first<{ user_id: string }>();
+    // an editor's: no approve, pause or resume (not an instance admin meanwhile, whose rights are an admin's)
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = ?1").bind(user?.user_id).run();
     await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = ?1").bind(user?.user_id).run();
     try {
       expect(((await (await call("/app-api/me")).json()) as { scopes: string[] }).scopes).toEqual([
         "read",
         "draft",
         "plan",
+        "reschedule",
+        "metrics",
       ]);
     } finally {
-      await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = ?1").bind(user?.user_id).run();
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(user?.user_id).run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(user?.user_id).run();
     }
   });
 });

@@ -124,6 +124,15 @@ describe("the HTTP app and the schedules on Node", () => {
     const e = nodeEnv({ PUBLIC_URL: "https://x.test", YT_MAIN_OAUTH: "{}" }, db);
     expect([e.RP_ID, e.DRY_RUN, (e as unknown as Record<string, string>).YT_MAIN_OAUTH]).toEqual(["x.test", "1", "{}"]);
     expect(() => nodeEnv({}, db)).toThrow(/PUBLIC_URL/);
+    for (const bad of [
+      "bongsu.example.com",
+      "//bongsu.example.com",
+      "ftp://x.test",
+      "http://bongsu.example.com",
+      "https://",
+    ])
+      expect(() => nodeEnv({ PUBLIC_URL: bad }, db), bad).toThrow(/absolute https/);
+    expect(nodeEnv({ PUBLIC_URL: "http://localhost:8787" }, db).PUBLIC_URL).toBe("http://localhost:8787");
   });
 
   it("advances more jobs a tick than Cloudflare by default, and takes JOBS_PER_TICK", () => {

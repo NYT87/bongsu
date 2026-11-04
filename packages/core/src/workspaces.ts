@@ -1,9 +1,9 @@
 // A workspace's settings (workspace_settings): its time zone (the default for showing and entering times; the database
 // keeps UTC), the daily digest's hour and the locale. A user may pick their own zone (users.timezone).
 
-import { DEFAULT_WORKSPACE } from "./accounts";
 import type { Db } from "./db";
 import { isTimeZone } from "./formats/time";
+import { isInstanceAdmin, isRole, type Role } from "./roles";
 
 export interface WorkspaceSettings {
   workspaceId: string;
@@ -12,9 +12,11 @@ export interface WorkspaceSettings {
   locale: string;
 }
 
-const FALLBACK = { timezone: "UTC", digestHour: 8, locale: "en" };
+/** The zone of a workspace without settings, and of someone in no workspace. */
+export const FALLBACK_ZONE = "UTC";
+const FALLBACK = { timezone: FALLBACK_ZONE, digestHour: 8, locale: "en" };
 
-export async function workspaceSettings(db: Db, workspaceId = DEFAULT_WORKSPACE): Promise<WorkspaceSettings> {
+export async function workspaceSettings(db: Db, workspaceId: string): Promise<WorkspaceSettings> {
   const r = await db
     .prepare("SELECT timezone, digest_hour, locale FROM workspace_settings WHERE workspace_id = ?1")
     .bind(workspaceId)
@@ -28,30 +30,50 @@ export async function workspaceSettings(db: Db, workspaceId = DEFAULT_WORKSPACE)
   };
 }
 
-/** The workspace a signed-in user works in: their membership (the default workspace first, while there's no picker;
- *  Phase 13 adds one). Null when they belong to none. */
-export async function userWorkspace(db: Db, userId: string): Promise<string | null> {
-  const r = await db
+/** The user's first workspace that isn't archived (the oldest membership), with their role there. Null when they
+ *  belong to none. `notCreator`: one where they're an admin or editor first (the dashboard, which creators don't use),
+ *  so a creator somewhere who's an editor elsewhere lands where they can work. */
+async function firstMembership(db: Db, userId: string, notCreator = false) {
+  return db
     .prepare(
-      "SELECT workspace_id FROM memberships WHERE user_id = ?1 ORDER BY workspace_id = ?2 DESC, created_at LIMIT 1",
+      `SELECT m.workspace_id, m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+       WHERE m.user_id = ?1 AND w.archived_at IS NULL
+       ORDER BY ${notCreator ? "CASE WHEN m.role = 'creator' THEN 1 ELSE 0 END, " : ""}m.created_at, m.workspace_id
+       LIMIT 1`,
     )
-    .bind(userId, DEFAULT_WORKSPACE)
-    .first<{ workspace_id: string }>();
-  return r?.workspace_id ?? null;
+    .bind(userId)
+    .first<{ workspace_id: string; role: string }>();
 }
 
-/** The user's role in the workspace (memberships), or null when they're not a member. */
-export async function userRole(db: Db, userId: string, workspaceId: string): Promise<string | null> {
-  const r = await db
-    .prepare("SELECT role FROM memberships WHERE user_id = ?1 AND workspace_id = ?2")
-    .bind(userId, workspaceId)
-    .first<{ role: string }>();
-  return r?.role ?? null;
+/** The workspace a request works in: the one its session names (sessions.workspace_id) when the user is a member
+ *  there, or an instance admin, and it isn't archived; else the user's first. `role` is the membership's; an instance
+ *  admin's is "admin" in every workspace, whatever their membership there (an instance admin acts anywhere with an
+ *  admin's rights: this is the one place that decides it). Null when there's none: the request works nowhere.
+ *  `notCreator`: the dashboard's first pick (firstMembership). */
+export async function sessionWorkspace(
+  db: Db,
+  s: { userId: string; workspaceId: string | null },
+  opts: { notCreator?: boolean } = {},
+): Promise<{ workspaceId: string; role: Role | null; instanceAdmin: boolean } | null> {
+  const instanceAdmin = await isInstanceAdmin(db, s.userId);
+  const roleOf = (role: string | null | undefined): Role | null =>
+    instanceAdmin ? "admin" : isRole(role) ? role : null;
+  if (s.workspaceId) {
+    const r = await db
+      .prepare(
+        `SELECT w.id, m.role FROM workspaces w LEFT JOIN memberships m ON m.workspace_id = w.id AND m.user_id = ?2
+         WHERE w.id = ?1 AND w.archived_at IS NULL`,
+      )
+      .bind(s.workspaceId, s.userId)
+      .first<{ id: string; role: string | null }>();
+    if (r && (r.role || instanceAdmin)) return { workspaceId: r.id, role: roleOf(r.role), instanceAdmin };
+  }
+  const m = await firstMembership(db, s.userId, opts.notCreator);
+  return m ? { workspaceId: m.workspace_id, role: roleOf(m.role), instanceAdmin } : null;
 }
 
 /** The workspace's time zone. */
-export const workspaceZone = async (db: Db, workspaceId = DEFAULT_WORKSPACE) =>
-  (await workspaceSettings(db, workspaceId)).timezone;
+export const workspaceZone = async (db: Db, workspaceId: string) => (await workspaceSettings(db, workspaceId)).timezone;
 
 export async function setWorkspaceSettings(
   db: Db,
@@ -71,8 +93,9 @@ export async function setWorkspaceSettings(
     .run();
 }
 
-/** The zone a person sees and enters times in: their own (users.timezone), else their workspace's. */
-export async function callerZone(db: Db, workspaceId: string, userId?: string | null): Promise<string> {
+/** The zone a person sees and enters times in: their own (users.timezone), else their workspace's; UTC for someone in
+ *  no workspace (signed in before they have one). */
+export async function callerZone(db: Db, workspaceId: string | null, userId?: string | null): Promise<string> {
   if (userId) {
     const r = await db
       .prepare("SELECT timezone FROM users WHERE id = ?1")
@@ -80,7 +103,7 @@ export async function callerZone(db: Db, workspaceId: string, userId?: string | 
       .first<{ timezone: string | null }>();
     if (r?.timezone && isTimeZone(r.timezone)) return r.timezone;
   }
-  return workspaceZone(db, workspaceId);
+  return workspaceId ? workspaceZone(db, workspaceId) : FALLBACK.timezone;
 }
 
 /** A user's own zone; null goes back to the workspace's. */

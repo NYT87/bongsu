@@ -2,13 +2,16 @@
 // accounts; the scheduler serves every workspace, each in its own time zone.
 import { env, exports } from "cloudflare:workers";
 import { resolveItem } from "@bongsu/api/pwa/approve";
+import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { encryptSecret } from "@bongsu/core/crypto";
+import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { tick } from "@bongsu/core/tick";
 import { setWorkspaceSettings } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, seedReel, testEnv, World } from "./world";
+import { clearPlan, seedReel, TEST_ENCRYPTION_KEY, testEnv, World } from "./world";
 
 const KEY_A = "bongsu_workspaceAworkspaceAworksp";
 const KEY_B = "bongsu_workspaceBworkspaceBworksp";
@@ -225,7 +228,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
       [
         "INSERT INTO users (id, email, name, created_at) VALUES ('bea', 'bea@example.com', 'Bea', 0) ON CONFLICT (id) DO NOTHING",
         "INSERT INTO users (id, email, name, created_at) VALUES ('nobody', 'nobody@example.com', 'Nobody', 0) ON CONFLICT (id) DO NOTHING",
-        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'owner', 0) ON CONFLICT DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'admin', 0) ON CONFLICT DO NOTHING",
       ].map((s) => env.DB.prepare(s)),
     );
   });
@@ -238,6 +241,10 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(keys.map((k) => k.id)).toEqual(["kb"]);
     const conns = (await as("bea", "dashboard", "/admin-api/connections")).json.connections as { id: string }[];
     expect(conns.map((c) => c.id)).toEqual(["c_b"]);
+    // its members and invites only (invites.test.ts tries the changes across workspaces)
+    const people = (await as("bea", "dashboard", "/admin-api/members")).json;
+    expect((people.members as { userId: string }[]).map((m) => m.userId)).toEqual(["bea"]);
+    expect(people.invites).toEqual([]);
     // the owner, in the default workspace, doesn't see B's
     const own = (await as("owner", "dashboard", "/admin-api/accounts")).json.accounts as { id: string }[];
     expect(own.map((a) => a.id)).not.toContain("b_shop");
@@ -247,6 +254,9 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     const { key } = await seedReel(w, { date: "2026-10-30" }); // the default workspace's
     expect((await as("bea", "pwa", "/app-api/me")).json.workspaceTimezone).toBe("Europe/Madrid");
     expect((await as("bea", "pwa", `/app-api/item?key=${encodeURIComponent(key)}`)).status).toBe(404);
+    // Settings' connections: workspace B's only
+    const conns = (await as("bea", "pwa", "/app-api/connections")).json.connections as { id: string }[];
+    expect(conns.map((c) => c.id)).toEqual(["c_b"]);
     // the same lookup in the item's own workspace finds it
     expect(await resolveItem(await testEnv(env), w.fetch, key, "UTC", "default")).not.toBeNull();
   });
@@ -355,6 +365,203 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(owner.status).toBe(200);
     expect(owner.json.samples).toEqual([]);
     expect((await as("bea", "pwa", video)).json.samples).toMatchObject([{ views: 7 }]);
+  });
+
+  // Phase 13 part 1's routes (members, invites, workspaces, connecting from the app): workspace B's people reach
+  // only workspace B. invites.test.ts and workspaces-admin.test.ts try each route's behaviour; here it's the boundary.
+  const send = async (userId: string, app: "dashboard" | "pwa", path: string, body: unknown = {}) => {
+    const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { app, userId });
+    const r = await exports.default.fetch(`https://scheduler.test${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `${app === "dashboard" ? "bongsu_admin" : "bongsu_session"}=${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, json: (await r.json().catch(() => ({}))) as Record<string, unknown> };
+  };
+  const role = (ws: string, user: string) =>
+    env.DB.prepare("SELECT role FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
+      .bind(ws, user)
+      .first<string>("role");
+
+  it("a workspace's admin can't touch another's members or invites, nor the Workspaces page", async () => {
+    await env.DB.batch(
+      [
+        "INSERT INTO users (id, email, name, created_at) VALUES ('dan', 'dan@example.com', 'Dan', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'dan', 'editor', 0) ON CONFLICT DO NOTHING",
+        "INSERT INTO invites (workspace_id, token_hash, email, role, invited_by, created_at, expires_at) VALUES ('default', 'inviteA000000000hash', 'p@example.com', 'editor', 'dan', 0, 4102444800)",
+      ].map((s) => env.DB.prepare(s)),
+    );
+    // bea is admin of B only: a member of the default workspace isn't hers to change, and its invite isn't there
+    expect((await send("bea", "dashboard", "/admin-api/members/dan", { role: "admin" })).status).toBe(404);
+    expect((await send("bea", "dashboard", "/admin-api/members/dan/remove")).status).toBe(404);
+    expect((await send("bea", "dashboard", "/admin-api/invites/inviteA000000000/revoke")).status).toBe(404);
+    expect(await role("default", "dan")).toBe("editor");
+    expect(
+      await env.DB.prepare("SELECT revoked_at FROM invites WHERE token_hash = 'inviteA000000000hash'").first(
+        "revoked_at",
+      ),
+    ).toBeNull();
+    // her invites land in B, whatever the body says
+    const inv = await send("bea", "dashboard", "/admin-api/invites", {
+      email: "new@example.com",
+      role: "creator",
+      workspaceId: "default",
+    });
+    expect(inv.status).toBe(200);
+    expect(
+      await env.DB.prepare("SELECT workspace_id FROM invites WHERE email = 'new@example.com'").first("workspace_id"),
+    ).toBe("b");
+    // the instance admin's page: create, rename, add an admin, archive, restore, open
+    for (const [path, body] of [
+      ["/admin-api/workspaces", { name: "Mine", timezone: "UTC", admin: "me" }],
+      ["/admin-api/workspaces/default", { name: "Mine" }],
+      ["/admin-api/workspaces/default/admins", { email: "x@example.com" }],
+      ["/admin-api/workspaces/default/archive", {}],
+      ["/admin-api/workspaces/default/restore", {}],
+      ["/admin-api/workspaces/default/open", {}],
+    ] as const)
+      expect((await send("bea", "dashboard", path, body)).status, path).toBe(403);
+    expect((await as("bea", "dashboard", "/admin-api/workspaces")).status).toBe(403);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces WHERE name = 'Mine'").first("n")).toBe(0);
+    expect(
+      await env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = 'default'").first("archived_at"),
+    ).toBeNull();
+  });
+
+  it("a workspace an instance admin creates starts empty and leaves the others alone", async () => {
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ina2', 'ina2@example.com', 'Ina', 0, 1) ON CONFLICT (id) DO NOTHING",
+    ).run();
+    const r = await send("ina2", "dashboard", "/admin-api/workspaces", { name: "Fresh", timezone: "UTC", admin: "me" });
+    expect(r.status).toBe(200);
+    const id = String(r.json.id);
+    expect(id).not.toBe("b");
+    for (const table of ["accounts", "connections", "api_keys", "plan_items", "drafts"])
+      expect(
+        await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?1`).bind(id).first("n"),
+        table,
+      ).toBe(0);
+    // B still sees only its own
+    const accounts = (await as("bea", "dashboard", "/admin-api/accounts")).json.accounts as { id: string }[];
+    expect(accounts.map((a) => a.id)).toContain("b_shop");
+    expect(accounts.map((a) => a.id)).not.toContain("demo_travel");
+    expect(((await as("bea", "dashboard", "/admin-api/members")).json.members as unknown[]).length).toBe(1);
+  });
+
+  it("connecting from the app: editors are refused, a creator reads and reconnects only its own workspace's", async () => {
+    await env.DB.batch(
+      [
+        "INSERT INTO users (id, email, name, created_at) VALUES ('cleo', 'cleo@example.com', 'Cleo', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO users (id, email, name, created_at) VALUES ('ed', 'ed@example.com', 'Ed', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'cleo', 'creator', 0) ON CONFLICT DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ed', 'editor', 0) ON CONFLICT DO NOTHING",
+      ].map((s) => env.DB.prepare(s)),
+    );
+    expect((await as("ed", "pwa", "/app-api/connections")).status).toBe(403);
+    expect((await send("ed", "pwa", "/app-api/connect/youtube/start")).status).toBe(403);
+    const conns = (await as("cleo", "pwa", "/app-api/connections")).json.connections as { id: string }[];
+    expect(conns.map((c) => c.id)).toContain("c_b");
+    expect(conns.map((c) => c.id)).not.toContain("c_main");
+    // the default workspace's YouTube connection isn't B's to reconnect, with the Google app set up (so the refusal
+    // is the ownership check's, not a missing app)
+    await env.DB.prepare(
+      "INSERT INTO oauth_apps (id, client_id, client_secret, updated_at) VALUES ('google', 'google-app-id', ?1, 0) ON CONFLICT (id) DO UPDATE SET client_secret = excluded.client_secret",
+    )
+      .bind(await encryptSecret(TEST_ENCRYPTION_KEY, "google-secret"))
+      .run();
+    await upsertConnection(
+      env.DB,
+      { id: "c_def_tube", workspaceId: "default", provider: "youtube", kind: "oauth", secretName: "YT_DEF_OAUTH" },
+      0,
+    );
+    const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_states").first("n");
+    // through the app's routes with a full test env (the Worker binding here has no ENCRYPTION_KEY)
+    const e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test" } as Partial<Env>);
+    const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { app: "pwa", userId: "cleo" });
+    const start = async (body?: unknown) => {
+      const res = await appRoutes(w.fetch).request(
+        "https://bongsu.test/app-api/connect/youtube/start",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Cookie: `bongsu_session=${token}` },
+          body: JSON.stringify(body ?? {}),
+        },
+        e,
+      );
+      return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+    };
+    const r = await start({ reconnect: "c_def_tube" });
+    expect([r.status, r.json.error]).toEqual([400, "no such connection to reconnect"]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_states").first("n")).toBe(before);
+    // its own flow starts fine with the app there
+    expect((await start()).status).toBe(200);
+  });
+
+  it("the audit log: a workspace's people read only its rows, the instance's rows only an instance admin", async () => {
+    await env.DB.batch(
+      [
+        "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ina3', 'ina3@example.com', 'Ina', 0, 1) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO users (id, email, name, created_at) VALUES ('ed', 'ed@example.com', 'Ed', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ed', 'editor', 0) ON CONFLICT DO NOTHING",
+        "INSERT INTO users (id, email, name, created_at) VALUES ('cleo', 'cleo@example.com', 'Cleo', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'cleo', 'creator', 0) ON CONFLICT DO NOTHING",
+        "DELETE FROM audit",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    // the instance admin makes workspace A for someone else, and changes a media store: instance rows, and A's own
+    const made = await send("ina3", "dashboard", "/admin-api/workspaces", {
+      name: "Client A",
+      timezone: "UTC",
+      admin: "ann@example.com",
+    });
+    expect(made.status).toBe(200);
+    const a = String(made.json.id);
+    const stores = (await as("ina3", "dashboard", "/admin-api/media-stores")).json.stores as { kind: string }[];
+    expect(stores.length).toBeGreaterThan(0);
+    const inbox = await send("ina3", "dashboard", `/admin-api/media-stores/${stores[0].kind}/inbox`, { workspace: a });
+    expect(inbox.status).toBe(200);
+    const where = async () =>
+      (
+        await env.DB.prepare("SELECT action, workspace_id FROM audit ORDER BY id").all<{
+          action: string;
+          workspace_id: string | null;
+        }>()
+      ).results;
+    expect(await where()).toEqual([
+      { action: "workspace_create", workspace_id: null },
+      { action: "invite_create", workspace_id: a },
+      { action: "media_store_inbox", workspace_id: null },
+    ]);
+    // B's admin and editor: none of A's rows, none of the instance's, and no way to ask for them; a device's error
+    // in B's app is B's
+    expect((await send("ed", "pwa", "/app-api/client-error", { msg: "upload failed" })).status).toBe(200);
+    // and a creator's pause names her, in the log as in the pause itself: not "owner"
+    expect((await send("cleo", "pwa", "/app-api/pause", { reason: "checking" })).status).toBe(200);
+    const paused = await env.DB.prepare("SELECT paused FROM workspace_settings WHERE workspace_id = 'b'").first<string>(
+      "paused",
+    );
+    await env.DB.prepare("UPDATE workspace_settings SET paused = NULL WHERE workspace_id = 'b'").run();
+    expect(JSON.parse(paused ?? "{}")).toMatchObject({ by: "Cleo" });
+    for (const who of ["bea", "ed"]) {
+      const log = await as(who, "dashboard", "/admin-api/audit");
+      expect(log.status, who).toBe(200);
+      expect(log.json.entries, who).toEqual([
+        expect.objectContaining({ action: "pause", actor: "user:cleo", user_id: "cleo", who: "Cleo" }),
+        expect.objectContaining({ action: "client_error", actor: "user:ed", user_id: "ed", who: "Ed" }),
+      ]);
+      expect((await as(who, "dashboard", "/admin-api/audit?instance=1")).status, who).toBe(403);
+    }
+    // the instance admin, in no workspace (A's admin is someone else): the instance's rows
+    const inst = await as("ina3", "dashboard", "/admin-api/audit?instance=1");
+    expect(inst.status).toBe(200);
+    expect((inst.json.entries as { action: string }[]).map((x) => x.action)).toEqual([
+      "media_store_inbox",
+      "workspace_create",
+    ]);
+    expect((await as("ina3", "dashboard", "/admin-api/audit")).json).toMatchObject({ noWorkspace: true });
   });
 
   it("a user in no workspace is turned away", async () => {

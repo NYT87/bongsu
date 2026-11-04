@@ -123,19 +123,38 @@ function askedDue(b: Record<string, unknown>, format: Format | null, tz: string,
   }
 }
 
+/** The app's caller is the signed-in person (its id is theirs); a CLI token (a person's) or an agent key is a key. */
+const inApp = (c: OpCtx) => !!c.caller.userId && c.caller.id === c.caller.userId;
+
 export async function audit(c: OpCtx, action: string, target: string | null, detail: unknown) {
   await c.env.DB.prepare(
-    "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
   )
-    .bind(nowS(c), `key:${c.caller.id}`, action, target, JSON.stringify(detail), c.caller.workspaceId)
+    .bind(
+      nowS(c),
+      inApp(c) ? `user:${c.caller.id}` : `key:${c.caller.id}`,
+      action,
+      target,
+      JSON.stringify(detail),
+      c.caller.userId ?? null,
+      c.caller.workspaceId,
+    )
     .run();
+}
+
+/** Who a person is, to people: their name, else their email. */
+async function personName(c: OpCtx, userId: string): Promise<string> {
+  const u = await c.env.DB.prepare("SELECT name, email FROM users WHERE id = ?1")
+    .bind(userId)
+    .first<{ name: string | null; email: string | null }>();
+  return u?.name || u?.email || "someone";
 }
 
 // ---------------------------------------------------------------- reads
 
 export async function status(c: OpCtx) {
   const tz = await zoneOf(c);
-  const paused = (await pausedState(c.env.DB)) !== null;
+  const paused = (await pausedState(c.env.DB, c.caller.workspaceId)) !== null;
   const states = await c.env.DB.prepare(
     "SELECT state, dry_run, COUNT(*) AS n FROM jobs WHERE updated_at >= ?1 AND workspace_id = ?2 GROUP BY state, dry_run",
   )
@@ -664,23 +683,28 @@ export async function withdrawDraft(c: OpCtx, id: string) {
   return { id, status: "withdrawn" };
 }
 
-// ---------------------------------------------------------------- pause (resume is owner-only)
+// ---------------------------------------------------------------- pause (resume needs a passkey, in the app)
+// Both act on the caller's workspace only: the others go on publishing.
 
 export async function pause(c: OpCtx, reason: string) {
   const set = await setPaused(
     c.env.DB,
+    c.caller.workspaceId,
     reason || "paused",
-    `${c.caller.id === "owner" ? "owner" : `API key "${c.caller.name}"`}`,
+    inApp(c) ? await personName(c, c.caller.id) : `API key "${c.caller.name}"`,
     c.now,
   );
   if (!set) return { paused: true, already: true };
-  await audit(c, "pause", "settings:paused", { reason });
-  return { paused: true, note: "Nothing is published until the owner resumes (in the app)." };
+  await audit(c, "pause", `workspace:${c.caller.workspaceId}`, { reason });
+  return {
+    paused: true,
+    note: "Nothing in this workspace is published until an admin or creator resumes it (in the app).",
+  };
 }
 
 export async function resume(c: OpCtx) {
-  const was = await clearPaused(c.env.DB);
-  await audit(c, "resume", "settings:paused", { was });
+  const was = await clearPaused(c.env.DB, c.caller.workspaceId);
+  await audit(c, "resume", `workspace:${c.caller.workspaceId}`, { was });
   return { paused: false, wasPaused: was };
 }
 

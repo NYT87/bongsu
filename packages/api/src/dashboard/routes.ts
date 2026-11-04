@@ -6,7 +6,6 @@
 import {
   type Account,
   captionRules,
-  DEFAULT_WORKSPACE,
   listAccounts,
   setAccountSettings,
   trialCapable,
@@ -16,7 +15,11 @@ import {
 import { channelUploads } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import {
+  type ConnectBack,
   ConnectError,
+  callbackPath,
+  connectCallbackPath,
+  driveRedirectUri,
   finishConnect,
   oauthApps,
   pasteConnect,
@@ -31,6 +34,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { LintRules } from "@bongsu/core/formats/caption-lint";
 import { isTimeZone, utcIso, zoneStamp } from "@bongsu/core/formats/time";
+import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
 import { offeredKinds, STORE_KINDS, type StoreKind, storeRows } from "@bongsu/core/media/index";
 import {
   finishDriveConnect,
@@ -41,26 +45,45 @@ import {
   savedCredentials,
   saveStore,
   setDefaultStore,
+  setInboxWorkspace,
   startDriveConnect,
   testStore,
   waitingApprovalsIn,
 } from "@bongsu/core/media/manage";
 import { NtfyError, postNtfy, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
+import {
+  addMember,
+  archiveWorkspace,
+  createUser,
+  createWorkspace,
+  InstanceAdminError,
+  NAME_MAX,
+  newUserId,
+  renameWorkspace,
+  restoreWorkspace,
+  setInstanceAdmin,
+  workspaceName,
+} from "@bongsu/core/people";
 import { platform, platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
-import { callerZone, setWorkspaceSettings, userRole, userWorkspace, workspaceSettings } from "@bongsu/core/workspaces";
+import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
+import { callerZone, sessionWorkspace, setWorkspaceSettings, workspaceSettings } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
-import { ROLE_SCOPES, withinAttempts } from "../agent/auth";
+import { scopesOf, withinAttempts } from "../agent/auth";
+import { AcceptError, DASHBOARD_ROLES, inviteOptions, invitePreview, inviteVerify } from "../pwa/invite";
 import {
   createSession,
   endSession,
   markVerified,
+  oauthCookie,
   randomToken,
   readCookie,
+  readOauthCookie,
   type Session,
   sessionCookie,
+  setSessionWorkspace,
   validSession,
 } from "../pwa/session";
 import {
@@ -72,13 +95,50 @@ import {
   verifyRegistration,
 } from "../pwa/webauthn";
 
-type C = Context<{
+type Vars = {
   Bindings: Env;
-  Variables: { session: Session; token: string; workspace: string; role: string };
-}>;
-/** Changes to the instance (connections, accounts, OAuth apps, agent keys, settings, media stores): an owner's or admin's. Reading,
- *  and the person's own passkeys, devices and CLI tokens, are every member's. */
-const MANAGING = /^\/admin-api\/(keys|accounts|videos|connections|oauth-apps|settings|connect\/|media-stores)/;
+  Variables: { session: Session; token: string; workspace: string; role: string; instanceAdmin: boolean; area: Area };
+};
+type C = Context<Vars>;
+// The three guards (the roles table: docs/superpowers/specs/2026-11-04-phase13-people-roles-design.md, section 1).
+// Each page is tagged by the router itself (app.use on its route pattern, below), never by reading the URL again:
+// Hono matches the decoded path, so a second look at the raw one would miss `/admin-api/%77orkspaces`.
+type Area = {
+  /** Instance-wide (workspaces, media stores, OAuth apps, who the instance admins are): instance admins only, reading
+   *  included, since the instance's settings aren't a workspace's. */
+  instance?: true;
+  /** What an instance admin in no workspace reaches besides the instance's pages: the passkey check the instance's
+   *  changes ask for, their own passkeys and devices, and the instance's audit (`?instance=1`). None of it reads a
+   *  workspace's data. */
+  noWorkspace?: true;
+  /** Changes to a workspace's members, invites, agent keys, accounts, connections and settings: its admins' (and the
+   *  instance admins'). The person's own passkeys, devices and CLI tokens are every member's. Moving a release date
+   *  (videos) is editing the plan: an editor's too. */
+  managing?: true;
+  /** What an editor doesn't even read: the workspace's members, invites, agent keys, connections and settings. The
+   *  overview, accounts and videos are theirs to read, and their own passkeys, devices and CLI tokens to manage. */
+  notEditors?: true;
+};
+/** Each page under /admin-api/<name> (the name and everything below it) and its area; a page not listed is any
+ *  member's. */
+const AREAS: Record<string, Area> = {
+  workspaces: { instance: true },
+  "media-stores": { instance: true },
+  "oauth-apps": { instance: true },
+  "instance-admins": { instance: true },
+  verify: { noWorkspace: true },
+  passkeys: { noWorkspace: true },
+  devices: { noWorkspace: true },
+  "recovery-codes": { noWorkspace: true },
+  audit: { noWorkspace: true },
+  members: { managing: true, notEditors: true },
+  invites: { managing: true, notEditors: true },
+  keys: { managing: true, notEditors: true },
+  connections: { managing: true, notEditors: true },
+  settings: { managing: true, notEditors: true },
+  accounts: { managing: true },
+  connect: { managing: true },
+};
 
 /** How recent the last passkey check must be for changes to who can do what. */
 export const FRESH_S = 10 * 60;
@@ -110,10 +170,7 @@ const code = (n: number) => {
 };
 
 export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVerifiers) {
-  const app = new Hono<{
-    Bindings: Env;
-    Variables: { session: Session; token: string; workspace: string; role: string };
-  }>();
+  const app = new Hono<Vars>();
   const nowS = () => Math.floor(Date.now() / 1000);
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");
   const body = async (c: C) => {
@@ -123,9 +180,23 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return {};
     }
   };
-  /** The signed-in user's workspace (set with the session; the default one before sign-in). */
-  const ws = (c: C) => c.get("workspace") ?? DEFAULT_WORKSPACE;
-  const audit = (c: C, action: string, target: string | null, detail: unknown, userId?: string, workspaceId?: string) =>
+  /** The signed-in user's workspace (set with the session). A request without one (an instance admin in none, on the
+   *  instance's pages) has nothing of a workspace's to read or change. */
+  const ws = (c: C): string => {
+    const w = c.get("workspace");
+    if (!w) throw new AdminError(403, "you're not a member of any workspace", { noWorkspace: true });
+    return w;
+  };
+  /** `workspaceId` null: an instance-level row (the bootstrap, a new workspace, the media stores, the OAuth apps), in
+   *  no workspace, which only instance admins read; left out, the request's workspace (none: the instance's). */
+  const audit = (
+    c: C,
+    action: string,
+    target: string | null,
+    detail: unknown,
+    userId?: string,
+    workspaceId?: string | null,
+  ) =>
     c.env.DB.prepare(
       "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
@@ -136,7 +207,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         target,
         JSON.stringify(detail),
         userId ?? c.get("session")?.userId ?? null,
-        workspaceId ?? ws(c),
+        workspaceId === undefined ? (c.get("workspace") ?? null) : workspaceId,
       )
       .run();
   const wrap = (fn: (c: C) => Promise<unknown>) => async (c: C) => {
@@ -148,6 +219,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (e instanceof CryptoError) return c.json({ error: e.message }, 409);
       if (e instanceof NtfyError) return c.json({ error: e.message }, 400);
       if (e instanceof StoreError) return c.json({ error: e.message }, 400);
+      if (e instanceof MemberError) return c.json({ error: e.message }, e.status);
+      if (e instanceof InstanceAdminError) return c.json({ error: e.message }, e.status);
+      if (e instanceof AcceptError) return c.json(e.answer, e.status);
       throw e;
     }
   };
@@ -165,11 +239,14 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     if (nowS() - c.get("session").verifiedAt > FRESH_S)
       throw new AdminError(403, "confirm with your passkey first", { verify: true });
   };
+  /** Signs the user in; answers the workspace the new session works in (null: none yet), whose audit the sign-in goes
+   *  to. */
   const signIn = async (c: C, userId: string) => {
     c.header(
       "Set-Cookie",
       sessionCookie(await createSession(c.env.DB, nowS(), { app: "dashboard", userId }), undefined, "dashboard"),
     );
+    return (await sessionWorkspace(c.env.DB, { userId, workspaceId: null }, { notCreator: true }))?.workspaceId ?? null;
   };
   const bootstrapped = async (c: C) =>
     !!(await c.env.DB.prepare("SELECT 1 FROM users WHERE email IS NOT NULL LIMIT 1").first()) ||
@@ -196,11 +273,19 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const user = s
         ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1").bind(s.userId).first()
         : null;
+      // what the sidebar shows: the Instance group for instance admins; a creator is pointed at the app
+      const where = s && (await sessionWorkspace(c.env.DB, s, { notCreator: true }));
       return {
         bootstrapNeeded: !(await bootstrapped(c)),
         setupTokenSet: !!c.env.SETUP_TOKEN,
         signedIn: !!s,
         user,
+        instanceAdmin: !!s && (where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId))),
+        role: where?.role ?? null,
+        // signed in, but in no workspace yet: the first run's (or a removed member's) "create one" / "ask for one"
+        noWorkspace: !!s && !where,
+        // an instance admin in none of them still has the Instance pages, once the instance has a workspace
+        anyWorkspace: !!(await c.env.DB.prepare("SELECT 1 FROM workspaces LIMIT 1").first()),
         dryRun: c.env.DRY_RUN !== "0",
         publicUrl: origin(c),
       };
@@ -224,13 +309,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           .trim()
           .slice(0, 80) || null;
       if (!EMAIL.test(email)) throw new AdminError(400, "enter an email address");
-      // the first person is the owner (the user the PWA already knows as "owner")
+      // the first person is an instance admin, made when their passkey is (verify): the id is handed out now, since
+      // the passkey names its user
+      const id = newUserId();
       return registrationOptions(
         c.env.DB,
         c.env.RP_ID,
         nowS(),
-        { bootstrap: true, email, name },
-        { id: "owner", email, name },
+        { bootstrap: true, userId: id, email, name },
+        { id, email, name },
       );
     }),
   );
@@ -239,7 +326,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/bootstrap/verify",
     wrap(async (c) => {
       const b = await body(c);
-      let claimed: { email?: string; name?: string | null } = {};
+      let claimed: { userId?: string; email?: string; name?: string | null } = {};
       const ok = await verifyRegistration(
         c.env.DB,
         verifiers,
@@ -250,26 +337,31 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         String(b.device ?? "laptop").slice(0, 60),
         nowS(),
         async (data) => {
-          const d = data as { bootstrap?: boolean; email?: string; name?: string | null } | null;
-          if (!d?.bootstrap) return false;
+          const d = data as { bootstrap?: boolean; userId?: string; email?: string; name?: string | null } | null;
+          if (!d?.bootstrap || !d.userId || !d.email) return false;
           // only once, even if two tabs race: the first to set the flag wins
           const won = await c.env.DB.prepare(
             "INSERT INTO settings (key, value, updated_at) VALUES ('bootstrap_done', ?1, ?2) ON CONFLICT (key) DO NOTHING RETURNING key",
           )
             .bind(JSON.stringify({ email: d.email }), nowS())
             .first();
+          if (!won) return false;
+          // before the passkey, which names them; in no workspace: they create the first one (POST /admin-api/workspaces)
+          await createUser(
+            c.env.DB,
+            { id: d.userId, email: d.email, name: d.name ?? null, instanceAdmin: true },
+            nowS(),
+          );
           claimed = d;
-          return !!won;
+          return true;
         },
-        "owner",
       );
-      if (!ok) throw new AdminError(400, "the passkey couldn't be created, or the instance was set up meanwhile");
-      await c.env.DB.prepare("UPDATE users SET email = ?1, name = COALESCE(?2, name) WHERE id = 'owner'")
-        .bind(claimed.email ?? null, claimed.name ?? null)
-        .run();
-      const recoveryCodes = await newRecoveryCodes(c, "owner");
-      await signIn(c, "owner");
-      await audit(c, "bootstrap", "user:owner", { email: claimed.email }, "owner");
+      if (!ok || !claimed.userId)
+        throw new AdminError(400, "the passkey couldn't be created, or the instance was set up meanwhile");
+      const id = claimed.userId;
+      const recoveryCodes = await newRecoveryCodes(c, id);
+      await signIn(c, id);
+      await audit(c, "bootstrap", `user:${id}`, { email: claimed.email }, id, null);
       return { signedIn: true, recoveryCodes };
     }),
   );
@@ -307,8 +399,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       );
       const d = r?.data as { dashboard?: boolean; userId?: string | null } | undefined;
       if (!r || !d?.dashboard || !d.userId || d.userId !== r.userId) throw new AdminError(401, "sign-in failed");
-      await signIn(c, r.userId);
-      await audit(c, "signin", `user:${r.userId}`, {}, r.userId);
+      // in the audit of the workspace the session lands in; an instance admin in none: the instance's
+      await audit(c, "signin", `user:${r.userId}`, {}, r.userId, await signIn(c, r.userId));
       return { signedIn: true };
     }),
   );
@@ -336,8 +428,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
             .first()
         : null;
       if (!u || !used) throw new AdminError(401, "that email and recovery code don't match");
-      await signIn(c, u.id);
-      await audit(c, "signin_recovery", `user:${u.id}`, {}, u.id);
+      await audit(c, "signin_recovery", `user:${u.id}`, {}, u.id, await signIn(c, u.id));
       return { signedIn: true, recovered: true };
     }),
   );
@@ -349,12 +440,20 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   });
 
   // The provider sends the browser back here. The dashboard's cookie is SameSite=Strict, so it doesn't come along on
-  // this cross-site redirect: the flow's single-use state says who started it (core/connections.ts).
+  // this cross-site redirect: the flow's single-use state says who started it, in which workspace and from which app
+  // (core/connections.ts), and the flow's own cookie (SameSite=Lax, set by the start) that this is the browser that
+  // started it. A flow started in the app goes back to the app's Settings; an unknown state to the dashboard.
   app.get("/admin-api/connect/:provider/callback", async (c) => {
     const provider = c.req.param("provider") ?? "";
-    const back = (q: Record<string, string>) =>
-      c.redirect(`${origin(c)}/dashboard/connections?${new URLSearchParams(q)}`, 302);
+    const browser = readOauthCookie(c.req.header("Cookie"));
+    const back = (q: Record<string, string>, to: ConnectBack = "dashboard") =>
+      c.redirect(
+        `${origin(c)}${to === "app" ? "/#/settings" : "/dashboard/connections"}?${new URLSearchParams(q)}`,
+        302,
+      );
     try {
+      const path = connectCallbackPath(c.env.PUBLIC_URL, provider);
+      if (path) c.header("Set-Cookie", oauthCookie("x", path, 0)); // used once, whatever the outcome
       const r = await finishConnect(
         c.env,
         fetcher,
@@ -365,6 +464,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           error: c.req.query("error"),
           errorDescription: c.req.query("error_description") ?? c.req.query("error_reason"),
         },
+        browser,
         nowS(),
       );
       await audit(
@@ -375,18 +475,24 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         r.userId,
         r.workspaceId,
       );
-      return back({ connected: r.label, accounts: String(r.accounts.length) });
+      return back({ connected: r.label, accounts: String(r.accounts.length) }, r.back);
     } catch (e) {
-      return back({ error: (e as Error).message.slice(0, 300) });
+      const hint: Record<string, string> = e instanceof ConnectError && e.hint ? { hint: e.hint } : {};
+      return back(
+        { error: (e as Error).message.slice(0, 300), ...hint },
+        e instanceof ConnectError ? e.back : undefined,
+      );
     }
   });
 
   // Google's way back from Connect Google Drive (the media store): like the providers' callback above, the state says
-  // who started it.
+  // who started it and the flow's cookie that it's back in the same browser.
   app.get("/admin-api/media-stores/drive/callback", async (c) => {
+    const browser = readOauthCookie(c.req.header("Cookie"));
     const back = (q: Record<string, string>) =>
       c.redirect(`${origin(c)}/dashboard/media?${new URLSearchParams(q)}`, 302);
     try {
+      c.header("Set-Cookie", oauthCookie("x", callbackPath(driveRedirectUri(c.env.PUBLIC_URL)), 0));
       const r = await finishDriveConnect(
         c.env,
         fetcher,
@@ -396,33 +502,83 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           error: c.req.query("error"),
           errorDescription: c.req.query("error_description"),
         },
+        browser,
         nowS(),
       );
-      await audit(c, "media_store_save", "drive", { connected: true }, r.userId, DEFAULT_WORKSPACE);
+      await audit(c, "media_store_save", "drive", { connected: true }, r.userId, null);
       return back({ connected: "drive" });
     } catch (e) {
       return back({ error: (e as Error).message.slice(0, 300) });
     }
   });
 
-  // ---- everything else needs a dashboard session
+  // ---- accepting an invite (pwa/invite.ts), signed out: admins and editors join here, creators in the app (a
+  // creator's invite answers here like any unusable one)
+  app.get(
+    "/admin-api/invite/:token",
+    wrap(async (c) => invitePreview(c.env, c.req.param("token") ?? "", nowS(), DASHBOARD_ROLES)),
+  );
+  app.post(
+    "/admin-api/invite/:token/options",
+    wrap(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS(), DASHBOARD_ROLES)),
+  );
+  app.post(
+    "/admin-api/invite/:token/verify",
+    wrap(async (c) => {
+      const j = await inviteVerify(
+        c.env,
+        verifiers,
+        origin(c),
+        c.req.param("token") ?? "",
+        await body(c),
+        nowS(),
+        DASHBOARD_ROLES,
+      );
+      // a new person gets their recovery codes, as the first one did; either way they work in the workspace joined
+      const recoveryCodes = j.isNew ? await newRecoveryCodes(c, j.userId) : undefined;
+      const token = await createSession(c.env.DB, nowS(), { app: "dashboard", userId: j.userId });
+      await setSessionWorkspace(c.env.DB, token, j.workspaceId);
+      c.header("Set-Cookie", sessionCookie(token, undefined, "dashboard"));
+      await audit(c, "invite_accept", `user:${j.userId}`, { role: j.role, isNew: j.isNew }, j.userId, j.workspaceId);
+      return { signedIn: true, role: j.role, ...(recoveryCodes ? { recoveryCodes } : {}) };
+    }),
+  );
+
+  // ---- everything else needs a dashboard session, and the role its page asks for (AREAS, tagged by the router)
+  for (const [name, area] of Object.entries(AREAS))
+    app.use(`/admin-api/${name}/*`, async (c, next) => {
+      c.set("area", area);
+      await next();
+    });
   app.use("/admin-api/*", async (c, next) => {
     const token = readCookie(c.req.header("Cookie"), "dashboard");
     const s = await validSession(c.env.DB, token, nowS(), "dashboard");
     if (!s || !token) return c.json({ error: "sign in" }, 401);
-    // Everything below works in the user's workspace (Phase 13 adds a picker for users in several).
-    const workspace = await userWorkspace(c.env.DB, s.userId);
-    if (!workspace) return c.json({ error: "you're not a member of any workspace" }, 403);
+    const area = c.get("area") ?? {};
+    // Everything below works in the session's workspace (core/workspaces.ts sessionWorkspace), with the role it has
+    // there. An instance admin without one still reaches the instance's own pages.
+    const where = await sessionWorkspace(c.env.DB, s, { notCreator: true });
+    const instanceAdmin = where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId));
+    if (!where && !(instanceAdmin && (area.instance || area.noWorkspace)))
+      return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     c.set("session", s);
     c.set("token", token);
-    c.set("workspace", workspace);
-    c.set("role", (await userRole(c.env.DB, s.userId, workspace)) ?? "viewer");
+    if (where) c.set("workspace", where.workspaceId);
+    c.set("role", where?.role ?? "");
+    c.set("instanceAdmin", instanceAdmin);
     await next();
   });
   app.use("/admin-api/*", async (c, next) => {
-    const path = new URL(c.req.url).pathname;
-    if (c.req.method !== "GET" && MANAGING.test(path) && !["owner", "admin"].includes(c.get("role")))
-      return c.json({ error: "only an owner or admin of the workspace can change this" }, 403);
+    const area = c.get("area") ?? {};
+    const instanceAdmin = c.get("instanceAdmin");
+    // a creator works in the app; the sign-in state and signing out are answered above
+    if (c.get("role") === "creator" && !instanceAdmin)
+      return c.json({ error: "creators use the Bongsu app", app: true }, 403);
+    if (area.instance && !instanceAdmin) return c.json({ error: "only an instance admin can do this" }, 403);
+    const admin = c.get("role") === "admin" || instanceAdmin;
+    if (!admin && c.req.method !== "GET" && area.managing)
+      return c.json({ error: "only an admin of the workspace can change this" }, 403);
+    if (!admin && area.notEditors) return c.json({ error: "only an admin of the workspace can see this" }, 403);
     await next();
   });
 
@@ -594,7 +750,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       )
         .bind(c.get("session").userId, ws(c))
         .all();
-      return { rights: ROLE_SCOPES[(await role(c)) ?? ""] ?? [], days: TOKEN_DAYS, tokens: r.results };
+      return { rights: scopesOf(await role(c), c.get("instanceAdmin")), days: TOKEN_DAYS, tokens: r.results };
     }),
   );
   app.post(
@@ -639,6 +795,108 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (!r) throw new AdminError(404, "no active token of yours with that id");
       await audit(c, "token_revoke", id, { name: r.name });
       return { id, revoked: true };
+    }),
+  );
+
+  // ---- members and invites (AREAS: managing, the workspace's admins and the instance admins)
+  /** An invite's id in the lists: the start of its token's hash (the token itself is shown once, when made). */
+  const INVITE_ID = "substr(token_hash, 1, 16)";
+  app.get(
+    "/admin-api/members",
+    wrap(async (c) => {
+      const members = await c.env.DB.prepare(
+        `SELECT u.id, u.email, u.name, m.role, u.instance_admin FROM memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.workspace_id = ?1 ORDER BY m.role, u.email, u.id`,
+      )
+        .bind(ws(c))
+        .all<{ id: string; email: string | null; name: string | null; role: string; instance_admin: number }>();
+      // who's an instance admin: for the instance admins' "Make instance admin" control only
+      const ia = c.get("instanceAdmin");
+      const invites = await c.env.DB.prepare(
+        `SELECT ${INVITE_ID} AS id, email, role, expires_at FROM invites
+         WHERE workspace_id = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2 ORDER BY created_at`,
+      )
+        .bind(ws(c), nowS())
+        .all<{ id: string; email: string; role: string; expires_at: number }>();
+      return {
+        members: members.results.map((m) => ({
+          userId: m.id,
+          email: m.email,
+          name: m.name,
+          role: m.role,
+          ...(ia ? { instanceAdmin: Number(m.instance_admin) === 1 } : {}),
+        })),
+        invites: invites.results.map((i) => ({ id: i.id, email: i.email, role: i.role, expiresAt: i.expires_at })),
+      };
+    }),
+  );
+  /** A role from a request, or a 400. */
+  const roleOf = (v: unknown) => {
+    const r = String(v ?? "");
+    if (!isRole(r)) throw new AdminError(400, "role: admin, editor or creator");
+    return r;
+  };
+  app.post(
+    "/admin-api/invites",
+    wrap(async (c) => {
+      fresh(c);
+      const b = await body(c);
+      const email = String(b.email ?? "")
+        .trim()
+        .toLowerCase();
+      if (!EMAIL.test(email)) throw new AdminError(400, "enter an email address");
+      const role = roleOf(b.role);
+      // only this workspace's members are looked at: an admin learns nothing about other workspaces' people
+      const member = await c.env.DB.prepare(
+        "SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ?1 AND u.email = ?2",
+      )
+        .bind(ws(c), email)
+        .first();
+      if (member) throw new AdminError(409, "they're already a member: change their role instead");
+      const r = await createInvite(
+        c.env,
+        fetcher,
+        { workspaceId: ws(c), email, role, invitedBy: c.get("session").userId },
+        nowS(),
+      );
+      await audit(c, "invite_create", email, { role, mailed: r.mailed });
+      return r;
+    }),
+  );
+  app.post(
+    "/admin-api/invites/:id/revoke",
+    wrap(async (c) => {
+      fresh(c);
+      const r = await c.env.DB.prepare(
+        `UPDATE invites SET revoked_at = ?1 WHERE ${INVITE_ID} = ?2 AND workspace_id = ?3 AND used_at IS NULL
+           AND revoked_at IS NULL RETURNING email, role`,
+      )
+        .bind(nowS(), c.req.param("id") ?? "", ws(c))
+        .first<{ email: string; role: string }>();
+      if (!r) throw new AdminError(404, "no pending invite with that id");
+      await audit(c, "invite_revoke", r.email, { role: r.role });
+      return { revoked: true };
+    }),
+  );
+  app.post(
+    "/admin-api/members/:userId",
+    wrap(async (c) => {
+      fresh(c);
+      const userId = c.req.param("userId") ?? "";
+      const role = roleOf((await body(c)).role);
+      await setRole(c.env.DB, ws(c), userId, role, { instanceAdmin: c.get("instanceAdmin") }, nowS());
+      await audit(c, "member_role", `user:${userId}`, { role });
+      return { userId, role };
+    }),
+  );
+  app.post(
+    "/admin-api/members/:userId/remove",
+    wrap(async (c) => {
+      fresh(c);
+      const userId = c.req.param("userId") ?? "";
+      await removeMember(c.env.DB, ws(c), userId, { instanceAdmin: c.get("instanceAdmin") }, nowS());
+      await audit(c, "member_remove", `user:${userId}`, {});
+      return { userId, removed: true };
     }),
   );
 
@@ -976,6 +1234,167 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }),
   );
 
+  // ---- workspaces (instance admins: AREAS)
+  /** A workspace's name from a request, or a 400. */
+  const nameOf = (v: unknown) => {
+    const name = workspaceName(v);
+    if (!name) throw new AdminError(400, `name the workspace (at most ${NAME_MAX} characters)`);
+    return name;
+  };
+  // A new workspace and its first admin: "me" (the instance admin, who then works in it), or an email to invite.
+  app.post(
+    "/admin-api/workspaces",
+    wrap(async (c) => {
+      fresh(c);
+      const b = await body(c);
+      const name = nameOf(b.name);
+      const timezone = String(b.timezone ?? "");
+      if (!isTimeZone(timezone)) throw new AdminError(400, "unknown time zone");
+      // its first admin: "me", or someone invited by email
+      const admin = String(b.admin ?? "")
+        .trim()
+        .toLowerCase();
+      if (admin !== "me" && !EMAIL.test(admin)) throw new AdminError(400, 'the first admin: "me" or an email');
+      const me = c.get("session").userId;
+      const id = await createWorkspace(c.env.DB, { name, timezone, createdBy: me }, nowS());
+      const invite =
+        admin === "me"
+          ? null
+          : await createInvite(c.env, fetcher, { workspaceId: id, email: admin, role: "admin", invitedBy: me }, nowS());
+      // its admin being "me", the creator works in it from the next request on; one made for someone else waits on the
+      // Workspaces page (spec section 0.4), where "open" goes into it
+      if (!invite) {
+        await addMember(c.env.DB, id, me, "admin", nowS());
+        await setSessionWorkspace(c.env.DB, c.get("token"), id);
+      }
+      // the instance's row: the request may have no workspace, and the new one isn't where it was made
+      await audit(c, "workspace_create", id, { name, timezone, admin }, me, null);
+      if (invite) await audit(c, "invite_create", admin, { role: "admin", mailed: invite.mailed }, me, id);
+      return invite ? { id, invite } : { id };
+    }),
+  );
+  app.get(
+    "/admin-api/workspaces",
+    wrap(async (c) => {
+      const r = await c.env.DB.prepare(
+        `SELECT w.id, w.name, w.created_at, w.archived_at,
+           (SELECT COUNT(*) FROM memberships m WHERE m.workspace_id = w.id) AS members,
+           (SELECT COUNT(*) FROM accounts a WHERE a.workspace_id = w.id) AS accounts
+         FROM workspaces w ORDER BY w.name, w.id`,
+      ).all<{
+        id: string;
+        name: string;
+        created_at: number;
+        archived_at: number | null;
+        members: number;
+        accounts: number;
+      }>();
+      return {
+        workspaces: r.results.map((w) => ({
+          id: w.id,
+          name: w.name,
+          // a count is a BIGINT on Postgres: a number here
+          members: Number(w.members),
+          accounts: Number(w.accounts),
+          createdAt: w.created_at,
+          archivedAt: w.archived_at,
+        })),
+      };
+    }),
+  );
+  // Renaming, like the Settings page's name: a setting, so no fresh passkey check.
+  app.post(
+    "/admin-api/workspaces/:id",
+    wrap(async (c) => {
+      const id = c.req.param("id") ?? "";
+      const name = nameOf((await body(c)).name);
+      if (!(await renameWorkspace(c.env.DB, id, name))) throw new AdminError(404, "no such workspace");
+      // in the workspace's own audit, where its admins see who renamed it
+      await audit(c, "workspace_rename", id, { name }, undefined, id);
+      return { id, name };
+    }),
+  );
+  // Another admin for a workspace: an invite, its link to copy (and emailed when a mailer is set).
+  app.post(
+    "/admin-api/workspaces/:id/admins",
+    wrap(async (c) => {
+      fresh(c);
+      const id = c.req.param("id") ?? "";
+      const email = String((await body(c)).email ?? "")
+        .trim()
+        .toLowerCase();
+      if (!EMAIL.test(email)) throw new AdminError(400, "enter an email address");
+      const w = await c.env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = ?1")
+        .bind(id)
+        .first<{ archived_at: number | null }>();
+      if (!w) throw new AdminError(404, "no such workspace");
+      if (w.archived_at !== null) throw new AdminError(409, "restore the workspace first");
+      const member = await c.env.DB.prepare(
+        "SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ?1 AND u.email = ?2",
+      )
+        .bind(id, email)
+        .first();
+      if (member) throw new AdminError(409, "they're already a member: open the workspace and change their role");
+      const r = await createInvite(
+        c.env,
+        fetcher,
+        { workspaceId: id, email, role: "admin", invitedBy: c.get("session").userId },
+        nowS(),
+      );
+      await audit(c, "invite_create", email, { role: "admin", mailed: r.mailed }, undefined, id);
+      return { url: r.url };
+    }),
+  );
+  app.post(
+    "/admin-api/workspaces/:id/archive",
+    wrap(async (c) => {
+      fresh(c);
+      const id = c.req.param("id") ?? "";
+      if (!(await archiveWorkspace(c.env.DB, id, nowS())))
+        throw new AdminError(409, "no such workspace, or it's archived already");
+      await audit(c, "workspace_archive", id, {}, undefined, id);
+      return { archived: true };
+    }),
+  );
+  app.post(
+    "/admin-api/workspaces/:id/restore",
+    wrap(async (c) => {
+      fresh(c);
+      const id = c.req.param("id") ?? "";
+      if (!(await restoreWorkspace(c.env.DB, id))) throw new AdminError(409, "no such workspace, or it isn't archived");
+      await audit(c, "workspace_restore", id, {}, undefined, id);
+      return { restored: true };
+    }),
+  );
+  // Work in a workspace (the switcher's field, sessions.workspace_id): an instance admin acts there as its admin.
+  app.post(
+    "/admin-api/workspaces/:id/open",
+    wrap(async (c) => {
+      const id = c.req.param("id") ?? "";
+      const w = await c.env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = ?1")
+        .bind(id)
+        .first<{ archived_at: number | null }>();
+      if (!w) throw new AdminError(404, "no such workspace");
+      if (w.archived_at !== null) throw new AdminError(409, "restore the workspace first");
+      await setSessionWorkspace(c.env.DB, c.get("token"), id);
+      // its admins see that an instance admin came in
+      await audit(c, "workspace_open", id, {}, undefined, id);
+      return { id };
+    }),
+  );
+  app.post(
+    "/admin-api/instance-admins",
+    wrap(async (c) => {
+      fresh(c);
+      const b = await body(c);
+      const userId = String(b.userId ?? "");
+      if (typeof b.on !== "boolean") throw new AdminError(400, "on: true or false");
+      await setInstanceAdmin(c.env.DB, userId, b.on);
+      await audit(c, b.on ? "instance_admin_add" : "instance_admin_remove", `user:${userId}`, {}, undefined, null);
+      return { userId, instanceAdmin: b.on };
+    }),
+  );
+
   // ---- OAuth apps (bring your own) and connecting
   app.get(
     "/admin-api/oauth-apps",
@@ -998,7 +1417,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         c.get("session").userId,
         nowS(),
       );
-      await audit(c, "oauth_app_save", id, { clientId: String(b.clientId ?? "").trim() });
+      await audit(c, "oauth_app_save", id, { clientId: String(b.clientId ?? "").trim() }, undefined, null);
       return { saved: true };
     }),
   );
@@ -1008,7 +1427,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       fresh(c);
       const id = c.req.param("id") ?? "";
       await removeOAuthApp(c.env.DB, id);
-      await audit(c, "oauth_app_remove", id, {});
+      await audit(c, "oauth_app_remove", id, {}, undefined, null);
       return { removed: true };
     }),
   );
@@ -1017,13 +1436,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       fresh(c);
       const b = await body(c);
-      const url = await startConnect(c.env, c.req.param("provider") ?? "", {
+      const flow = await startConnect(c.env, c.req.param("provider") ?? "", {
         userId: c.get("session").userId,
         workspaceId: ws(c),
+        back: "dashboard",
         reconnect: typeof b.reconnect === "string" ? b.reconnect : null,
         nowS: nowS(),
       });
-      return { url };
+      c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
+      return { url: flow.url };
     }),
   );
   app.post(
@@ -1069,8 +1490,16 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           lastCheckedAt: r.lastCheckedAt ? utcIso(r.lastCheckedAt) : null,
           // what removing it would void
           waitingApprovals: await waitingApprovalsIn(c.env, r.kind),
+          inboxWorkspace: r.inboxWorkspace,
         })),
       ),
+      // what an inbox can feed
+      workspaces: (
+        await c.env.DB.prepare("SELECT id, name FROM workspaces WHERE archived_at IS NULL ORDER BY name, id").all<{
+          id: string;
+          name: string;
+        }>()
+      ).results,
       offered: offeredKinds(),
       googleApp: !!(await c.env.DB.prepare("SELECT 1 FROM oauth_apps WHERE id = 'google'").first()),
       encryptionKeySet: !!c.env.ENCRYPTION_KEY,
@@ -1103,7 +1532,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const kind = storeKind(c);
       const { settings, credentials } = await storeInput(c, kind, await body(c));
       await saveStore(c.env, fetcher, kind, settings, credentials, c.get("session").userId, nowS());
-      await audit(c, "media_store_save", kind, kind === "s3" ? { ...settings } : {});
+      await audit(c, "media_store_save", kind, kind === "s3" ? { ...settings } : {}, undefined, null);
       return { saved: true };
     }),
   );
@@ -1111,7 +1540,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores/drive/start",
     wrap(async (c) => {
       fresh(c);
-      return { url: await startDriveConnect(c.env, c.get("session").userId, nowS()) };
+      const flow = await startDriveConnect(c.env, c.get("session").userId, nowS());
+      c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
+      return { url: flow.url };
     }),
   );
   app.post(
@@ -1119,8 +1550,20 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const kind = storeKind(c);
       await setDefaultStore(c.env, kind, nowS());
-      await audit(c, "media_store_default", kind, {});
+      await audit(c, "media_store_default", kind, {}, undefined, null);
       return { default: kind };
+    }),
+  );
+  // The workspace that gets the drafts of the projects in this store's inbox that no plan has yet (null: they wait).
+  app.post(
+    "/admin-api/media-stores/:kind/inbox",
+    wrap(async (c) => {
+      const kind = storeKind(c);
+      const w = (await body(c)).workspace;
+      const workspace = typeof w === "string" && w ? w : null;
+      await setInboxWorkspace(c.env, kind, workspace, nowS());
+      await audit(c, "media_store_inbox", kind, { workspace }, undefined, null);
+      return { inboxWorkspace: workspace };
     }),
   );
   app.post(
@@ -1130,7 +1573,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const kind = storeKind(c);
       const voided = await waitingApprovalsIn(c.env, kind);
       await removeStore(c.env, kind, nowS());
-      await audit(c, "media_store_remove", kind, { voidedApprovals: voided });
+      await audit(c, "media_store_remove", kind, { voidedApprovals: voided }, undefined, null);
       return { removed: true, voidedApprovals: voided };
     }),
   );
@@ -1142,7 +1585,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const w = await workspaceSettings(c.env.DB, ws(c));
       // the topic's host only: whoever knows the whole URL can read the topic
       const topic = await workspaceNtfy(c.env, ws(c)).catch(() => null);
+      const name = await c.env.DB.prepare("SELECT name FROM workspaces WHERE id = ?1")
+        .bind(ws(c))
+        .first<{ name: string }>();
       return {
+        name: name?.name ?? "",
         timezone: w.timezone,
         digestHour: w.digestHour,
         dryRun: c.env.DRY_RUN !== "0",
@@ -1161,8 +1608,12 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (tz !== undefined && !isTimeZone(tz)) throw new AdminError(400, "unknown time zone");
       if (hour !== undefined && !(Number.isInteger(hour) && hour >= 0 && hour <= 23))
         throw new AdminError(400, "digest hour: 0 to 23");
+      // the workspace's admins rename it here (the instance admins on the Workspaces page too); it keeps a name. No
+      // fresh passkey check: a name is a setting saved beside the time zone, not a change to who can do what
+      const name = b.name === undefined ? undefined : nameOf(b.name);
       await setWorkspaceSettings(c.env.DB, ws(c), { timezone: tz, digestHour: hour }, nowS());
-      await audit(c, "settings", null, { timezone: tz, digestHour: hour });
+      if (name !== undefined) await renameWorkspace(c.env.DB, ws(c), name);
+      await audit(c, "settings", null, { name, timezone: tz, digestHour: hour });
       return { saved: true };
     }),
   );
@@ -1197,12 +1648,29 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/audit",
     wrap(async (c) => {
       const before = Number(c.req.query("before") ?? 0) || null;
+      // a workspace's own rows; the instance's (no workspace: new workspaces, media stores, OAuth apps, instance
+      // admins, sign-ins outside any workspace) only to instance admins, on their own (?instance=1)
+      const instance = c.req.query("instance") === "1";
+      if (instance && !c.get("instanceAdmin")) throw new AdminError(403, "only an instance admin can do this");
+      // who: the person who acted (their name, else their email), when a person did
       const r = await c.env.DB.prepare(
-        `SELECT id, at, actor, action, target, detail FROM audit
-         WHERE (CAST(?1 AS BIGINT) IS NULL OR id < ?1) AND (workspace_id = ?2 OR workspace_id IS NULL) ORDER BY id DESC LIMIT 50`,
+        `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id, COALESCE(u.name, u.email) AS who
+         FROM audit a LEFT JOIN users u ON u.id = a.user_id
+         WHERE (CAST(?1 AS BIGINT) IS NULL OR a.id < ?1)
+           AND (a.workspace_id = ?2 OR (CAST(?2 AS TEXT) IS NULL AND a.workspace_id IS NULL))
+         ORDER BY a.id DESC LIMIT 50`,
       )
-        .bind(before, ws(c))
-        .all<{ id: number; at: number; actor: string; action: string; target: string | null; detail: string | null }>();
+        .bind(before, instance ? null : ws(c))
+        .all<{
+          id: number;
+          at: number;
+          actor: string;
+          action: string;
+          target: string | null;
+          detail: string | null;
+          user_id: string | null;
+          who: string | null;
+        }>();
       return { entries: r.results };
     }),
   );

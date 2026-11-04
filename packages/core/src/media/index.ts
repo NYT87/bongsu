@@ -22,12 +22,15 @@ export interface StoreRow {
   lastError: string | null;
   lastCheckedAt: number | null;
   updatedAt: number;
+  /** The workspace its inbox's new projects (ones no plan has) are drafted in; null: they wait (core/inbox.ts). */
+  inboxWorkspace: string | null;
 }
 
 export async function storeRows(db: Db): Promise<StoreRow[]> {
   const r = await db
     .prepare(
-      "SELECT kind, is_default, settings, credentials, status, last_error, last_checked_at, updated_at FROM media_store ORDER BY kind",
+      `SELECT kind, is_default, settings, credentials, status, last_error, last_checked_at, updated_at, inbox_workspace
+       FROM media_store ORDER BY kind`,
     )
     .all<{
       kind: StoreKind;
@@ -38,6 +41,7 @@ export async function storeRows(db: Db): Promise<StoreRow[]> {
       last_error: string | null;
       last_checked_at: number | null;
       updated_at: number;
+      inbox_workspace: string | null;
     }>();
   return r.results.map((x) => ({
     kind: x.kind,
@@ -48,6 +52,7 @@ export async function storeRows(db: Db): Promise<StoreRow[]> {
     lastError: x.last_error,
     lastCheckedAt: x.last_checked_at,
     updatedAt: x.updated_at,
+    inboxWorkspace: x.inbox_workspace,
   }));
 }
 

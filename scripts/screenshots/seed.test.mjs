@@ -118,7 +118,16 @@ describe("seedDemo", () => {
     assert.ok(s.every((x) => x.verified_at === Math.floor(now.getTime() / 1000)));
     assert.equal(count(db, "passkeys"), 1);
     assert.equal(count(db, "settings", "key = 'bootstrap_done'"), 1);
-    assert.equal(rows(db, "SELECT email FROM users WHERE id = 'owner'")[0].email, "owner@example.com");
+    assert.ok(s.every((x) => x.workspace_id === "default"));
+    assert.equal(count(db, "workspaces", "id = 'default'"), 1);
+    const owner = rows(db, "SELECT email, instance_admin FROM users WHERE id = 'owner'")[0];
+    assert.equal(owner.email, "owner@example.com");
+    assert.equal(owner.instance_admin, 1);
+    assert.equal(
+      rows(db, "SELECT role FROM memberships WHERE workspace_id = 'default' AND user_id = 'owner'")[0].role,
+      "admin",
+    );
+    assert.equal(rows(db, "SELECT inbox_workspace FROM media_store")[0].inbox_workspace, "default");
     assert.equal(count(db, "api_keys", "name = 'claude-code'"), 1);
     assert.equal(count(db, "api_keys", "user_id = 'owner'"), 1);
     db.close();

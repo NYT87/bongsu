@@ -8,8 +8,29 @@ older than 10 minutes. While the instance is in dry run, an amber banner says "D
 
 ![The overview](assets/app/overview-light.png)
 
-The sidebar lists, in order: Overview, Connections, OAuth apps, Accounts, Videos, Devices & passkeys, Keys & tokens,
-Audit and Settings. This guide follows it.
+The sidebar lists, in order: Overview, Connections, Accounts, Videos, Devices & passkeys, Keys & tokens, Members, Audit
+and Settings, and for an instance admin an **Instance** group after them: Workspaces, Media and OAuth apps. This guide
+follows it, with the Instance group's pages at the end of their topics.
+
+## People and roles
+
+You work in one workspace at a time, with the role you have in it. **Admins** run the workspace: everything in this
+guide, including its connections, keys, settings and members. **Editors** can look at the accounts and videos and manage
+their own passkeys, devices and CLI tokens, but they can't change accounts and don't see Connections, agent keys,
+Settings or Members. **Creators** don't use the dashboard: signing in here points them to the [phone app](the-app.md),
+where they plan, approve and connect their own accounts. An **instance admin** is a person who manages the whole
+instance: its workspaces, its media stores and its OAuth apps, and who works in any workspace as its admin.
+[Security](security.md#roles) has the table.
+
+## First run
+
+A new instance has no workspace and no one in it. The first visit to `/dashboard` asks for the `SETUP_TOKEN`, your name
+and email and a passkey; that makes you the instance admin, who belongs to no workspace yet. The dashboard then asks
+you to **Create your first workspace**: a name, its time zone and its first admin, you preselected or someone else by
+email (they get an invite link). Once you're its admin it opens on **Get started**; otherwise it waits on the
+**Workspaces** page. An instance admin who is a member of no workspace (the instance's workspaces are clients',
+say) signs in to the Instance pages, Devices & passkeys and the instance's Audit, and opens a workspace from
+**Workspaces**.
 
 ## Overview and Get started
 
@@ -19,7 +40,9 @@ two passkeys, fewer than three recovery codes left.
 
 Until setup is done, a banner reads "Finish setting up: 2 of 5 done." and **Continue** opens **Get started**. Its five
 steps can each be done later from their own page: your time zone and daily digest hour, your OAuth apps, where your
-media live, an account to connect, and the device you approve on. A last card, **Then: dry run, and going live**, points to Settings.
+media live, an account to connect, and the device you approve on. The OAuth apps and the media stores are the
+instance's: a workspace admin who isn't an instance admin sees those two steps without a button, for the instance admin
+to do. A last card, **Then: dry run, and going live**, points to Settings.
 
 ## Connections
 
@@ -121,18 +144,47 @@ shown once; copy it then. A key can't approve or resume, whatever its scopes, an
 **Your CLI tokens** are for the `bongsu` command on your computer. A token acts as you, so keep it like a password:
 **Create a token**, name the computer and choose how many days it lasts, and **Revoke** it when the computer goes.
 
+## Members
+
+The workspace's people and their roles, for its admins. **Invite someone** takes an email and a role (admin, editor
+or creator) and makes a link that works once, for 7 days: copy it then, it isn't shown again. With email set up
+(`MAILER`, [Configuration](configuration.md)) it's also sent to them. Admins and editors join in the dashboard,
+creators in the app: someone new makes a passkey, someone with a Bongsu account signs in with theirs. Pending invites
+are listed with **Revoke**.
+
+Each member's role can be changed in place, and **Remove** takes them out of the workspace at once: signed out of
+it, their CLI tokens for it revoked, their devices no longer notified there. A workspace always keeps one admin: make
+someone else admin before the last one steps down. An admin who's removed or no longer an admin loses the invites they
+sent. Each of these changes asks for your passkey. An instance admin also sees **Make instance admin** (or **Remove
+instance admin**) by each member; the instance always keeps one.
+
 ## Audit
 
-Every change to the instance, newest first: when, who, what and the detail. **Load older** shows the next 50.
+Every change to the workspace, newest first: when, who, what and the detail. **Load older** shows the next 50. An
+instance admin can switch to **The instance**: new workspaces, media stores, OAuth apps, instance admins and sign-ins
+outside any workspace.
+
+## Workspaces
+
+Instance admins see an **Instance** group under the sidebar's sections: **Workspaces**, **Media** and **OAuth apps**.
+**Workspaces** lists every workspace with its **Members**, **Accounts**, when it was **Created** and its **Status**.
+**Create a workspace** takes a name, a time zone and its first admin: you, or someone invited by email (copy their
+link). **Open** works in that workspace, as its admin, until you open another. **Rename** changes its name (its own
+admins can also rename it in **Settings**), and **Add an admin** makes an invite link for a new admin.
+
+**Archive** stops a workspace completely: nothing in it publishes, its agent keys and CLI tokens stop working, its
+members can't open it, it gets no daily digest and its comments and metrics are no longer read. Its plan, texts, accounts and people stay, and **Restore** brings it
+back as it was (posts that came due meanwhile go out only within the catch-up window). Archiving, restoring and adding
+an admin ask for your passkey again.
 
 ## Settings
 
-**Workspace** holds the **Time zone**, the default for everyone (each person can choose their own in the app), and the
-**Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the workspace's notifications to an
-[ntfy](https://ntfy.sh) topic too, on ntfy.sh or your own server: paste the topic's `https://` address (a protected
-topic's token as `?auth=…`), **Save**, then **Send a test**. Anyone who knows a topic's address can read it, so pick a
-long, random name; it's stored encrypted (the instance needs `ENCRYPTION_KEY`) and the page only shows its server
-afterwards. Each workspace has its own; changing or removing it asks for your passkey again. **Instance** shows the address and whether publishing is **Live** or in **Dry
-run**. To go live, change `DRY_RUN` where the instance is configured and deploy again; see
-[Configuration](configuration.md). The instance's name and colour are set when the app is built, see
-[Branding](configuration.md#branding).
+**Workspace** holds its **Name** (it can't be emptied), the **Time zone**, the default for everyone (each person can
+choose their own in the app), and the **Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the
+workspace's notifications to an [ntfy](https://ntfy.sh) topic too, on ntfy.sh or your own server: paste the topic's
+`https://` address (a protected topic's token as `?auth=…`), **Save**, then **Send a test**. Anyone who knows a topic's
+address can read it, so pick a long, random name; it's stored encrypted (the instance needs `ENCRYPTION_KEY`) and the
+page only shows its server afterwards. Each workspace has its own; changing or removing it asks for your passkey again.
+**Instance** shows the address and whether publishing is **Live** or in **Dry run**. To go live, change `DRY_RUN` where
+the instance is configured and deploy again; see [Configuration](configuration.md). The instance's name and colour are
+set when the app is built, see [Branding](configuration.md#branding).

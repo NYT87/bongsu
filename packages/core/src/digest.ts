@@ -2,6 +2,7 @@
 // notification (push + ntfy) with today's items and their status, what still needs approval in the next 3 days,
 // and the jobs that failed or were refused since yesterday. settings.digest_last holds the last day sent.
 import { type CalEvent, calendar } from "./calendar";
+import { pausedState } from "./data";
 import type { Env } from "./env";
 import { shiftDate, zoneDate, zoneHour } from "./formats/time";
 import { notifier } from "./notify";
@@ -41,6 +42,9 @@ export async function buildDigest(
     ? `Today: ${[...counts].map(([p, n]) => `${n} ${platform(p)?.name ?? p}`).join(", ")}`
     : "Today: nothing planned";
   const parts = [todays.length ? todays.map(line).join("\n") : "Nothing planned today."];
+  // the plan reads as usual while paused, but nothing of it goes out: say so first
+  const paused = await pausedState(env.DB, ws.workspaceId);
+  if (paused) parts.unshift(`Publishing is paused (${paused.reason}): nothing goes out until it's resumed.`);
   if (needs.length)
     parts.push(`Needs approval (${needs.length}):\n${needs.map((e) => `${e.date.slice(5)} ${line(e)}`).join("\n")}`);
   if (failed.results.length)
@@ -50,14 +54,16 @@ export async function buildDigest(
   return { title, text: parts.join("\n\n") };
 }
 
-/** Sends each workspace's digest once per day (in its time zone), from its digest hour on. */
+/** Sends each workspace's digest once per day (in its time zone), from its digest hour on. An archived workspace
+ *  gets none. */
 export async function dailyDigest(
   env: Env,
   deps: { fetch: typeof fetch; now: Date },
 ): Promise<"sent" | "not yet" | "already sent"> {
-  const ids = await env.DB.prepare("SELECT workspace_id FROM workspace_settings ORDER BY workspace_id").all<{
-    workspace_id: string;
-  }>();
+  const ids = await env.DB.prepare(
+    `SELECT s.workspace_id FROM workspace_settings s JOIN workspaces w ON w.id = s.workspace_id
+     WHERE w.archived_at IS NULL ORDER BY s.workspace_id`,
+  ).all<{ workspace_id: string }>();
   const outcomes: string[] = [];
   for (const { workspace_id } of ids.results) {
     const ws = await workspaceSettings(env.DB, workspace_id);

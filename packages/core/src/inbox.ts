@@ -1,6 +1,7 @@
 // The inbox, its own cron run: whatever is dropped in UPLOADS/inbox/<project>/ in any of the media stores becomes a
-// draft (+ a notification), for the owner to review; the draft records the store its files are in. Nothing here
-// publishes or approves.
+// draft (+ a notification), for the workspace to review; the draft records the store its files are in. Nothing here
+// publishes or approves. A project goes to the workspace whose plan has it; a project no plan has yet to the workspace
+// the store's inbox feeds (media_store.inbox_workspace, the dashboard's Media page); without one it waits.
 //
 //   inbox/<project>/<name>.mp4              a Reel draft    (+ <name>.txt caption, <name>.comment.txt, <name>.comment2.txt)
 //   inbox/<project>/<name>.jpg              a photo draft   (same optional texts)
@@ -11,7 +12,7 @@
 // waits until the store has its checksum and nothing in it changed for SETTLE_S, so a caption uploaded a minute after the
 // video still makes it in. Each item makes one draft only (inbox_seen), even if the draft is refused.
 
-import { DEFAULT_WORKSPACE, instagramAccounts } from "./accounts";
+import { instagramAccounts } from "./accounts";
 import type { Db } from "./db";
 import type { Env } from "./env";
 import { mediaStores } from "./media/index";
@@ -37,13 +38,41 @@ interface Item {
 const unix = (t?: string) => (t ? Math.floor(Date.parse(t) / 1000) : 0);
 const stem = (n: string) => n.replace(/\.[^.]+$/, "");
 
-/** The project's Instagram account, from its planned items; null when the project has none yet. */
-async function accountOf(db: Db, project: string): Promise<string | null> {
-  const r = await db
+/** The workspace a project's drafts go to: the one whose plan has it (the most items, if several do), else the one
+ *  the store's inbox feeds; null when neither: the draft waits. Nothing goes to an archived workspace (nobody works
+ *  in it): its projects, and a store feeding it, wait. */
+export async function inboxWorkspace(db: Db, store: string, project: string): Promise<string | null> {
+  const planned = await db
     .prepare(
-      "SELECT account, COUNT(*) AS n FROM plan_items WHERE folder LIKE '%/' || ?1 GROUP BY account ORDER BY n DESC LIMIT 1",
+      `SELECT p.workspace_id, MAX(w.archived_at) AS archived, COUNT(*) AS n FROM plan_items p
+         JOIN workspaces w ON w.id = p.workspace_id
+       WHERE p.folder LIKE '%/' || ?1
+       GROUP BY p.workspace_id
+       ORDER BY CASE WHEN MAX(w.archived_at) IS NULL THEN 0 ELSE 1 END, n DESC, p.workspace_id LIMIT 1`,
     )
     .bind(project)
+    .first<{ workspace_id: string; archived: number | null }>();
+  // a project only an archived workspace plans is that workspace's: it waits rather than go to another
+  if (planned) return planned.archived === null ? planned.workspace_id : null;
+  const r = await db
+    .prepare(
+      `SELECT s.inbox_workspace FROM media_store s
+         JOIN workspaces w ON w.id = s.inbox_workspace AND w.archived_at IS NULL
+       WHERE s.kind = ?1`,
+    )
+    .bind(store)
+    .first<{ inbox_workspace: string | null }>();
+  return r?.inbox_workspace ?? null;
+}
+
+/** The project's Instagram account in the workspace, from its planned items; null when the project has none yet. */
+async function accountOf(db: Db, project: string, workspaceId: string): Promise<string | null> {
+  const r = await db
+    .prepare(
+      `SELECT account, COUNT(*) AS n FROM plan_items WHERE folder LIKE '%/' || ?1 AND workspace_id = ?2
+       GROUP BY account ORDER BY n DESC LIMIT 1`,
+    )
+    .bind(project, workspaceId)
     .first<{ account: string }>();
   return r?.account ?? null;
 }
@@ -135,18 +164,32 @@ export async function scanInbox(
     for (const r of seen.results) done.add(`${store.id}:${r.media_id}`);
   }
   const fresh = items.filter((i) => !done.has(`${i.store.id}:${i.key}`) && i.media.length);
-  const ready = fresh
-    .filter((i) => {
-      const files = [...i.media, ...Object.values(i.texts).filter((x): x is MediaEntry => !!x)];
-      return i.media.every((m) => m.checksum) && Math.max(...files.map((f) => unix(f.modifiedAt))) <= nowS - SETTLE_S;
-    })
-    .slice(0, ITEMS_PER_RUN);
-  const drafted: string[] = [];
-  // The inbox feeds the default workspace; a project without planned items starts on its first Instagram account.
-  const fallback = (await instagramAccounts(env.DB, DEFAULT_WORKSPACE))[0]?.id ?? "";
+  // each project's workspace, once per store; an item without one waits (unseen) until a plan or the store names one
+  const where = new Map<string, Promise<string | null>>();
+  const workspaceOf = (i: Item) => {
+    const k = `${i.store.id}:${i.project}`;
+    if (!where.has(k)) where.set(k, inboxWorkspace(env.DB, i.store.id, i.project));
+    return where.get(k) as Promise<string | null>;
+  };
+  const ready: (Item & { workspaceId: string })[] = [];
+  for (const i of fresh) {
+    if (ready.length >= ITEMS_PER_RUN) break;
+    const files = [...i.media, ...Object.values(i.texts).filter((x): x is MediaEntry => !!x)];
+    const settled =
+      i.media.every((m) => m.checksum) && Math.max(...files.map((f) => unix(f.modifiedAt))) <= nowS - SETTLE_S;
+    const workspaceId = settled ? await workspaceOf(i) : null;
+    if (workspaceId) ready.push({ ...i, workspaceId });
+  }
+  const drafted: { title: string; workspaceId: string }[] = [];
+  // a project without planned items starts on its workspace's first Instagram account
+  const firsts = new Map<string, string>();
+  const firstAccount = async (ws: string) => {
+    if (!firsts.has(ws)) firsts.set(ws, (await instagramAccounts(env.DB, ws))[0]?.id ?? "");
+    return firsts.get(ws) as string;
+  };
   for (const i of ready) {
     const store = i.store;
-    const account = await accountOf(env.DB, i.project);
+    const account = await accountOf(env.DB, i.project, i.workspaceId);
     const video = i.media.some((m) => isVideo(m));
     const kind = i.media.length > 1 ? "carousel" : video ? "reel" : "photo";
     const text = async (f?: MediaEntry) => (f ? (await store.readText(f.id)).trim() : undefined);
@@ -167,16 +210,24 @@ export async function scanInbox(
     await env.DB.batch([
       env.DB.prepare(
         "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'drive', ?7, 'draft', ?5, ?5, ?6)",
-      ).bind(id, kind, account ?? fallback, JSON.stringify(payload), nowS, DEFAULT_WORKSPACE, `${store.id}-inbox`),
+      ).bind(
+        id,
+        kind,
+        account ?? (await firstAccount(i.workspaceId)),
+        JSON.stringify(payload),
+        nowS,
+        i.workspaceId,
+        `${store.id}-inbox`,
+      ),
       env.DB.prepare(
         "INSERT INTO inbox_seen (store, media_id, draft_id, at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (store, media_id) DO NOTHING",
       ).bind(store.id, i.key, id, nowS),
     ]);
-    drafted.push(`${i.project}/${i.name}`);
+    drafted.push({ title: `${i.project}/${i.name}`, workspaceId: i.workspaceId });
   }
-  if (drafted.length) {
-    const note = notifier(env, deps.fetch, nowS);
-    await note.send(newDrafts(drafted), DEFAULT_WORKSPACE); // the inbox feeds the default workspace
-  }
-  return { drafted, waiting: fresh.length - drafted.length };
+  // each workspace hears of its own drafts
+  const note = notifier(env, deps.fetch, nowS);
+  for (const ws of new Set(drafted.map((d) => d.workspaceId)))
+    await note.send(newDrafts(drafted.filter((d) => d.workspaceId === ws).map((d) => d.title)), ws);
+  return { drafted: drafted.map((d) => d.title), waiting: fresh.length - drafted.length };
 }

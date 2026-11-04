@@ -9,6 +9,8 @@ export interface Note {
   text: string;
   target?: string;
   actions?: Action[];
+  /** For a note that's also emailed: the subject, and the dashboard page the mail links to. */
+  mail?: { subject: string; page: string };
 }
 
 // ---- jobs (the tick)
@@ -113,6 +115,8 @@ export const connectionMailSubject = "Bongsu: a connection needs attention";
 export const mediaStoreProblem = (text: string): Note => ({
   title: "A media store needs attention",
   text: `${text}\nIts files can't be read until it's fixed: check it in the dashboard (Media).`,
+  target: "media_stores",
+  mail: { subject: "Bongsu: a media store needs attention", page: "/dashboard/media" },
 });
 export const releaseMoved = (title: string, from: string, to: string, by: string): Note => ({
   title: `Release moved: ${title}`,

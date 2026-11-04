@@ -38,6 +38,10 @@ type Me = {
   accounts?: number;
   /** What the signed-in role may do (the server's ROLE_SCOPES): an action is shown only to someone who can take it. */
   scopes?: string[];
+  /** An admin or a creator of the workspace: Settings offers connecting accounts. */
+  connects?: boolean;
+  /** Signed in, but a member of no workspace (yet, or any more): nothing to show but "ask for an invite". */
+  noWorkspace?: boolean;
 };
 type Status = {
   dry_run: boolean;
@@ -542,8 +546,46 @@ export function App() {
         <p className="muted">{t("common.loading")}</p>
       </main>
     );
+  // an invite link, signed in or not: joining signs in as the person invited, in the workspace they join
+  const invite = /^#\/invite\/([A-Za-z0-9_-]+)/.exec(hash)?.[1];
+  if (invite)
+    return (
+      <InvitePage
+        token={invite}
+        onDone={() => {
+          location.hash = "#/";
+          refreshMe();
+        }}
+      />
+    );
   if (!me.signedIn) return <SignIn me={me} onDone={refreshMe} />;
+  if (me.noWorkspace) return <NoWorkspace onSignOut={refreshMe} />;
   return <SignedIn me={me} hash={hash} onSignOut={refreshMe} />;
+}
+
+/** Signed in, in no workspace (removed, or never invited): every page would answer 403, so only this and the way
+ *  out. */
+function NoWorkspace({ onSignOut }: { onSignOut: () => void }) {
+  return (
+    <main className="center">
+      <h1 className="brand-title">
+        {LOGO}
+        {BRAND.name}
+      </h1>
+      <h2>{t("noWorkspace.title")}</h2>
+      <p className="muted">{t("noWorkspace.detail")}</p>
+      <button
+        onClick={() =>
+          api("logout", {}).then(() => {
+            cachePrune(true);
+            onSignOut();
+          })
+        }
+      >
+        {t("settings.signOut")}
+      </button>
+    </main>
+  );
 }
 
 /** Where the item page's back link goes: the last list page the owner was on (Today when unknown). */
@@ -781,6 +823,89 @@ function SignIn({ me, onDone }: { me: Me; onDone: () => void }) {
           {t("sign.create")}
         </button>
       </details>
+      {msg && (
+        <p className="error" role="alert">
+          {msg}
+        </p>
+      )}
+    </main>
+  );
+}
+
+/** Joining a workspace from an invite link: a name and a new passkey, or the passkey of the account the invite was
+ *  sent to. The page doesn't know (and the server doesn't say) whether that account exists: the person picks. */
+function InvitePage({ token, onDone }: { token: string; onDone: () => void }) {
+  const [invite, setInvite] = useState<{ workspace: string; role: string } | null>(null);
+  const [gone, setGone] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const path = `invite/${encodeURIComponent(token)}`;
+  useEffect(() => {
+    api<{ workspace: string; role: string }>(path)
+      .then(setInvite)
+      .catch(() => setGone(true));
+  }, [path]);
+  const join = async (mode: "new" | "existing") => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      type Ceremony = { options: never; challengeId: string };
+      const o = await api<{ register: Ceremony; signIn: Ceremony }>(`${path}/options`, { name });
+      const c = mode === "new" ? o.register : o.signIn;
+      const response =
+        mode === "new"
+          ? await startRegistration({ optionsJSON: c.options })
+          : await startAuthentication({ optionsJSON: c.options });
+      await api(`${path}/verify`, {
+        mode,
+        challengeId: c.challengeId,
+        response,
+        device: navigator.userAgent.includes("Android") ? "Android phone" : "device",
+      });
+      onDone();
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="center">
+      <h1 className="brand-title">
+        {LOGO}
+        {BRAND.name}
+      </h1>
+      {gone ? (
+        <>
+          <h2>{t("invite.gone")}</h2>
+          <p className="muted">{t("invite.goneDetail")}</p>
+        </>
+      ) : !invite ? (
+        <p className="muted">{t("common.loading")}</p>
+      ) : (
+        <>
+          <h2>{t("invite.title", { workspace: invite.workspace })}</h2>
+          <p className="muted">{t("invite.asRole", { role: invite.role })}</p>
+          <h3>{t("invite.new")}</h3>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t("invite.name")}
+            aria-label={t("invite.name")}
+            autoComplete="name"
+          />
+          <p className="muted small">{t("invite.passkey")}</p>
+          <button type="button" className="primary" disabled={busy} onClick={() => join("new")}>
+            {busy ? t("invite.waiting") : t("invite.create")}
+          </button>
+          <h3>{t("invite.existing")}</h3>
+          <p className="muted small">{t("invite.existingDetail")}</p>
+          <button type="button" disabled={busy} onClick={() => join("existing")}>
+            {t("invite.signIn")}
+          </button>
+        </>
+      )}
       {msg && (
         <p className="error" role="alert">
           {msg}
@@ -3980,6 +4105,90 @@ function MediaStoresCard() {
   );
 }
 
+type Connections = {
+  connections: { id: string; provider: string; label: string | null; status: string; accounts: string[] }[];
+  providers: { provider: string; label: string; ready: boolean }[];
+};
+
+/** The workspace's Instagram and YouTube connections, for its admins and creators: Connect sends the browser to the
+ *  provider with the instance's OAuth app, and the provider's way back lands here with `?connected=` or `?error=`. */
+function ConnectCard() {
+  const { data } = useLoad<Connections>("connections");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  useEffect(() => {
+    const q = new URLSearchParams(location.hash.split("?")[1] ?? "");
+    const connected = q.get("connected");
+    const error = q.get("error");
+    if (connected === null && error === null) return;
+    if (connected !== null)
+      setMsg({ text: t("settings.connected", { label: connected, n: Number(q.get("accounts") ?? 0) }), ok: true });
+    else {
+      const hint = q.get("hint") === "browser" ? ` ${t("settings.connectBrowserHint")}` : "";
+      setMsg({ text: t("settings.connectFailed", { error: error ?? "" }) + hint, ok: false });
+    }
+    // a reload shouldn't say it again
+    history.replaceState(history.state, "", "#/settings");
+  }, []);
+  const start = async (provider: string, reconnect?: string) => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await api<{ url: string }>(`connect/${provider}/start`, reconnect ? { reconnect } : {});
+      location.href = r.url;
+    } catch (e) {
+      setMsg({ text: (e as Error).message, ok: false });
+      setBusy(false);
+    }
+  };
+  if (!data) return null;
+  const ready = (p: string) => data.providers.some((x) => x.provider === p && x.ready);
+  return (
+    <div className="card">
+      <h2>{t("settings.accounts")}</h2>
+      <p className="muted small">{t("settings.accountsNote")}</p>
+      {data.connections.length === 0 ? (
+        <p className="small muted">{t("settings.connectNone")}</p>
+      ) : (
+        <ul className="small">
+          {data.connections.map((c) => (
+            <li key={c.id}>
+              {c.label ?? c.provider}
+              {c.status !== "ok" && <span className="warn"> · {t("settings.connectBroken")}</span>}{" "}
+              {ready(c.provider) && (
+                <button className="link-button" disabled={busy} onClick={() => start(c.provider, c.id)}>
+                  {t("settings.reconnect")}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="row">
+        {data.providers
+          .filter((p) => p.ready)
+          .map((p) => (
+            <button key={p.provider} disabled={busy} onClick={() => start(p.provider)}>
+              {t("settings.connect", { label: p.label })}
+            </button>
+          ))}
+      </div>
+      {data.providers
+        .filter((p) => !p.ready)
+        .map((p) => (
+          <p key={p.provider} className="small muted">
+            {t("settings.connectNoApp", { label: p.label })}
+          </p>
+        ))}
+      {msg && (
+        <p className={`notice small ${msg.ok ? "ok" : "bad"}`} role="status">
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** The zone the app shows and takes times in: the user's own or the workspace's. Plans are stored in UTC, so changing
  *  it moves nothing; the app reloads to show every time in the new zone. */
 function TimeZoneCard({ me }: { me: Me }) {
@@ -4158,6 +4367,7 @@ function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         </div>
         {note("push")}
       </div>
+      {me.connects && <ConnectCard />}
       <TimeZoneCard me={me} />
       <MediaStoresCard />
       <VersionInfo />

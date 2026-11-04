@@ -70,9 +70,10 @@ agent key for agents, and keep the bridge for yourself.
 
 ## What Bongsu tells the agent
 
-When a client connects, Bongsu sends it instructions: start with `list_accounts` and `get_status`, dates and times
-are in the workspace's zone and stored in UTC, every post needs the owner's approval, and approving and resuming are
-owner-only. A client shows or uses them as it likes, so it is still worth saying in your own prompt what you want.
+When a client connects, Bongsu sends it instructions: start with `list_accounts` and `get_status`, dates and times are
+in the workspace's zone and stored in UTC, every post needs a person's approval, and approving and resuming are for
+people with a passkey (admins and creators), never an agent. A client shows or uses them as it likes, so it is still
+worth saying in your own prompt what you want.
 
 ## Good habits
 

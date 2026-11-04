@@ -2,10 +2,11 @@
 // assets) and talks only to these routes, same origin. Sign-in is a passkey (the first one registered with a
 // one-time code made in the dashboard's Devices & passkeys); approving needs a fresh passkey assertion every time.
 
-import { DEFAULT_WORKSPACE, instagramAccounts } from "@bongsu/core/accounts";
+import { instagramAccounts, listAccounts } from "@bongsu/core/accounts";
 import { calendar } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import { replyToComment } from "@bongsu/core/comments";
+import { ConnectError, startConnect } from "@bongsu/core/connections";
 import { LINK_TTL_S } from "@bongsu/core/constants";
 import { dueFrom, getItem, getPosted, isPosted, itemOptions, trialFor, WhenError } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -19,21 +20,33 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs } from "@bongsu/core/providers/index";
 import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
+import { mayConnect } from "@bongsu/core/roles";
 import { mayBeLive } from "@bongsu/core/tick";
 import {
   callerZone,
+  FALLBACK_ZONE,
+  sessionWorkspace,
   setUserZone,
-  userRole,
-  userWorkspace,
   workspaceSettings,
   workspaceZone,
 } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
-import { type Caller, ROLE_SCOPES, type Scope } from "../agent/auth";
+import { HTTPException } from "hono/http-exception";
+import { type Caller, type Scope, scopesOf } from "../agent/auth";
 import * as ops from "../agent/ops";
 import { resolveItem, type Snapshot, sameSnapshot, snapshot, writeApproval } from "./approve";
+import { AcceptError, APP_ROLES, inviteOptions, invitePreview, inviteVerify } from "./invite";
 import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
-import { createSession, endSession, readCookie, sessionCookie, validSession } from "./session";
+import {
+  createSession,
+  endSession,
+  oauthCookie,
+  readCookie,
+  type Session,
+  sessionCookie,
+  setSessionWorkspace,
+  validSession,
+} from "./session";
 import { draftFromUploads, startUpload, UploadError } from "./uploads";
 import {
   authenticationOptions,
@@ -44,38 +57,50 @@ import {
   verifyRegistration,
 } from "./webauthn";
 
-type Vars = { Bindings: Env; Variables: { caller: Caller } };
+type Vars = { Bindings: Env; Variables: { caller: Caller; connects: boolean; needs: { scope: Scope | null } } };
 type C = Context<Vars>;
-// The app works as the signed-in user, in their workspace (core/workspaces.ts userWorkspace; Phase 13 adds a picker),
-// with their role's rights (agent/auth.ts ROLE_SCOPES): approving and resuming need "approve" / "resume", changing the
-// plan "plan". Before sign-in (who am I, setup, login) it's the first user's default workspace, read-only.
-const OWNER: Caller = {
-  id: "owner",
-  name: "owner (app)",
-  scopes: ["read"],
-  workspaceId: DEFAULT_WORKSPACE,
-  userId: "owner",
-};
-/** The scope each change needs; a POST not listed needs "plan" unless it's the person's own (session, device, zone). */
-const NEEDS: [RegExp, Scope | null][] = [
-  [/^\/app-api\/approve\//, "approve"],
-  [/^\/app-api\/resume\//, "resume"],
-  [/^\/app-api\/pause$/, "pause"],
-  [/^\/app-api\/youtube\/release\//, "reschedule"],
-  [/^\/app-api\/(logout|me\/timezone|push\/|client-error|comments\/seen)/, null],
+// The app works as the signed-in user, in their session's workspace (core/workspaces.ts sessionWorkspace), with their
+// role's rights there (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming need
+// "approve" / "resume", pausing "pause", changing the plan "plan". The signed-out routes (who am I, setup, login) act
+// for no one and in no workspace.
+/** The scope each change needs, by route pattern; a POST not listed needs "plan" unless it's the person's own (session,
+ *  device, zone). The router tags each request with its pattern's (below), never a second look at the URL: Hono
+ *  matches the decoded path, so a regex on the raw one would miss `/app-api/%61pprove/options`. */
+const NEEDS: [string, Scope | null][] = [
+  ["/app-api/approve/*", "approve"],
+  ["/app-api/resume/*", "resume"],
+  ["/app-api/pause", "pause"],
+  ["/app-api/youtube/release/*", "reschedule"],
+  // connecting accounts needs the role itself (an admin's or a creator's: core/roles.ts mayConnect), not a scope
+  ["/app-api/connect/*", null],
+  ["/app-api/logout", null],
+  ["/app-api/me/timezone", null],
+  ["/app-api/push/*", null],
+  ["/app-api/client-error", null],
+  ["/app-api/comments/seen", null],
 ];
 const nowS = () => Math.floor(Date.now() / 1000);
 
 export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVerifiers) {
   const app = new Hono<Vars>();
-  /** The signed-in caller (set by the session check below), else the default. */
-  const me = (c: C) => c.get("caller") ?? OWNER;
-  const callerFor = async (c: C, userId: string): Promise<Caller | null> => {
-    const workspaceId = await userWorkspace(c.env.DB, userId);
-    if (!workspaceId) return null;
-    const role = await userRole(c.env.DB, userId, workspaceId);
-    const scopes = ROLE_SCOPES[role ?? ""] ?? ["read"];
-    return { ...OWNER, id: userId, name: `${userId} (app)`, scopes, workspaceId, userId };
+  /** The signed-in caller, set by the session check below; a request without one is refused, never defaulted. */
+  const me = (c: C): Caller => {
+    const caller = c.get("caller");
+    if (!caller) throw new HTTPException(401, { res: Response.json({ error: "sign in" }, { status: 401 }) });
+    return caller;
+  };
+  /** The signed-in user's id: every app caller is one (callerFor). */
+  const userOf = (c: C): string => {
+    const u = me(c).userId;
+    if (!u) throw new HTTPException(401, { res: Response.json({ error: "sign in" }, { status: 401 }) });
+    return u;
+  };
+  const callerFor = async (c: C, s: Session): Promise<Caller | null> => {
+    const where = await sessionWorkspace(c.env.DB, s);
+    if (!where) return null;
+    const scopes = scopesOf(where.role, where.instanceAdmin);
+    c.set("connects", mayConnect(where.role));
+    return { id: s.userId, name: `${s.userId} (app)`, scopes, workspaceId: where.workspaceId, userId: s.userId };
   };
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");
   const body = async (c: C) => {
@@ -88,12 +113,24 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   const opctx = (c: C): ops.OpCtx => ({ env: c.env, fetch: fetcher, now: new Date(), caller: me(c) });
   /** The signed-in user's time zone (their own, else the workspace's): what the app shows and takes times in. */
   const zone = (c: C) => callerZone(c.env.DB, me(c).workspaceId, me(c).userId);
-  const audit = (c: C, action: string, target: string | null, detail: unknown) =>
-    c.env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, 'owner', ?2, ?3, ?4, ?5, ?6)",
+  /** An audit row of the caller's (`user:<id>`, as the dashboard writes it), in their workspace; a signed-out route's
+   *  (a new passkey) names its user and, without a workspace, is the instance's. */
+  const audit = (c: C, action: string, target: string | null, detail: unknown, userId?: string) => {
+    const who = userId ?? c.get("caller")?.userId ?? null;
+    return c.env.DB.prepare(
+      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
-      .bind(nowS(), action, target, JSON.stringify(detail), me(c).userId ?? null, me(c).workspaceId)
+      .bind(
+        nowS(),
+        `user:${who ?? "?"}`,
+        action,
+        target,
+        JSON.stringify(detail),
+        who,
+        c.get("caller")?.workspaceId ?? null,
+      )
       .run();
+  };
   /** Sets (or, with null, removes) one of an item's platform options; returns the item, or null when it isn't one of
    *  the workspace's. The options are read and written whole (no database-specific JSON functions). */
   const setOption = async (c: C, key: string, name: string, value: unknown) => {
@@ -119,7 +156,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       nowS: nowS(),
       ttlS: LINK_TTL_S,
     });
-  const signIn = async (c: C, userId = "owner") => {
+  const signIn = async (c: C, userId: string) => {
     c.header("Set-Cookie", sessionCookie(await createSession(c.env.DB, nowS(), { userId })));
     return c.json({ signedIn: true });
   };
@@ -132,7 +169,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   app.get("/app-api/me", async (c) => {
     const n = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys").first<{ n: number }>();
     const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
-    const caller = s && (await callerFor(c, s.userId));
+    const caller = s && (await callerFor(c, s));
     if (caller) c.set("caller", caller);
     // active accounts of the caller's workspace: none means the app points at the dashboard's setup
     const accounts = caller
@@ -144,12 +181,17 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       signedIn: !!s,
       // the role's scopes (ROLE_SCOPES): the app shows an action only to someone who can take it
       scopes: caller?.scopes ?? [],
+      // an admin or a creator there (core/roles.ts mayConnect): Settings offers Connect Instagram and YouTube
+      connects: !!caller && !!c.get("connects"),
       setupNeeded: (n?.n ?? 0) === 0,
+      // signed in, but a member of no workspace (yet, or any more): the app says to ask for one
+      noWorkspace: !!s && !caller,
       accounts: accounts?.n ?? 0,
       vapidPublicKey: c.env.VAPID_PUBLIC_KEY,
       dryRun: c.env.DRY_RUN !== "0",
-      timezone: await zone(c),
-      workspaceTimezone: await workspaceZone(c.env.DB, me(c).workspaceId),
+      // the user's own zone, else their workspace's; UTC without one (never another workspace's)
+      timezone: s ? await callerZone(c.env.DB, caller?.workspaceId ?? null, s.userId) : FALLBACK_ZONE,
+      workspaceTimezone: caller ? await workspaceZone(c.env.DB, caller.workspaceId) : FALLBACK_ZONE,
       // the text the app shows (packages/web/src/i18n.ts): the workspace's, English for someone not signed in
       locale: caller ? (await workspaceSettings(c.env.DB, caller.workspaceId)).locale : "en",
     });
@@ -185,9 +227,11 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   app.post("/app-api/setup/verify", async (c) => {
     const b = await body(c);
-    let userId = "owner";
+    // the code's user, whom the challenge names: a code always belongs to someone (made in the dashboard)
+    let userId: string | null = null;
     const useCode = async (data: unknown) => {
-      userId = (data as { userId?: string } | null)?.userId ?? "owner";
+      userId = (data as { userId?: string } | null)?.userId ?? null;
+      if (!userId) return false;
       return !!(await c.env.DB.prepare(
         "UPDATE setup_codes SET used_at = ?1 WHERE code_hash = ?2 AND used_at IS NULL AND expires_at >= ?1 RETURNING code_hash",
       )
@@ -205,9 +249,13 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       nowS(),
       useCode,
     );
-    if (!ok) return c.json({ error: "passkey registration failed" }, 400);
-    await audit(c, "passkey_add", null, { name: b.name ?? "device", user: userId });
-    return signIn(c, userId);
+    const user = userId as string | null; // set by useCode
+    if (!ok || !user) return c.json({ error: "passkey registration failed" }, 400);
+    // logged in the workspace the new device's user works in (the instance's log when they have none yet)
+    const caller = await callerFor(c, { userId: user, app: "pwa", verifiedAt: nowS(), workspaceId: null });
+    if (caller) c.set("caller", caller);
+    await audit(c, "passkey_add", null, { name: b.name ?? "device", user }, user);
+    return signIn(c, user);
   });
 
   app.post("/app-api/login/options", async (c) => {
@@ -238,21 +286,71 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return c.json({ signedIn: false });
   });
 
+  // ---- accepting an invite (pwa/invite.ts), signed out: creators join here; an admin's or editor's invite is the
+  // dashboard's, and here answers like any other unusable one
+  const accepting = (fn: (c: C) => Promise<unknown>) => async (c: C) => {
+    try {
+      return c.json(await fn(c));
+    } catch (e) {
+      if (e instanceof AcceptError) return c.json(e.answer, e.status);
+      throw e;
+    }
+  };
+  app.get(
+    "/app-api/invite/:token",
+    accepting((c) => invitePreview(c.env, c.req.param("token") ?? "", nowS(), APP_ROLES)),
+  );
+  app.post(
+    "/app-api/invite/:token/options",
+    accepting(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS(), APP_ROLES)),
+  );
+  app.post(
+    "/app-api/invite/:token/verify",
+    accepting(async (c) => {
+      const j = await inviteVerify(
+        c.env,
+        verifiers,
+        origin(c),
+        c.req.param("token") ?? "",
+        await body(c),
+        nowS(),
+        APP_ROLES,
+      );
+      // signed in, working in the workspace just joined
+      const token = await createSession(c.env.DB, nowS(), { userId: j.userId });
+      await setSessionWorkspace(c.env.DB, token, j.workspaceId);
+      c.header("Set-Cookie", sessionCookie(token));
+      const caller = await callerFor(c, {
+        userId: j.userId,
+        app: "pwa",
+        verifiedAt: nowS(),
+        workspaceId: j.workspaceId,
+      });
+      if (caller) c.set("caller", caller);
+      await audit(c, "invite_accept", `user:${j.userId}`, { role: j.role, isNew: j.isNew }, j.userId);
+      return { signedIn: true, role: j.role };
+    }),
+  );
+
   // ---- everything else needs a session
   app.use("/app-api/*", async (c, next) => {
     const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
     if (!s) return c.json({ error: "sign in" }, 401);
-    const caller = await callerFor(c, s.userId);
-    if (!caller) return c.json({ error: "you're not a member of any workspace" }, 403);
+    const caller = await callerFor(c, s);
+    if (!caller) return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     c.set("caller", caller);
     await next();
   });
   // ---- and a role that allows the change
+  for (const [pattern, scope] of NEEDS)
+    app.use(pattern, async (c, next) => {
+      c.set("needs", { scope });
+      await next();
+    });
   app.use("/app-api/*", async (c, next) => {
     if (c.req.method === "GET") return next();
-    const path = new URL(c.req.url).pathname;
-    const need = NEEDS.find(([re]) => re.test(path));
-    const scope = need ? need[1] : "plan";
+    const needs = c.get("needs");
+    const scope = needs ? needs.scope : "plan";
     if (scope && !me(c).scopes.includes(scope))
       return c.json({ error: `your role in this workspace can't do that (it needs "${scope}")` }, 403);
     await next();
@@ -375,7 +473,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   app.post(
     "/app-api/drafts/:id/schedule",
     owned(async (c) =>
-      scheduleDraft(c.env, c.req.param("id") ?? "", await body(c), nowS(), await zone(c), me(c).workspaceId),
+      scheduleDraft(c.env, c.req.param("id") ?? "", await body(c), nowS(), await zone(c), me(c).workspaceId, userOf(c)),
     ),
   );
   // Uploads from the app: the store's upload target per file (the browser sends the bytes straight to it), then the draft.
@@ -385,15 +483,22 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   );
   app.post(
     "/app-api/drafts/new",
-    owned(async (c) => draftFromUploads(c.env, fetcher, await body(c), nowS(), me(c).workspaceId)),
+    owned(async (c) => draftFromUploads(c.env, fetcher, await body(c), nowS(), me(c).workspaceId, userOf(c))),
   );
-  // What went wrong on a device (upload failures): kept in the audit log, read in the dashboard's audit page.
+  // What went wrong on a device (upload failures): kept in the audit log of the caller's workspace, read in the
+  // dashboard's audit page.
   app.post("/app-api/client-error", async (c) => {
     const b = await body(c);
     await c.env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail) VALUES (?1, 'owner', 'client_error', NULL, ?2)",
+      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'client_error', NULL, ?3, ?4, ?5)",
     )
-      .bind(nowS(), JSON.stringify({ msg: String(b.msg ?? "").slice(0, 300), detail: b.detail ?? null }).slice(0, 2000))
+      .bind(
+        nowS(),
+        `user:${userOf(c)}`,
+        JSON.stringify({ msg: String(b.msg ?? "").slice(0, 300), detail: b.detail ?? null }).slice(0, 2000),
+        me(c).userId ?? null,
+        me(c).workspaceId,
+      )
       .run();
     return c.json({ ok: true });
   });
@@ -408,6 +513,60 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       })),
     }),
   );
+  // ---- connecting accounts (Settings): admins and creators connect Instagram and YouTube with the instance's OAuth
+  // apps, into their workspace. The provider sends the browser back to the dashboard's callback (the one redirect URL
+  // registered in the app), which sends it on to the app's Settings (dashboard/routes.ts).
+  const connector = (c: C) => {
+    if (!c.get("connects")) throw new ops.ApiError(403, "only the workspace's admins and creators connect accounts");
+  };
+  app.get(
+    "/app-api/connections",
+    wrap(async (c) => {
+      connector(c);
+      const ws = me(c).workspaceId;
+      const r = await c.env.DB.prepare(
+        "SELECT id, provider, label, status, expires_at FROM connections WHERE workspace_id = ?1 ORDER BY provider, id",
+      )
+        .bind(ws)
+        .all<{ id: string; provider: string; label: string | null; status: string; expires_at: number | null }>();
+      const accounts = await listAccounts(c.env.DB, { workspaceId: ws, all: true });
+      const apps = new Set(
+        (await c.env.DB.prepare("SELECT id FROM oauth_apps").all<{ id: string }>()).results.map((x) => x.id),
+      );
+      return {
+        connections: r.results.map((x) => ({
+          ...x,
+          accounts: accounts.filter((a) => a.connection?.id === x.id).map((a) => a.id),
+        })),
+        // what can be connected from here: the authorization flows; `ready` once the instance's OAuth app is added
+        providers: connectSpecs()
+          .filter((k) => k.kind === "oauth2" && k.app && k.authorizeUrl)
+          .map((k) => ({ provider: k.provider, label: k.label, platform: k.platform, ready: apps.has(k.app ?? "") })),
+      };
+    }),
+  );
+  app.post(
+    "/app-api/connect/:provider/start",
+    wrap(async (c) => {
+      connector(c);
+      const b = await body(c);
+      try {
+        const flow = await startConnect(c.env, c.req.param("provider") ?? "", {
+          userId: userOf(c),
+          workspaceId: me(c).workspaceId,
+          back: "app",
+          reconnect: typeof b.reconnect === "string" ? b.reconnect : null,
+          nowS: nowS(),
+        });
+        // only this browser can finish the flow at the dashboard's callback (core/connections.ts authorizeUrl)
+        c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
+        return { url: flow.url };
+      } catch (e) {
+        if (e instanceof ConnectError) throw new ops.ApiError(400, e.message);
+        throw e;
+      }
+    }),
+  );
   // The stores the app can upload to (the default first): the upload page offers a choice when there are several.
   app.get("/app-api/uploads/enabled", async (c) => {
     const stores = await mediaStores(c.env, fetcher);
@@ -418,7 +577,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     "/app-api/item/texts",
     owned(async (c) => {
       const b = await body(c);
-      return editTexts(c.env, String(b.key ?? ""), b, nowS(), me(c).workspaceId);
+      return editTexts(c.env, String(b.key ?? ""), b, nowS(), me(c).workspaceId, userOf(c));
     }),
   );
 
@@ -516,7 +675,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         { error: "it changed since you opened it: check the new version, then approve", changed: true },
         409,
       );
-    return c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "approve", snap, nowS(), me(c).userId ?? "owner"));
+    return c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "approve", snap, nowS(), userOf(c)));
   });
 
   app.post("/app-api/approve/verify", async (c) => {
@@ -530,7 +689,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       "approve",
       b.response as { id?: string },
       nowS(),
-      me(c).userId ?? "owner",
+      userOf(c),
     );
     if (!v) return c.json({ error: "passkey check failed" }, 401);
     const shown = v.data as Snapshot;
@@ -544,12 +703,12 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         { error: "it changed since you opened it: check the new version, then approve", changed: true },
         409,
       );
-    await writeApproval(c.env, fetcher, r, now, new Date(), me(c).userId ?? "owner", "owner@app");
+    await writeApproval(c.env, fetcher, r, now, new Date(), userOf(c), "owner@app");
     await audit(c, "approve", shown.key, { due_at: shown.dueAt, media: shown.media.length });
     return c.json({ approved: true, key: shown.key, due: r.due });
   });
 
-  // Pause and resume (resume is owner-only: no API key can do it).
+  // Pause and resume the session's workspace (resume needs a passkey: no API key can do it).
   app.post(
     "/app-api/pause",
     wrap(async (c) => ops.pause(opctx(c), String((await body(c)).reason ?? "paused from the app"))),
@@ -557,16 +716,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // Resuming can release approved items at once, so it needs a fresh passkey assertion, like approving. The challenge
   // reuses the "approve" purpose, tagged { action: "resume" }; each verify route rejects the other's challenges.
   app.post("/app-api/resume/options", async (c) =>
-    c.json(
-      await authenticationOptions(
-        c.env.DB,
-        c.env.RP_ID,
-        "approve",
-        { action: "resume" },
-        nowS(),
-        me(c).userId ?? "owner",
-      ),
-    ),
+    c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "approve", { action: "resume" }, nowS(), userOf(c))),
   );
   app.post("/app-api/resume/verify", async (c) => {
     const b = await body(c);
@@ -579,7 +729,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       "approve",
       b.response as { id?: string },
       nowS(),
-      me(c).userId ?? "owner",
+      userOf(c),
     );
     if (!v || (v.data as { action?: string } | null)?.action !== "resume")
       return c.json({ error: "passkey check failed" }, 401);
@@ -607,7 +757,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         "approve",
         { action: "release", video, at },
         nowS(),
-        me(c).userId ?? "owner",
+        userOf(c),
       );
     }),
   );
@@ -622,7 +772,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       "approve",
       b.response as { id?: string },
       nowS(),
-      me(c).userId ?? "owner",
+      userOf(c),
     );
     const bound = v?.data as { action?: string; video?: string; at?: number } | null | undefined;
     if (!v || bound?.action !== "release" || !bound.video || typeof bound.at !== "number")
@@ -636,7 +786,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
           at,
           nowS: nowS(),
           tz: await zone(c),
-          actor: { kind: "owner", userId: me(c).userId ?? null },
+          actor: { kind: "owner", userId: userOf(c) },
         }),
       );
     } catch (e) {
@@ -779,11 +929,11 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     wrap(async (c) => {
       const tz = (await body(c)).timezone;
       try {
-        await setUserZone(c.env.DB, me(c).userId ?? "owner", tz ? String(tz) : null);
+        await setUserZone(c.env.DB, userOf(c), tz ? String(tz) : null);
       } catch (e) {
         throw new ops.ApiError(400, (e as Error).message);
       }
-      await audit(c, "user_timezone", me(c).userId ?? "owner", { timezone: tz ?? null });
+      await audit(c, "user_timezone", userOf(c), { timezone: tz ?? null });
       return { timezone: await zone(c), workspaceTimezone: await workspaceZone(c.env.DB, me(c).workspaceId) };
     }),
   );

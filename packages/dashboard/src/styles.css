@@ -126,6 +126,16 @@ main[tabindex="-1"]:focus {
   text-decoration: none;
   font-size: 15px;
 }
+/* a heading over a group of links (Instance: what's instance-wide) */
+.nav .nav-group {
+  margin: 16px 0 4px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
 .nav a:hover {
   background: color-mix(in srgb, var(--line) 50%, transparent);
 }
@@ -979,7 +989,8 @@ button.link.inline {
     width: 44px;
     min-height: 44px;
   }
-  .check input[type="checkbox"] {
+  .check input[type="checkbox"],
+  .check input[type="radio"] {
     width: 22px;
     height: 22px;
   }

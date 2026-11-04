@@ -10,8 +10,9 @@ and what stays with you.
   [Composio](instagram-composio.md), the one optional third party and your choice. Then the Instagram connection and
   its tokens live in your Composio account, and the publishing calls go through Composio's service.
 - **YouTube:** Bongsu uses the YouTube Data API, to comment on your Shorts and reply to comments. It doesn't upload
-  videos. It also reads a video's privacy and release date and can move the release date (owner-only, or an opted-in
-  key); that costs 51 quota units.
+  videos. It also reads a video's privacy and release date and can move the release date (a workspace's admins,
+  editors and creators in the app, with their passkey, or an agent key only with the `reschedule` scope); that costs
+  51 quota units.
 - **Your own apps and tokens:** you register the Meta and Google apps and generate the tokens yourself
   ([Instagram](instagram-graph.md), [YouTube](youtube.md)). Nothing goes through a shared account. With the direct
   Instagram route, the tokens stay in your own instance.

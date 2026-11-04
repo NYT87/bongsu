@@ -66,8 +66,9 @@ so the rehearsal shows that the copy migrates and serves, not a sign-in. Remove 
 
 Update when nothing is due for a few hours: look at **Queue** or **Calendar** in the app, or `bongsu queue --days 1`
 ([The command line](cli.md)). To be sure nothing goes out mid-update, use **Settings → Publishing → Pause
-everything** first and **Resume with passkey** after checking: items that came due in between go out on resume, if
-they are less than 6 hours late ([Pausing everything](the-app.md#pausing-everything-and-resuming)).
+this workspace** first, in each workspace (a pause holds only its own), and **Resume with passkey** after checking:
+items that came due in between go out on resume, if they are less than 6 hours late
+([Pausing a workspace](the-app.md#pausing-a-workspace-and-resuming)).
 
 ### 5. Update and check
 
