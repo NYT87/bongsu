@@ -2426,7 +2426,7 @@ export function GetStarted({ go }: Props) {
     e.preventDefault();
     setErr(null);
     try {
-      await api("settings", { name, timezone: tz, digestHour: hour });
+      await api("settings", { timezone: tz, digestHour: hour });
       toast({ ok: true, text: `Time zone set: ${tz}.` });
       reload();
     } catch (e) {

@@ -3,7 +3,7 @@
 // Settings. An archived workspace stops completely: nothing publishes, its agent keys and its members are refused,
 // and restoring it brings it back as it was.
 import { env, exports } from "cloudflare:workers";
-import { adminRoutes } from "@bongsu/api/dashboard/routes";
+import { adminRoutes, FRESH_S } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
@@ -45,10 +45,15 @@ async function req(routes: "dashboard" | "pwa", cookie: string, path: string, bo
   );
   return { status: r.status, json: (await r.json().catch(() => ({}))) as Record<string, unknown> };
 }
-/** A dashboard session of `userId` (working in `workspaceId` when given), and its token. */
-const dash = async (userId: string, workspaceId?: string) => {
+/** A dashboard session of `userId` (working in `workspaceId` when given). `stale`: its last passkey check is older
+ *  than FRESH_S. */
+const dash = async (userId: string, workspaceId?: string, o: { stale?: boolean } = {}) => {
   const token = await createSession(env.DB, nowS(), { app: "dashboard", userId });
   if (workspaceId) await setSessionWorkspace(env.DB, token, workspaceId);
+  if (o.stale)
+    await env.DB.prepare("UPDATE sessions SET verified_at = ?1 WHERE token_hash = ?2")
+      .bind(nowS() - FRESH_S - 1, await sha256Hex(token))
+      .run();
   return (path: string, body?: unknown) => req("dashboard", `bongsu_admin=${token}`, path, body);
 };
 const app = async (userId: string) => {
@@ -283,6 +288,45 @@ describe("the Workspaces page", () => {
       "SELECT workspace_id, detail FROM audit WHERE action = 'settings' ORDER BY id",
     ).all();
     expect(audit.results[0]).toEqual({ workspace_id: "b", detail: expect.stringContaining('"name":"Shop"') });
+  });
+
+  it("archiving, restoring, adding an admin and changing instance admins ask for a fresh passkey", async () => {
+    const ina = await dash("ina", undefined, { stale: true });
+    const archivedAt = () => env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = 'b'").first("archived_at");
+    expect(await ina("/admin-api/workspaces/b/archive", {})).toMatchObject({ status: 403, json: { verify: true } });
+    expect(await archivedAt()).toBeNull();
+    await env.DB.prepare("UPDATE workspaces SET archived_at = 1 WHERE id = 'b'").run();
+    expect(await ina("/admin-api/workspaces/b/restore", {})).toMatchObject({ status: 403, json: { verify: true } });
+    expect(await archivedAt()).toBe(1);
+    await env.DB.prepare("UPDATE workspaces SET archived_at = NULL WHERE id = 'b'").run();
+    expect(await ina("/admin-api/workspaces/b/admins", { email: "dee@example.com" })).toMatchObject({
+      status: 403,
+      json: { verify: true },
+    });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM invites").first("n")).toBe(0);
+    expect(await ina("/admin-api/instance-admins", { userId: "bob", on: true })).toMatchObject({
+      status: 403,
+      json: { verify: true },
+    });
+    expect(await env.DB.prepare("SELECT instance_admin FROM users WHERE id = 'bob'").first("instance_admin")).toBe(0);
+    // renaming is a setting, not a change to who can do what: no fresh check
+    expect((await ina("/admin-api/workspaces/b", { name: "Shop" })).status).toBe(200);
+    const bob = await dash("bob", undefined, { stale: true });
+    expect((await bob("/admin-api/settings", { name: "Shop 2" })).status).toBe(200);
+  });
+
+  it("Get started's time zone step (time zone and digest hour, no name) keeps the workspace's name", async () => {
+    const bob = await dash("bob");
+    // the body the Get started page sends
+    expect((await bob("/admin-api/settings", { timezone: "Europe/Paris", digestHour: 9 })).json).toEqual({
+      saved: true,
+    });
+    expect(await nameOf("b")).toBe("Workspace B");
+    expect((await bob("/admin-api/settings")).json).toMatchObject({
+      name: "Workspace B",
+      timezone: "Europe/Paris",
+      digestHour: 9,
+    });
   });
 
   it("makes and unmakes instance admins, never the last one", async () => {

@@ -1228,6 +1228,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     if (!name) throw new AdminError(400, `name the workspace (at most ${NAME_MAX} characters)`);
     return name;
   };
+  // Renaming, like the Settings page's name: a setting, so no fresh passkey check.
   app.post(
     "/admin-api/workspaces/:id",
     wrap(async (c) => {
@@ -1529,7 +1530,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (tz !== undefined && !isTimeZone(tz)) throw new AdminError(400, "unknown time zone");
       if (hour !== undefined && !(Number.isInteger(hour) && hour >= 0 && hour <= 23))
         throw new AdminError(400, "digest hour: 0 to 23");
-      // the workspace's admins rename it here (the instance admins on the Workspaces page too); it keeps a name
+      // the workspace's admins rename it here (the instance admins on the Workspaces page too); it keeps a name. No
+      // fresh passkey check: a name is a setting saved beside the time zone, not a change to who can do what
       const name = b.name === undefined ? undefined : nameOf(b.name);
       await setWorkspaceSettings(c.env.DB, ws(c), { timezone: tz, digestHour: hour }, nowS());
       if (name !== undefined) await renameWorkspace(c.env.DB, ws(c), name);
