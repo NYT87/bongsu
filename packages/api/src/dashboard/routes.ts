@@ -82,9 +82,12 @@ type C = Context<{
  *  reading included, since the instance's settings aren't a workspace's. */
 const INSTANCE = /^\/admin-api\/(workspaces|media-stores|oauth-apps|instance-admins)/;
 /** Changes to a workspace's members, invites, agent keys, accounts, connections and settings: its admins' (and the
- *  instance admins'). Reading, and the person's own passkeys, devices and CLI tokens, are every member's. Moving a
- *  release date (videos) is editing the plan: an editor's too. */
+ *  instance admins'). The person's own passkeys, devices and CLI tokens are every member's. Moving a release date
+ *  (videos) is editing the plan: an editor's too. */
 const MANAGING = /^\/admin-api\/(members|invites|keys|accounts|connections|settings|connect\/)/;
+/** What an editor doesn't even read: the workspace's members, invites, agent keys, connections and settings. The
+ *  overview, accounts and videos are theirs to read, and their own passkeys, devices and CLI tokens to manage. */
+const NOT_EDITORS = /^\/admin-api\/(members|invites|keys|connections|settings)/;
 
 /** How recent the last passkey check must be for changes to who can do what. */
 export const FRESH_S = 10 * 60;
@@ -441,8 +444,10 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     if (c.get("role") === "creator" && !instanceAdmin)
       return c.json({ error: "creators use the Bongsu app", app: true }, 403);
     if (INSTANCE.test(path) && !instanceAdmin) return c.json({ error: "only an instance admin can do this" }, 403);
-    if (c.req.method !== "GET" && MANAGING.test(path) && c.get("role") !== "admin" && !instanceAdmin)
+    const admin = c.get("role") === "admin" || instanceAdmin;
+    if (!admin && c.req.method !== "GET" && MANAGING.test(path))
       return c.json({ error: "only an admin of the workspace can change this" }, 403);
+    if (!admin && NOT_EDITORS.test(path)) return c.json({ error: "only an admin of the workspace can see this" }, 403);
     await next();
   });
 

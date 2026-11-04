@@ -500,8 +500,10 @@ describe("roles", () => {
       expect((await call("/admin-api/settings/ntfy", { url: "https://ntfy.sh/x" })).status, role).toBe(403);
       expect((await call("/admin-api/settings/ntfy/test", {})).status, role).toBe(403);
     }
-    // reading is an editor's too; a creator is pointed at the app
-    expect((await (await admin("editor"))("/admin-api/keys")).status).toBe(200);
+    // an editor doesn't even read them; a creator is pointed at the app
+    for (const path of ["/admin-api/keys", "/admin-api/connections", "/admin-api/settings"])
+      expect((await (await admin("editor"))(path)).status, path).toBe(403);
+    expect((await (await admin("admin"))("/admin-api/keys")).status).toBe(200);
     const creator = await (await admin("creator"))("/admin-api/keys");
     expect([creator.status, await creator.json()]).toEqual([403, { error: "creators use the Bongsu app", app: true }]);
     // the instance's media stores: not even a workspace admin's, reading included

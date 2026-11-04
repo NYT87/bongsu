@@ -153,7 +153,7 @@ describe("the roles table", () => {
     );
   });
 
-  it("connections, accounts, settings, agent keys: admins and instance admins change them; editors read", async () => {
+  it("connections, accounts, settings, agent keys: admins and instance admins; an editor only reads the accounts", async () => {
     const editor = await asRole("editor");
     expect((await editor("/admin-api/keys", { name: "k", scopes: ["plan"] })).status).toBe(403);
     expect((await editor("/admin-api/settings", { timezone: "Europe/Madrid" })).status).toBe(403);
@@ -161,10 +161,27 @@ describe("the roles table", () => {
     expect((await editor("/admin-api/accounts/demo_travel", { captionRules: { hashtagMax: 3 } })).status).toBe(403);
     expect((await editor("/admin-api/connections/c1/remove", {})).status).toBe(403);
     expect((await editor("/admin-api/connect/instagram/start", {})).status).toBe(403);
-    expect((await editor("/admin-api/keys")).status).toBe(200);
-    expect((await editor("/admin-api/connections")).status).toBe(200);
-    expect((await editor("/admin-api/accounts")).status).toBe(200);
+    // not even read: the workspace's agent keys, connections, settings, members and invites
+    for (const path of [
+      "/admin-api/keys",
+      "/admin-api/connections",
+      "/admin-api/settings",
+      "/admin-api/settings/ntfy",
+      "/admin-api/members",
+      "/admin-api/invites",
+    ]) {
+      const r = await editor(path);
+      expect([r.status, r.json.error], path).toEqual([403, "only an admin of the workspace can see this"]);
+    }
+    // what an editor reads: the overview, the accounts, the videos, and their own passkeys, devices and CLI tokens
+    for (const path of ["/admin-api/overview", "/admin-api/accounts", "/admin-api/videos", "/admin-api/passkeys"])
+      expect((await editor(path)).status, path).toBe(200);
+    const tokens = await editor("/admin-api/tokens");
+    expect([tokens.status, tokens.json.rights]).toEqual([200, ["read", "draft", "plan", "reschedule", "metrics"]]);
+    expect((await editor("/admin-api/tokens", { name: "laptop", days: 30 })).status).toBe(200);
     for (const call of [await asRole("admin"), await asInstanceAdmin("editor")]) {
+      for (const path of ["/admin-api/keys", "/admin-api/connections", "/admin-api/settings"])
+        expect((await call(path)).status, path).toBe(200);
       expect((await call("/admin-api/keys", { name: "k", scopes: ["plan"] })).status).toBe(200);
       expect((await call("/admin-api/settings", { timezone: "Asia/Seoul" })).status).toBe(200);
     }

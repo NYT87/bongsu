@@ -2,7 +2,7 @@
 // page. Paths live under /dashboard/ (the Worker serves index.html for each).
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { APP_ONLY, api } from "./api";
+import { APP_ONLY, api, manages } from "./api";
 import { Guide, GuideLink } from "./docs";
 import {
   Accounts,
@@ -47,6 +47,8 @@ const INSTANCE = [
   ["media", "Media", Media],
   ["apps", "OAuth apps", OAuthApps],
 ] as const;
+/** What an editor doesn't see (the server refuses them too): the workspace's connections and settings. */
+const ADMINS_ONLY: readonly string[] = ["connections", "settings"];
 /** Pages reached from other pages, not the sidebar. */
 const HIDDEN = [["start", "Get started", GetStarted]] as const;
 
@@ -142,7 +144,9 @@ function Shell({
 }) {
   const [open, setOpen] = useState(false);
   const instance = state.instanceAdmin ? INSTANCE : [];
-  const current = [...SECTIONS, ...instance, ...HIDDEN].find(([s]) => s === section) ?? SECTIONS[0];
+  const sections = manages(state) ? SECTIONS : SECTIONS.filter(([s]) => !ADMINS_ONLY.includes(s));
+  const hidden = manages(state) ? HIDDEN : [];
+  const current = [...sections, ...instance, ...hidden].find(([s]) => s === section) ?? SECTIONS[0];
   const link = ([s, label]: (typeof SECTIONS | typeof INSTANCE)[number]) => (
     <a
       key={s}
@@ -169,7 +173,7 @@ function Shell({
           Menu
         </button>
         <nav className="nav" aria-label="Sections">
-          {SECTIONS.map(link)}
+          {sections.map(link)}
           {instance.length > 0 && (
             <>
               <h2 className="nav-group">Instance</h2>

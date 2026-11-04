@@ -2,7 +2,7 @@
 import { startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import type { State } from "./App";
-import { api, when, withFreshCheck } from "./api";
+import { api, manages, when, withFreshCheck } from "./api";
 import { GuideLink } from "./docs";
 import { Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
 
@@ -35,8 +35,10 @@ interface Setup {
 const setupDone = (s: Setup) => Object.values(s).filter(Boolean).length;
 const SETUP_STEPS = 5;
 
-export function Overview({ go }: Props) {
+export function Overview({ state, go }: Props) {
   const { data, error, reload } = useLoad<Overview>("overview");
+  // an editor sees the numbers; setting up and the connections are the admins' (an editor can't open those pages)
+  const admin = manages(state);
   const conns = data ? Object.values(data.connections).reduce((a, b) => a + b, 0) : 0;
   const broken = (data?.connections.broken ?? 0) + (data?.connections.expiring ?? 0);
   return (
@@ -45,7 +47,7 @@ export function Overview({ go }: Props) {
         <Loading error={error} retry={reload} />
       ) : (
         <div className="overview">
-          {setupDone(data.setup) < SETUP_STEPS && (
+          {admin && setupDone(data.setup) < SETUP_STEPS && (
             <div className="banner setup" role="status">
               <span>
                 <strong>Finish setting up:</strong> {setupDone(data.setup)} of {SETUP_STEPS} done.
@@ -61,21 +63,21 @@ export function Overview({ go }: Props) {
               label="Connections"
               value={conns}
               note={broken ? `${broken} need attention` : undefined}
-              onClick={() => go("connections")}
+              onClick={admin ? () => go("connections") : undefined}
             />
             <Stat label="Waiting for approval" value={data.waitingApproval} note="Approve in the Bongsu app" />
             <Stat label="Agent keys" value={data.keys} onClick={() => go("keys")} />
           </div>
           <Card title="Needs you">
             <ul className="todo">
-              {conns === 0 && (
+              {admin && conns === 0 && (
                 <Todo
                   text="Connect an account to publish to."
                   action="Connect an account"
                   onClick={() => go("connections")}
                 />
               )}
-              {broken > 0 && (
+              {admin && broken > 0 && (
                 <Todo
                   text={`${broken} connection(s) are expiring or broken.`}
                   action="Reconnect"
@@ -101,7 +103,7 @@ export function Overview({ go }: Props) {
                 />
               )}
               {/* Dry run isn't repeated here: the banner above every page says it. */}
-              {conns > 0 && !broken && data.passkeys >= 2 && data.recoveryCodesLeft >= 3 && (
+              {(!admin || (conns > 0 && !broken)) && data.passkeys >= 2 && data.recoveryCodesLeft >= 3 && (
                 <li className="muted">Nothing: all good.</li>
               )}
             </ul>
@@ -1719,7 +1721,18 @@ const SCOPE_HELP: Record<string, string> = {
   resume: "resume publishing",
 };
 
-export function Keys(_: Props) {
+export function Keys({ state }: Props) {
+  // an editor has only their own CLI tokens here; the workspace's agent keys are its admins'
+  if (!manages(state))
+    return (
+      <Page title="Keys & tokens" intro="Your CLI tokens act as you, with your role's rights.">
+        <CliTokens />
+      </Page>
+    );
+  return <AgentKeys />;
+}
+
+function AgentKeys() {
   const toast = useToast();
   const { data, error, reload } = useLoad<{ scopes: string[]; keys: Key[] }>("keys");
   const [creating, setCreating] = useState(false);

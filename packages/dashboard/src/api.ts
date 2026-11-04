@@ -2,6 +2,7 @@
 // run verifyPasskey() and retry (withFreshCheck does both). A 403 with `app: true` means a creator, who uses the app:
 // it's announced with the APP_ONLY event, and App shows the pointer to the app.
 import { startAuthentication } from "@simplewebauthn/browser";
+import type { State } from "./App";
 
 export class ApiError extends Error {
   constructor(
@@ -14,6 +15,10 @@ export class ApiError extends Error {
 }
 
 export const APP_ONLY = "bongsu:app-only";
+
+/** Whether this person manages the workspace (its admin, or an instance admin): an editor doesn't see its
+ *  connections, agent keys or settings. */
+export const manages = (state: State) => state.instanceAdmin || state.role === "admin";
 
 export async function api<T = Record<string, unknown>>(path: string, body?: unknown): Promise<T> {
   const r = await fetch(`/admin-api/${path}`, {
