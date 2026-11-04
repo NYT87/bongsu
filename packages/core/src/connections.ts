@@ -24,7 +24,11 @@ export class ConnectError extends Error {
   constructor(
     message: string,
     readonly back?: ConnectBack,
-    /** "browser": the flow's cookie didn't come back. It tells the app to suggest the phone's own browser, nothing else. */
+    /**
+     * "browser": the state is unknown or used, or the flow's cookie is missing or doesn't match. Those are one
+     * condition on purpose: telling them apart would let a caller without the cookie probe whether a state exists.
+     * It only tells the app to suggest the phone's own browser.
+     */
     readonly hint?: "browser",
   ) {
     super(message);

@@ -299,7 +299,7 @@ describe("a flow finishes only in the browser that started it", () => {
     // (the redirect is as scheme-less as the setting, so read its query rather than parse it as a URL)
     const q = new URLSearchParams((r.location ?? "").split("?")[1]);
     expect(q.get("error")).toBeTruthy();
-    expect(q.get("hint")).toBeNull(); // the other refusals don't carry the browser hint
+    expect(q.get("hint")).toBeNull(); // refusals past the browser check (expired, wrong provider…) don't carry the browser hint; the check itself merges unknown, used, no-cookie and mismatched-cookie
   });
 
   it("refuses a flow started before the browser was kept (no browser_hash)", async () => {
