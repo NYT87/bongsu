@@ -74,6 +74,28 @@ describe("the account sampler", () => {
     await run(at(6));
     expect(asked()).toBe(2);
   });
+
+  it("leaves an archived workspace's accounts alone, not a paused one's", async () => {
+    w.ytSubscribers = 1230;
+    const archive = (at: number | null) =>
+      env.DB.prepare("UPDATE workspaces SET archived_at = ?1 WHERE id = 'default'").bind(at).run();
+    try {
+      await archive(s(T0));
+      expect((await run(T0)).sampled).toEqual([]);
+      expect(w.calls).toEqual([]);
+      // paused stops publishing only: the series go on
+      await archive(null);
+      await env.DB.prepare(
+        "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at, paused) VALUES ('default', 'UTC', 8, 'en', 0, ?1) ON CONFLICT (workspace_id) DO UPDATE SET paused = ?1",
+      )
+        .bind(JSON.stringify({ reason: "test", by: "owner", at: s(T0) }))
+        .run();
+      expect((await run(at(0.25))).sampled).toHaveLength(ACCOUNTS_PER_RUN);
+    } finally {
+      await archive(null);
+      await env.DB.prepare("UPDATE workspace_settings SET paused = NULL WHERE workspace_id = 'default'").run();
+    }
+  });
 });
 
 describe("the backfill from the snapshots", () => {

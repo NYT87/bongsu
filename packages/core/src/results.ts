@@ -5,7 +5,7 @@
 // A Trial Reel copy (trial_posts) gets its own row, 'trial:<key>', compared with its regular Reel instead
 // (it reaches a different audience, so it stays out of the account's median).
 
-import { instagramAccounts } from "./accounts";
+import { workingAccounts } from "./accounts";
 import type { Env } from "./env";
 import { insightsOf, nearest24h, recordSample, type Sample, sampleOf } from "./metrics";
 import { notifier } from "./notify";
@@ -96,7 +96,8 @@ const nice = (name: string) =>
 
 export async function postResults(env: Env, deps: { fetch: typeof fetch; now: Date }): Promise<{ fetched: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
-  const accounts = new Map((await instagramAccounts(env.DB)).map((a) => [a.id, a]));
+  // not an archived workspace's: it stops completely
+  const accounts = new Map((await workingAccounts(env.DB, "instagram")).map((a) => [a.id, a]));
   const due = await env.DB.prepare(
     `SELECT x.item_key, x.account, x.media_id, x.published, p.title, p.name
        FROM (SELECT item_key, item_key AS plan_key, account, media_id, COALESCE(published_at, at) AS published FROM posted

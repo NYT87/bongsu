@@ -115,7 +115,13 @@ export interface AccountFilter {
   platform?: PlatformId;
   /** Disabled accounts too (default: active only). */
   all?: boolean;
+  /** Only accounts of workspaces that aren't archived: what the scheduler's own runs (comments, metrics) still reach
+   *  out for. An archived workspace stops completely; a paused one only stops publishing. */
+  working?: boolean;
 }
+
+/** The ids of the archived workspaces, as a subquery. */
+export const ARCHIVED = "SELECT id FROM workspaces WHERE archived_at IS NOT NULL";
 
 export async function listAccounts(db: Db, f: AccountFilter = {}): Promise<Account[]> {
   const where: string[] = [];
@@ -127,6 +133,7 @@ export async function listAccounts(db: Db, f: AccountFilter = {}): Promise<Accou
   if (f.workspaceId) add("a.workspace_id = ?", f.workspaceId);
   if (f.platform) add("a.platform = ?", f.platform);
   if (!f.all) where.push("a.status = 'active'");
+  if (f.working) where.push(`a.workspace_id NOT IN (${ARCHIVED})`);
   const sql = `${SELECT}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY a.platform, a.sort, a.id`;
   const r = await db
     .prepare(sql)
@@ -149,6 +156,8 @@ export async function findAccount(
 export const instagramAccounts = (db: Db, workspaceId?: string) =>
   listAccounts(db, { workspaceId, platform: "instagram" });
 export const youtubeAccounts = (db: Db, workspaceId?: string) => listAccounts(db, { workspaceId, platform: "youtube" });
+/** Every workspace's active accounts on a platform, but the archived workspaces': the scheduler's sampling runs. */
+export const workingAccounts = (db: Db, platform: PlatformId) => listAccounts(db, { platform, working: true });
 
 /** Trial Reels are possible here (Instagram requires a follower minimum). */
 export const trialCapable = (a: Account) => a.capabilities.trialReels === true;
