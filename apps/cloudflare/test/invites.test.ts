@@ -11,6 +11,7 @@ import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
+import { setPref } from "@bongsu/core/notify-prefs";
 import { beforeEach, describe, expect, it } from "vitest";
 import { testEnv, World } from "./world";
 
@@ -80,6 +81,7 @@ beforeEach(async () => {
       "DELETE FROM sessions",
       "DELETE FROM api_keys",
       "DELETE FROM push_subs",
+      "DELETE FROM notify_prefs",
       "DELETE FROM challenges",
       "DELETE FROM recovery_codes",
       "DELETE FROM passkeys WHERE user_id <> 'owner'",
@@ -440,12 +442,10 @@ describe("members", () => {
       )
         .bind(id, await sha256Hex(t), ws, nowS() + 86400)
         .run();
-    for (const ws of ["default", "b"])
-      await env.DB.prepare(
-        "INSERT INTO push_subs (endpoint, p256dh, auth, created_at, user_id, workspace_id) VALUES (?1, 'p', 'a', 0, 'eda', ?2)",
-      )
-        .bind(`https://fcm.googleapis.com/fcm/send/eda-${ws}`, ws)
-        .run();
+    await env.DB.prepare(
+      "INSERT INTO push_subs (endpoint, p256dh, auth, created_at, user_id) VALUES ('https://fcm.googleapis.com/fcm/send/eda', 'p', 'a', 0, 'eda')",
+    ).run();
+    for (const ws of ["default", "b"]) await setPref(env.DB, ws, "eda", "editor", "digest", false, 0);
     expect((await authenticate(env.DB, `Bearer ${cli}`, nowS()))?.workspaceId).toBe("default");
 
     const ada = await dash("ada");
@@ -464,10 +464,11 @@ describe("members", () => {
     ).toBeGreaterThan(0);
     expect(await env.DB.prepare("SELECT revoked_at FROM api_keys WHERE id = 't_edaB'").first("revoked_at")).toBeNull();
     expect((await authenticate(env.DB, `Bearer ${cliB}`, nowS()))?.workspaceId).toBe("b");
-    // their push device there gets nothing any more
-    expect((await env.DB.prepare("SELECT workspace_id FROM push_subs WHERE user_id = 'eda'").all()).results).toEqual([
-      { workspace_id: "b" },
-    ]);
+    // their notification settings there go; their device stays theirs (push.ts sends a workspace's notes to members only)
+    expect((await env.DB.prepare("SELECT workspace_id FROM notify_prefs WHERE user_id = 'eda'").all()).results).toEqual(
+      [{ workspace_id: "b" }],
+    );
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM push_subs WHERE user_id = 'eda'").first("n")).toBe(1);
 
     // invited back later, their token list there shows it revoked (and it stays so)
     await env.DB.prepare(

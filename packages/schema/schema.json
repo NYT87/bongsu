@@ -1133,11 +1133,6 @@
         "last_ok_at": {
           "type": "timestamp"
         },
-        "workspace_id": {
-          "type": "text",
-          "notNull": true,
-          "default": "default"
-        },
         "user_id": {
           "type": "text",
           "notNull": true,

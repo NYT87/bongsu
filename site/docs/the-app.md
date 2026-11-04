@@ -198,7 +198,7 @@ editors may not.
 **Settings → Notifications**: **Turn on for this device**, then **Send a test** to check it. They cover published,
 refused and failed items on that device. If the browser had been told to block them, the app shows the steps to allow
 them again. Each push carries up to two buttons, such as **Open in app**; the optional ntfy topic gets the same buttons.
-A device gets the notifications of the workspace it was turned on in, for as long as you're a member of it; **Send a
+A device gets the notifications of every workspace you're a member of, and they open in their workspace; **Send a
 test** goes to your own devices only. A workspace can also post its notifications to an ntfy topic, set in the
 dashboard's **Settings** ([The dashboard](the-dashboard.md#settings)): only that workspace's go there.
 Approving always happens in the app.

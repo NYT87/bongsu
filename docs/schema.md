@@ -479,7 +479,6 @@ Web Push subscriptions: the devices notifications go to.
 | `device` | text | yes |  |  |
 | `created_at` | timestamp | no | now |  |
 | `last_ok_at` | timestamp | yes |  |  |
-| `workspace_id` | text | no | "default" |  |
 | `user_id` | text | no | "owner" |  |
 
 ## `rate_limits`

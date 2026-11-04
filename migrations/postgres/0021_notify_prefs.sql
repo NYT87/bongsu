@@ -9,3 +9,4 @@ CREATE TABLE "notify_prefs" (
   "updated_at" BIGINT NOT NULL,
   PRIMARY KEY ("workspace_id", "user_id", "grp")
 );
+ALTER TABLE push_subs DROP COLUMN workspace_id;

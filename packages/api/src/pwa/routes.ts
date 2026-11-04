@@ -977,37 +977,30 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
 
-  // Web Push subscriptions for this device: they belong to the signed-in user, in their workspace (core/push.ts), and
-  // only a browser push service's endpoint is taken (Bongsu sends requests to it).
+  // Web Push subscriptions for this device: they belong to the signed-in user, in no particular workspace (each
+  // workspace's notes reach the members it should, core/push.ts), and only a browser push service's endpoint is taken
+  // (Bongsu sends requests to it).
   app.post("/app-api/push/subscribe", async (c) => {
     const b = (await body(c)) as { endpoint?: string; keys?: { p256dh?: string; auth?: string }; device?: string };
     const key = (v: unknown) => typeof v === "string" && /^[A-Za-z0-9_=-]{8,200}$/.test(v);
     if (typeof b.endpoint !== "string" || b.endpoint.length > 1000 || !isPushEndpoint(b.endpoint))
       return c.json({ error: "not a browser push service's address" }, 400);
     if (!key(b.keys?.p256dh) || !key(b.keys?.auth)) return c.json({ error: "bad subscription" }, 400);
-    const { userId, workspaceId } = me(c);
+    const { userId } = me(c);
     if (!userId) return c.json({ error: "sign in" }, 401);
-    // the same device signed in as someone else (or in another workspace) moves to them
+    // the same device signed in as someone else moves to them
     await c.env.DB.prepare(
-      `INSERT INTO push_subs (endpoint, p256dh, auth, device, created_at, user_id, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+      `INSERT INTO push_subs (endpoint, p256dh, auth, device, created_at, user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
        ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, device = excluded.device,
-         user_id = excluded.user_id, workspace_id = excluded.workspace_id`,
+         user_id = excluded.user_id`,
     )
-      .bind(
-        b.endpoint,
-        b.keys!.p256dh,
-        b.keys!.auth,
-        String(b.device ?? "").slice(0, 80) || null,
-        nowS(),
-        userId,
-        workspaceId,
-      )
+      .bind(b.endpoint, b.keys!.p256dh, b.keys!.auth, String(b.device ?? "").slice(0, 80) || null, nowS(), userId)
       .run();
     return c.json({ subscribed: true });
   });
-  // A test to the caller's own devices only.
+  // A test to the caller's own devices only, whatever their notification settings.
   app.post("/app-api/push/test", async (c) => {
-    const { userId, workspaceId } = me(c);
+    const { userId } = me(c);
     if (!userId) return c.json({ error: "sign in" }, 401);
     return c.json(
       await sendPush(
@@ -1015,7 +1008,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         fetcher,
         { title: "Bongsu", body: "Push notifications work on this device.", url: "/#/settings" },
         nowS(),
-        { workspaceId, userId },
+        { userId },
       ),
     );
   });

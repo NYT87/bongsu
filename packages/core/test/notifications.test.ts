@@ -1,7 +1,7 @@
 // Every notification's wording lives in texts/notifications.ts: these pin each builder's title, text, target and
 // buttons to what the scheduler has always sent, so a wording change is a deliberate one.
 import { describe, expect, it } from "vitest";
-import { actionsFor } from "../src/notify";
+import { actionsFor, withWorkspace } from "../src/notify";
 import { isNoteGroup } from "../src/notify-prefs";
 import * as N from "../src/texts/notifications";
 
@@ -168,6 +168,13 @@ describe("where a notification opens", () => {
       { label: "Open post", url: URL },
       { label: "Open app", url: "/#/" },
     ]);
+  });
+
+  it("an app link opens its workspace (w); a link to another site is left as it is", () => {
+    expect(withWorkspace("/#/item/reel%3Aa%2Fb", "w2")).toBe("/?w=w2#/item/reel%3Aa%2Fb");
+    expect(withWorkspace("/#/", "default")).toBe("/?w=default#/");
+    const studio = "https://studio.youtube.com/video/x/comments";
+    expect(withWorkspace(studio, "w")).toBe(studio);
   });
 });
 
