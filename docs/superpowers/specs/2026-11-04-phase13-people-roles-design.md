@@ -63,8 +63,10 @@ A new instance has no workspace and no member, only the setup token.
 - **Workspace roles** are `admin`, `editor`, `creator` (`memberships.role`). The migration turns `owner` into `admin`,
   `approver` into `creator` and `viewer` into `editor`; nothing is deployed, so no person is affected.
 - `ROLE_SCOPES` (what a signed-in person's CLI token and app session carry): admin and creator `read, draft, plan,
-  pause, reschedule, metrics, approve, resume`; editor `read, draft, plan, reschedule, metrics`. `approve` and
-  `resume` still need the passkey in the app; no token ever approves.
+  pause, reschedule, metrics, approve, resume`; editor `read, draft, plan, reschedule, metrics`. In the app,
+  `approve` and `resume` need the person's passkey; a person's CLI token approves exactly what it was shown
+  (`bongsu approve`, Phase 6) with the rights of that person's role (an instance admin's in whichever workspace they
+  made it). No agent key ever approves or resumes.
 - **Agent keys** (API, MCP) don't change: one workspace each, content only, never approve. No user or role endpoints
   on `/v1` or `/mcp`.
 - The dashboard's guard becomes three: instance routes (Workspaces, Media, OAuth apps) need `instance_admin`;

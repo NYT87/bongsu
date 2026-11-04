@@ -38,15 +38,21 @@ A person has a role in each workspace they belong to, and the instance has admin
 | Dashboard | yes | yes | yes | no, they use the app |
 
 What a signed-in person's app session and CLI token carry comes from the role (`agent/auth.ts` `ROLE_SCOPES`):
-approving and resuming need `approve` / `resume`, changing the plan `plan`. Approving and resuming still ask for the
-person's own passkey, and no token ever approves. Agent keys sit outside this table: one workspace each, content only.
+approving and resuming need `approve` / `resume`, changing the plan `plan`. In the app, approving and resuming ask for
+the person's own passkey. A person's CLI token approves exactly what it was shown (`bongsu approve`, [the CLI](cli.md))
+with the rights of that person's role: an admin's or a creator's, in the token's workspace, or an instance admin's, in
+whichever workspace they made it. No agent key ever approves or resumes: agent keys sit outside this table, one
+workspace each, content only.
 
 The instance admin is a flag on a user, not a membership. The first person has it; an instance admin can give it to
-another user or take it away, never from the last one. A workspace's admins invite people with a one-time link (7
+another member or take it away (**Make instance admin** on the dashboard's Members page, with their passkey), never
+from the last one. A workspace's admins invite people with a one-time link (7
 days; only its hash is kept), change roles and remove members; a removed member's sessions, CLI tokens and devices in
 that workspace go at once, and a workspace always keeps one admin. Accepting an invite never says whether its email
 already has an account. Archiving a workspace (instance admins) stops it completely: nothing publishes, its keys and
-members are refused, and its data stays.
+members are refused, its comments and metrics are no longer read, and its data stays. A workspace's audit log shows
+only its own rows; the instance's (new workspaces, media stores, OAuth apps, instance admins) only its instance admins
+read.
 
 ## Agents
 

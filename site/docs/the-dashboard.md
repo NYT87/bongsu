@@ -28,7 +28,9 @@ A new instance has no workspace and no one in it. The first visit to `/dashboard
 and email and a passkey; that makes you the instance admin, who belongs to no workspace yet. The dashboard then asks
 you to **Create your first workspace**: a name, its time zone and its first admin, you preselected or someone else by
 email (they get an invite link). Once you're its admin it opens on **Get started**; otherwise it waits on the
-**Workspaces** page.
+**Workspaces** page. An instance admin who is a member of no workspace (the instance's workspaces are clients',
+say) signs in to the Instance pages, Devices & passkeys and the instance's Audit, and opens a workspace from
+**Workspaces**.
 
 ## Overview and Get started
 
@@ -38,7 +40,9 @@ two passkeys, fewer than three recovery codes left.
 
 Until setup is done, a banner reads "Finish setting up: 2 of 5 done." and **Continue** opens **Get started**. Its five
 steps can each be done later from their own page: your time zone and daily digest hour, your OAuth apps, where your
-media live, an account to connect, and the device you approve on. A last card, **Then: dry run, and going live**, points to Settings.
+media live, an account to connect, and the device you approve on. The OAuth apps and the media stores are the
+instance's: a workspace admin who isn't an instance admin sees those two steps without a button, for the instance admin
+to do. A last card, **Then: dry run, and going live**, points to Settings.
 
 ## Connections
 
@@ -150,11 +154,15 @@ are listed with **Revoke**.
 
 Each member's role can be changed in place, and **Remove** takes them out of the workspace at once: signed out of
 it, their CLI tokens for it revoked, their devices no longer notified there. A workspace always keeps one admin: make
-someone else admin before the last one steps down. Each of these changes asks for your passkey.
+someone else admin before the last one steps down. An admin who's removed or no longer an admin loses the invites they
+sent. Each of these changes asks for your passkey. An instance admin also sees **Make instance admin** (or **Remove
+instance admin**) by each member; the instance always keeps one.
 
 ## Audit
 
-Every change to the instance, newest first: when, who, what and the detail. **Load older** shows the next 50.
+Every change to the workspace, newest first: when, who, what and the detail. **Load older** shows the next 50. An
+instance admin can switch to **The instance**: new workspaces, media stores, OAuth apps, instance admins and sign-ins
+outside any workspace.
 
 ## Workspaces
 
@@ -165,7 +173,7 @@ link). **Open** works in that workspace, as its admin, until you open another. *
 admins can also rename it in **Settings**), and **Add an admin** makes an invite link for a new admin.
 
 **Archive** stops a workspace completely: nothing in it publishes, its agent keys and CLI tokens stop working, its
-members can't open it and it gets no daily digest. Its plan, texts, accounts and people stay, and **Restore** brings it
+members can't open it, it gets no daily digest and its comments and metrics are no longer read. Its plan, texts, accounts and people stay, and **Restore** brings it
 back as it was (posts that came due meanwhile go out only within the catch-up window). Archiving, restoring and adding
 an admin ask for your passkey again.
 

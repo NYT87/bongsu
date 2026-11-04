@@ -21,11 +21,15 @@ People, roles, invites and workspaces (Phase 13, part 1).
   workspace (dashboard, Media), else it waits; a broken store is told to the instance admins.
 - **Members and invites.** A workspace's admins invite people by email with a role: a one-time link for 7 days, always
   shown to copy and emailed when a mailer is set. Admins and editors join in the dashboard, creators in the app, with
-  a new passkey or the one they have. Admins change roles and remove members (cut off at once); a workspace always
-  keeps one admin.
+  a new passkey or the one they have. Admins change roles and remove members (cut off at once, and the invites they
+  sent as an admin revoked); a workspace always keeps one admin. Instance admins make a member an instance admin, or
+  stop them being one, from Members.
 - **Workspaces page.** Instance admins list, create, rename, archive and restore workspaces, add an admin and open one
-  to work in it. An archived workspace stops completely (nothing publishes, keys and members are refused, no digest).
-  A workspace's own admins rename it in Settings.
+  to work in it. An archived workspace stops completely (nothing publishes, keys and members are refused, no digest,
+  no comments or metrics read). A workspace's own admins rename it in Settings. An instance admin in no workspace
+  lands on the Instance pages.
+- **Audit.** A workspace's log shows only its own rows; instance admins also read the instance's (new workspaces,
+  media stores, OAuth apps, instance admins).
 - **Connect from the app.** Admins and creators connect Instagram and YouTube from the app's Settings with the
   instance's OAuth apps; a connection lands in the workspace the flow started from.
 - **Pause per workspace.** **Pause this workspace** and **Resume with passkey** act on one workspace; the others go on
@@ -35,7 +39,7 @@ Updating an existing instance (migrations 0018 and 0019 run on their own):
 
 - Roles are converted: `owner` becomes `admin`, `approver` becomes `creator` and `viewer` becomes `editor`. People who
   were owners also become instance admins, so they keep Media, OAuth apps and the new Workspaces page; make anyone
-  else an instance admin on the Workspaces page only if they should have them.
+  else an instance admin (**Make instance admin** in Members) only if they should have them.
 - Existing `approver`s become creators and so use the app, not the dashboard; if one needs the dashboard, change their
   role to editor or admin in Members.
 - The `default` workspace stays (it has your data), and so does its first admin. A fresh instance has no `default`
