@@ -72,6 +72,64 @@ export async function sessionWorkspace(
   return m ? { workspaceId: m.workspace_id, role: roleOf(m.role), instanceAdmin } : null;
 }
 
+/** A workspace someone can open, with their role there (an instance admin's is "admin", as in sessionWorkspace). */
+export type OpenableWorkspace = { id: string; name: string; role: Role };
+
+/** Who may open which workspace, the one query workspacesOf and mayOpen share so the list and the switch can't drift
+ *  apart: it isn't archived, and the user is a member there or an instance admin. `notCreator` (the dashboard, which
+ *  creators don't use) leaves out the memberships where they're a creator, except an instance admin's, who's an admin
+ *  everywhere. ?1 the user, ?2 1 for an instance admin, ?3 (`one`) the workspace. */
+const OPENABLE = (o: { notCreator?: boolean; one?: boolean }) =>
+  `SELECT w.id, w.name, m.role FROM workspaces w
+   LEFT JOIN memberships m ON m.workspace_id = w.id AND m.user_id = ?1
+   WHERE w.archived_at IS NULL AND (m.role IS NOT NULL OR ?2 = 1)
+   ${o.notCreator ? "AND (?2 = 1 OR m.role <> 'creator')" : ""} ${o.one ? "AND w.id = ?3" : ""}
+   ORDER BY w.name, w.id`;
+
+async function openable(db: Db, userId: string, opts: { notCreator?: boolean }, workspaceId?: string) {
+  const instanceAdmin = await isInstanceAdmin(db, userId);
+  const one = workspaceId !== undefined;
+  const r = await db
+    .prepare(OPENABLE({ notCreator: opts.notCreator, one }))
+    .bind(...[userId, instanceAdmin ? 1 : 0, ...(one ? [workspaceId] : [])])
+    .all<{ id: string; name: string; role: string | null }>();
+  return r.results.flatMap((w): OpenableWorkspace[] => {
+    const role = instanceAdmin ? "admin" : isRole(w.role) ? w.role : null;
+    return role ? [{ id: w.id, name: w.name, role }] : [];
+  });
+}
+
+/** The workspaces the user can open (switch a session to), by name. */
+export async function workspacesOf(
+  db: Db,
+  userId: string,
+  opts: { notCreator?: boolean } = {},
+): Promise<OpenableWorkspace[]> {
+  return openable(db, userId, opts);
+}
+
+/** The workspace, when the user can open it; null when they can't (archived, unknown, not theirs). */
+export async function mayOpen(
+  db: Db,
+  userId: string,
+  workspaceId: string,
+  opts: { notCreator?: boolean } = {},
+): Promise<OpenableWorkspace | null> {
+  return (await openable(db, userId, opts, workspaceId))[0] ?? null;
+}
+
+/** Whether the user is a member of the workspace: an instance admin may open one they aren't in. */
+export async function isMember(db: Db, userId: string, workspaceId: string): Promise<boolean> {
+  return !!(await db
+    .prepare("SELECT 1 FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
+    .bind(workspaceId, userId)
+    .first());
+}
+
+/** A workspace's id and name, as the dashboard's state and the app's `me` answer it; null for an unknown one. */
+export const workspaceRef = (db: Db, workspaceId: string) =>
+  db.prepare("SELECT id, name FROM workspaces WHERE id = ?1").bind(workspaceId).first<{ id: string; name: string }>();
+
 /** The workspace's time zone. */
 export const workspaceZone = async (db: Db, workspaceId: string) => (await workspaceSettings(db, workspaceId)).timezone;
 

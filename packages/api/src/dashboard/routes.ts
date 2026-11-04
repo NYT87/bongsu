@@ -69,7 +69,14 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
-import { callerZone, sessionWorkspace, setWorkspaceSettings, workspaceSettings } from "@bongsu/core/workspaces";
+import {
+  callerZone,
+  sessionWorkspace,
+  setWorkspaceSettings,
+  workspaceRef,
+  workspaceSettings,
+  workspacesOf,
+} from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
 import { scopesOf, withinAttempts } from "../agent/auth";
 import { AcceptError, DASHBOARD_ROLES, inviteOptions, invitePreview, inviteVerify } from "../pwa/invite";
@@ -78,6 +85,7 @@ import {
   endSession,
   markVerified,
   oauthCookie,
+  openWorkspace,
   randomToken,
   readCookie,
   readOauthCookie,
@@ -131,6 +139,8 @@ const AREAS: Record<string, Area> = {
   devices: { noWorkspace: true },
   "recovery-codes": { noWorkspace: true },
   audit: { noWorkspace: true },
+  // switching workspaces: someone whose session works nowhere (an instance admin in none) picks one here
+  session: { noWorkspace: true },
   members: { managing: true, notEditors: true },
   invites: { managing: true, notEditors: true },
   keys: { managing: true, notEditors: true },
@@ -282,6 +292,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         user,
         instanceAdmin: !!s && (where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId))),
         role: where?.role ?? null,
+        // where the session works, and the switcher's list (creators' memberships left out: they use the app)
+        workspace: where ? await workspaceRef(c.env.DB, where.workspaceId) : null,
+        workspaces: s ? await workspacesOf(c.env.DB, s.userId, { notCreator: true }) : [],
         // signed in, but in no workspace yet: the first run's (or a removed member's) "create one" / "ask for one"
         noWorkspace: !!s && !where,
         // an instance admin in none of them still has the Instance pages, once the instance has a workspace
@@ -1366,7 +1379,20 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return { restored: true };
     }),
   );
-  // Work in a workspace (the switcher's field, sessions.workspace_id): an instance admin acts there as its admin.
+  /** Work in a workspace from the next request on (sessions.workspace_id; the switcher, core/workspaces.ts mayOpen);
+   *  null when the caller can't open it. */
+  const open = (c: C, id: string) =>
+    openWorkspace(c.env.DB, c.get("token"), c.get("session").userId, id, nowS(), { notCreator: true });
+  app.post(
+    "/admin-api/session/workspace",
+    wrap(async (c) => {
+      const w = await open(c, String((await body(c)).id ?? ""));
+      if (!w) throw new AdminError(403, "you can't open that workspace");
+      return { ok: true, id: w.id };
+    }),
+  );
+  // The Workspaces page's "open", from before the switcher: an alias of the switch above, with its own answers (404,
+  // 409, `{ id }`). It stays until the next minor version.
   app.post(
     "/admin-api/workspaces/:id/open",
     wrap(async (c) => {
@@ -1376,9 +1402,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         .first<{ archived_at: number | null }>();
       if (!w) throw new AdminError(404, "no such workspace");
       if (w.archived_at !== null) throw new AdminError(409, "restore the workspace first");
-      await setSessionWorkspace(c.env.DB, c.get("token"), id);
-      // its admins see that an instance admin came in
-      await audit(c, "workspace_open", id, {}, undefined, id);
+      if (!(await open(c, id))) throw new AdminError(403, "you can't open that workspace");
       return { id };
     }),
   );

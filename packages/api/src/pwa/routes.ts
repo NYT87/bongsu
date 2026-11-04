@@ -27,7 +27,9 @@ import {
   FALLBACK_ZONE,
   sessionWorkspace,
   setUserZone,
+  workspaceRef,
   workspaceSettings,
+  workspacesOf,
   workspaceZone,
 } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
@@ -41,6 +43,7 @@ import {
   createSession,
   endSession,
   oauthCookie,
+  openWorkspace,
   readCookie,
   type Session,
   sessionCookie,
@@ -75,6 +78,8 @@ const NEEDS: [string, Scope | null][] = [
   ["/app-api/connect/*", null],
   ["/app-api/logout", null],
   ["/app-api/me/timezone", null],
+  // switching workspaces is the person's own; where they may go is mayOpen's (session.ts openWorkspace)
+  ["/app-api/session/*", null],
   ["/app-api/push/*", null],
   ["/app-api/client-error", null],
   ["/app-api/comments/seen", null],
@@ -194,6 +199,9 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       workspaceTimezone: caller ? await workspaceZone(c.env.DB, caller.workspaceId) : FALLBACK_ZONE,
       // the text the app shows (packages/web/src/i18n.ts): the workspace's, English for someone not signed in
       locale: caller ? (await workspaceSettings(c.env.DB, caller.workspaceId)).locale : "en",
+      // where the session works, and the picker's list (creators included: the app is theirs)
+      workspace: caller ? await workspaceRef(c.env.DB, caller.workspaceId) : null,
+      workspaces: s ? await workspacesOf(c.env.DB, s.userId) : [],
     });
   });
 
@@ -922,6 +930,18 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
 
+  // Switch the app's session to another workspace the person can open (session.ts openWorkspace, creators included).
+  app.post(
+    "/app-api/session/workspace",
+    wrap(async (c) => {
+      // the app's session only: the dashboard's keeps its own workspace
+      const token = readCookie(c.req.header("Cookie"));
+      const id = String((await body(c)).id ?? "");
+      const w = token && (await openWorkspace(c.env.DB, token, userOf(c), id, nowS()));
+      if (!w) throw new ops.ApiError(403, "you can't open that workspace");
+      return { ok: true, id: w.id };
+    }),
+  );
   // The signed-in user's own time zone (null: the workspace's). Only how times are shown and entered changes: the
   // database keeps UTC, so nothing planned moves.
   app.post(

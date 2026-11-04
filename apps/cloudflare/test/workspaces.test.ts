@@ -431,6 +431,28 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     ).toBeNull();
   });
 
+  it("switching: a member of B can't move a session into another workspace, nor see it listed", async () => {
+    // bea is admin of B only: the default workspace isn't one she can open, in either app
+    for (const [app, path] of [
+      ["dashboard", "/admin-api/session/workspace"],
+      ["pwa", "/app-api/session/workspace"],
+    ] as const)
+      expect(await send("bea", app, path, { id: "default" }), path).toEqual({
+        status: 403,
+        json: { error: "you can't open that workspace" },
+      });
+    const state = (await as("bea", "dashboard", "/admin-api/state")).json;
+    expect(state.workspaces).toEqual([{ id: "b", name: "Workspace B", role: "admin" }]);
+    const me = (await as("bea", "pwa", "/app-api/me")).json;
+    expect(me).toMatchObject({ workspace: { id: "b" }, workspaces: [{ id: "b", name: "Workspace B", role: "admin" }] });
+    // no session of hers works in the default workspace
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM sessions WHERE user_id = 'bea' AND workspace_id = 'default'",
+      ).first("n"),
+    ).toBe(0);
+  });
+
   it("a workspace an instance admin creates starts empty and leaves the others alone", async () => {
     await env.DB.prepare(
       "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ina2', 'ina2@example.com', 'Ina', 0, 1) ON CONFLICT (id) DO NOTHING",
