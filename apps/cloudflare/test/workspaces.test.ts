@@ -3,7 +3,7 @@
 import { env, exports } from "cloudflare:workers";
 import { resolveItem } from "@bongsu/api/pwa/approve";
 import { appRoutes } from "@bongsu/api/pwa/routes";
-import { createSession } from "@bongsu/api/pwa/session";
+import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { encryptSecret } from "@bongsu/core/crypto";
 import type { Env } from "@bongsu/core/env";
@@ -584,6 +584,33 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
       "workspace_create",
     ]);
     expect((await as("ina3", "dashboard", "/admin-api/audit")).json).toMatchObject({ noWorkspace: true });
+  });
+
+  it("notification settings: a change in B leaves the default workspace's alone, and each GET reads its own", async () => {
+    await env.DB.batch(
+      [
+        "DELETE FROM notify_prefs",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'bea', 'admin', 0) ON CONFLICT DO NOTHING",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    // bea is an admin of both workspaces: one session working in each
+    const prefs = async (ws: string, method: "GET" | "PUT", body?: unknown) => {
+      const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { userId: "bea" });
+      await setSessionWorkspace(env.DB, token, ws);
+      const r = await exports.default.fetch("https://scheduler.test/app-api/notify-prefs", {
+        method,
+        headers: { "Content-Type": "application/json", Cookie: `bongsu_session=${token}` },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      const json = (await r.json()) as { groups: { grp: string; enabled: boolean; isDefault: boolean }[] };
+      return { status: r.status, digest: json.groups.find((g) => g.grp === "digest") };
+    };
+    const off = await prefs("b", "PUT", { grp: "digest", enabled: false });
+    expect([off.status, off.digest]).toEqual([200, { grp: "digest", enabled: false, isDefault: false }]);
+    expect((await prefs("b", "GET")).digest).toEqual({ grp: "digest", enabled: false, isDefault: false });
+    expect((await prefs("default", "GET")).digest).toEqual({ grp: "digest", enabled: true, isDefault: true });
+    const rows = await env.DB.prepare("SELECT workspace_id, user_id, grp FROM notify_prefs").all();
+    expect(rows.results).toEqual([{ workspace_id: "b", user_id: "bea", grp: "digest" }]);
   });
 
   it("a user in no workspace is turned away", async () => {

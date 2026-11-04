@@ -15,6 +15,7 @@ import { zoneDate, zoneStamp } from "@bongsu/core/formats/time";
 import { mediaUrl } from "@bongsu/core/media";
 import { mediaStores, storeRows } from "@bongsu/core/media/index";
 import { isVideo, type MediaStore } from "@bongsu/core/media/store";
+import { effectivePrefs, isNoteGroup, setPref } from "@bongsu/core/notify-prefs";
 import { platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs } from "@bongsu/core/providers/index";
@@ -91,6 +92,8 @@ const NEEDS: [string, Scope | null][] = [
   // switching workspaces is the person's own; where they may go is mayOpen's (session.ts openWorkspace)
   ["/app-api/session/*", null],
   ["/app-api/push/*", null],
+  // a person's own notification settings
+  ["/app-api/notify-prefs", null],
   ["/app-api/client-error", null],
   ["/app-api/comments/seen", null],
 ];
@@ -1011,6 +1014,29 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         { userId },
       ),
     );
+  });
+
+  // The signed-in person's own notification groups in the session's workspace (core/notify-prefs.ts): what they
+  // changed from their role's defaults. A person's own settings, so no scope; an agent key never reaches /app-api.
+  const prefsFor = async (c: C) => {
+    const { workspaceId } = me(c);
+    const where = await sessionWorkspace(c.env.DB, c.get("session"));
+    if (!where?.role) return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
+    return { workspaceId, userId: userOf(c), role: where.role };
+  };
+  app.get("/app-api/notify-prefs", async (c) => {
+    const who = await prefsFor(c);
+    if (who instanceof Response) return who;
+    return c.json({ groups: await effectivePrefs(c.env.DB, who.workspaceId, who.userId, who.role) });
+  });
+  app.put("/app-api/notify-prefs", async (c) => {
+    const who = await prefsFor(c);
+    if (who instanceof Response) return who;
+    const b = await body(c);
+    if (!isNoteGroup(b.grp)) return c.json({ error: "unknown group" }, 400);
+    if (typeof b.enabled !== "boolean") return c.json({ error: "enabled is true or false" }, 400);
+    await setPref(c.env.DB, who.workspaceId, who.userId, who.role, b.grp, b.enabled, nowS());
+    return c.json({ groups: await effectivePrefs(c.env.DB, who.workspaceId, who.userId, who.role) });
   });
 
   return app;
