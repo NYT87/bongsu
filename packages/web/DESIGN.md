@@ -267,8 +267,9 @@ bar (96px plus the safe area; 210px when the approve bar is showing).
 
 - **Top bar:** sticky, three columns (the 32px logo left, linking to Today; title centred and clipped; on the right
   the comments icon, with an amber unread-count badge like the tabs', and the settings icon), each a 44px target.
-- **Workspace line and sheet:** for a person who can open more than one workspace, the top bar's title column carries
-  the workspace's name on a second, smaller line, a 44px target. It opens the **workspace sheet**: a native `<dialog>`
+- **Workspace line and sheet:** the top bar's title column always carries the
+  workspace's name on a second, smaller line. For a person who can open more than one workspace it is a 44px target
+  that opens the **workspace sheet**: a native `<dialog>`
   (`dialog.sheet`, `showModal()`) docked to the bottom in the thumb zone, flat, over the `--scrim` token (slate 40% in
   light, black 60% in dark). Each row is a 44px button with the name and the role; the current one is marked, and the
   sheet closes on the backdrop or Escape.

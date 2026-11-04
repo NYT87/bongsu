@@ -175,8 +175,8 @@ several workspaces and for instance admins, who can open all of them. A person i
 Instance admins see an **Instance** group under the sidebar's sections: **Workspaces**, **Media** and **OAuth apps**.
 **Workspaces** lists every workspace with its **Members**, **Accounts**, when it was **Created** and its **Status**.
 **Create a workspace** takes a name, a time zone and its first admin: you, or someone invited by email (copy their
-link). **Open** works in that workspace, as its admin, until you open another (the sidebar's switcher does the same). **Rename** changes its name (its own
-admins can also rename it in **Settings**), and **Add an admin** makes an invite link for a new admin.
+link). **Open** works in that workspace, as its admin, until you open another (the sidebar's switcher does the same).
+**Rename** changes its name (its own admins can also rename it in **Settings**), and **Add an admin** makes an invite link for a new admin.
 
 **Archive** stops a workspace completely: nothing in it publishes, its agent keys and CLI tokens stop working, its
 members can't open it, it gets no daily digest and its comments and metrics are no longer read. Its plan, texts, accounts and people stay, and **Restore** brings it

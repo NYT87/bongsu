@@ -76,7 +76,11 @@ beforeAll(async () => {
   // 0021: notification settings per person and workspace; a device now belongs to its person alone
   const cols = async (table: string) =>
     (
-      (await db.prepare(`SELECT column_name FROM information_schema.columns WHERE table_name = '${table}'`).all()) as {
+      (await db
+        .prepare(
+          `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '${table}'`,
+        )
+        .all()) as {
         results: { column_name: string }[];
       }
     ).results.map((r) => r.column_name);

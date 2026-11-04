@@ -110,7 +110,7 @@ export const en = {
   "settings.groupDefault": "Default for your role",
   "settings.groupsOther": "For another workspace, switch to it first.",
   "notify.needs_you": "Needs you",
-  "notify.needs_youNote": "Posts and Shorts comments waiting for an approval before they can go out.",
+  "notify.needs_youNote": "Posts held past their time, and Shorts comments waiting for a working connection.",
   "notify.problems": "Problems",
   "notify.problemsNote": "Failed, refused or stuck posts, and accounts that need reconnecting.",
   "notify.published": "Published and results",

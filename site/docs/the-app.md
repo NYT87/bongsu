@@ -210,8 +210,10 @@ open more than one workspace, each title starts with the workspace's name (`Work
 your own devices only.
 
 Below the device switch, **Which notifications** sets what you get from the workspace you're in, in five groups:
-**Needs you** (approvals and overdue items), **Problems** (refused and failed items, broken connections), **Published**,
-**Inbox** (new drafts from the media store) and **Digest** (the daily message). Admins and creators start with all five;
+**Needs you** (posts held past their time, and Shorts comments waiting for a working connection), **Problems**
+(failed, refused or stuck posts, and accounts that need reconnecting), **Published and results** (what went out, Trial
+Reels and comments included, and each post's 24 h results), **New drafts and comments** (drafts from the inbox, others'
+comments on your posts, and moved release dates) and **Daily digest** (one summary a day). Admins and creators start with all five;
 editors start with all but **Needs you**. Each is per workspace, and setting a group back to its default follows your
 role again if it changes. Removing you from a workspace deletes these settings there, and your devices stop getting
 its notifications. Instance admins get notifications only from the workspaces they're a member of; in another, the page
