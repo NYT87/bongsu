@@ -1772,6 +1772,44 @@
           ]
         }
       ]
+    },
+    "notify_prefs": {
+      "description": "A person's notification settings in a workspace: only the groups they changed from their role's default.",
+      "columns": {
+        "workspace_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "user_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "grp": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "needs_you",
+            "problems",
+            "published",
+            "inbox",
+            "digest"
+          ]
+        },
+        "enabled": {
+          "type": "int",
+          "notNull": true,
+          "description": "1 or 0"
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "primaryKey": [
+        "workspace_id",
+        "user_id",
+        "grp"
+      ]
     }
   }
 }
