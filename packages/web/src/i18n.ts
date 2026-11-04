@@ -35,6 +35,11 @@ export const en = {
   "header.pausedDetail": "Nothing goes out until you resume.",
   "header.resume": "Resume",
 
+  // the workspace picker (the name under the header's title) and push links into another workspace
+  "workspace.switch": "Switch workspace",
+  "workspace.gone": "You're no longer in that workspace.",
+  "workspace.toQueue": "Open the queue",
+
   // sign-in and setup of a device
   "sign.signIn": "Sign in with passkey",
   "sign.setupThis": "Set up this device",
@@ -100,6 +105,20 @@ export const en = {
   "settings.pushOn": "On here",
   "settings.pushOff": "Off here",
   "settings.pushNote": "Published, refused and failed items on this device. (ntfy keeps working too.)",
+  // the five notification groups (core/notify-prefs.ts), for the signed-in person in this workspace
+  "settings.groups": "What {name} sends you",
+  "settings.groupDefault": "Default for your role",
+  "settings.groupsOther": "For another workspace, switch to it first.",
+  "notify.needs_you": "Needs you",
+  "notify.needs_youNote": "Posts and Shorts comments waiting for an approval before they can go out.",
+  "notify.problems": "Problems",
+  "notify.problemsNote": "Failed, refused or stuck posts, and accounts that need reconnecting.",
+  "notify.published": "Published and results",
+  "notify.publishedNote": "What went out, Trial Reels and comments included, and each post's 24 h results.",
+  "notify.inbox": "New drafts and comments",
+  "notify.inboxNote": "Drafts from the inbox, others' comments on your posts, and moved release dates.",
+  "notify.digest": "Daily digest",
+  "notify.digestNote": "One summary a day, at the workspace's digest hour.",
   "settings.pushEnable": "Turn on for this device",
   "settings.pushTest": "Send a test",
   "settings.pushTestSent": "Test sent.",
