@@ -127,7 +127,8 @@ describe("tick: dry run", () => {
     expect([j.state, j.dry_run]).toEqual(["done", 1]);
     expect(w.calls).toEqual([]);
     expect(await postedRows()).toEqual([]);
-    expect(await audits("would_publish")).toHaveLength(1);
+    // in the item's workspace's audit, where its people read it
+    expect(await audits("would_publish")).toEqual([expect.objectContaining({ workspace_id: "default" })]);
     expect(w.notifications.map((n) => n.title)).toEqual([`dry run: would publish ${KEY}`]);
   });
 });

@@ -47,6 +47,10 @@ export const en = {
   "sign.deviceError":
     "This device couldn't create the passkey ({detail}: {message}). Your setup code still works: try again. Chrome with Google Password Manager as the passkey provider is the most reliable.",
 
+  // signed in, in no workspace (removed, or not invited yet)
+  "noWorkspace.title": "You're not in a workspace yet",
+  "noWorkspace.detail": "An admin of a workspace invites you to it: ask them for an invite link, then open it here.",
+
   // joining a workspace from an invite link (#/invite/<token>)
   "invite.title": "Join {workspace}",
   "invite.asRole": "You're invited as a {role}: the plan, the texts and approving.",

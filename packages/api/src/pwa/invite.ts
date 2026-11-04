@@ -41,11 +41,15 @@ interface Data {
   name?: string | null;
 }
 
-/** The invite behind a link, while it can be used, or the one 404. `only`: the role this app takes (the app takes
- *  creators; admins and editors finish in the dashboard), refused the same way so it says nothing more. */
-async function usable(env: Env, token: string, nowS: number, only?: Role) {
+/** The roles each app takes: creators finish in the app, admins and editors in the dashboard. */
+export const APP_ROLES: readonly Role[] = ["creator"];
+export const DASHBOARD_ROLES: readonly Role[] = ["admin", "editor"];
+
+/** The invite behind a link, while it can be used, or the one 404. `only`: the roles this app takes (APP_ROLES,
+ *  DASHBOARD_ROLES); another's invite is refused the same way, so the answer says nothing more. */
+async function usable(env: Env, token: string, nowS: number, only: readonly Role[]) {
   const i = await inviteFor(env.DB, token, nowS);
-  if (!i || (only && i.role !== only)) throw new AcceptError(404, NO_INVITE);
+  if (!i || !only.includes(i.role)) throw new AcceptError(404, NO_INVITE);
   return i;
 }
 
@@ -54,14 +58,14 @@ export async function invitePreview(
   env: Env,
   token: string,
   nowS: number,
-  only?: Role,
+  only: readonly Role[],
 ): Promise<{ workspace: string; role: Role }> {
   const i = await usable(env, token, nowS, only);
   return { workspace: i.workspaceName, role: i.role };
 }
 
 /** Both ceremonies' options, the same shape for every email. */
-export async function inviteOptions(env: Env, token: string, name: unknown, nowS: number, only?: Role) {
+export async function inviteOptions(env: Env, token: string, name: unknown, nowS: number, only: readonly Role[]) {
   const i = await usable(env, token, nowS, only);
   const invite = await sha256Hex(token);
   const display =
@@ -91,7 +95,7 @@ export async function inviteVerify(
   token: string,
   b: Record<string, unknown>,
   nowS: number,
-  only?: Role,
+  only: readonly Role[],
 ): Promise<{ userId: string; workspaceId: string; role: Role; isNew: boolean }> {
   const i = await usable(env, token, nowS, only);
   const invite = await sha256Hex(token);

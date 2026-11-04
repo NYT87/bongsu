@@ -351,8 +351,8 @@ describe("members", () => {
     await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'eda'").run();
     // started together: a check made before the change would let both through
     const demoted = await Promise.allSettled([
-      setRole(env.DB, "default", "ada", "editor", { instanceAdmin: false }),
-      setRole(env.DB, "default", "eda", "editor", { instanceAdmin: false }),
+      setRole(env.DB, "default", "ada", "editor", { instanceAdmin: false }, nowS()),
+      setRole(env.DB, "default", "eda", "editor", { instanceAdmin: false }, nowS()),
     ]);
     expect(demoted.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
     const no = demoted.find((r) => r.status === "rejected") as PromiseRejectedResult;
@@ -431,6 +431,51 @@ describe("members", () => {
     await (await dash("bob"))("/admin-api/members/eda/remove", {});
     const r = await req("dashboard", `bongsu_admin=${dashToken}`, "/admin-api/overview");
     expect([r.status, r.json.noWorkspace]).toEqual([403, true]);
+  });
+
+  it("an admin demoted or removed loses the invites they sent: no way back in through their own link", async () => {
+    await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'eda'").run();
+    const eda = await dash("eda");
+    const ada = await dash("ada");
+    const sent = async (email: string) =>
+      tokenOf((await eda("/admin-api/invites", { email, role: "admin" })).json.url as string);
+    const pending = async () =>
+      ((await ada("/admin-api/members")).json.invites as { email: string }[]).map((i) => i.email).sort();
+    // Ada's own invite stays through all of it
+    expect((await ada("/admin-api/invites", { email: "ada-guest@example.com", role: "editor" })).status).toBe(200);
+    // demoted: her pending invites are revoked
+    const friend = await sent("friend@example.com");
+    expect((await ada("/admin-api/members/eda", { role: "editor" })).status).toBe(200);
+    expect(await pending()).toEqual(["ada-guest@example.com"]);
+    expect((await out("dashboard")(`/admin-api/invite/${friend}`)).status).toBe(404);
+    // removed: the admin invite she sent herself (a second address) no longer lets her back in
+    expect((await ada("/admin-api/members/eda", { role: "admin" })).status).toBe(200);
+    const self = await sent("eda.second@example.com");
+    expect((await ada("/admin-api/members/eda/remove", {})).status).toBe(200);
+    expect(await pending()).toEqual(["ada-guest@example.com"]);
+    expect((await out("dashboard")(`/admin-api/invite/${self}`)).status).toBe(404);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM invites WHERE invited_by = 'eda' AND revoked_at IS NULL").first(
+        "n",
+      ),
+    ).toBe(0);
+  });
+
+  it("the dashboard turns a creator's invite away like any unusable one: creators finish in the app", async () => {
+    const ada = await dash("ada");
+    const token = tokenOf((await ada("/admin-api/invites", { email: "cleo@example.com", role: "creator" })).json.url);
+    const site = out("dashboard");
+    const none = await site("/admin-api/invite/unknown-token-unknown-token-unknown-token-x");
+    expect(none.status).toBe(404);
+    for (const r of [
+      await site(`/admin-api/invite/${token}`),
+      await site(`/admin-api/invite/${token}/options`, {}),
+      await site(`/admin-api/invite/${token}/verify`, { mode: "new", challengeId: "x", response: { id: "k" } }),
+      await site(`/admin-api/invite/${token}/verify`, { mode: "existing", challengeId: "x", response: { id: "k" } }),
+    ])
+      expect([r.status, r.json]).toEqual([404, none.json]);
+    // still usable in the app
+    expect((await out("pwa")(`/app-api/invite/${token}`)).status).toBe(200);
   });
 
   it("is for the workspace's admins: editors get 403 on every member route", async () => {

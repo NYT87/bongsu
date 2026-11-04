@@ -31,13 +31,15 @@ export async function workspaceSettings(db: Db, workspaceId: string): Promise<Wo
 }
 
 /** The user's first workspace that isn't archived (the oldest membership), with their role there. Null when they
- *  belong to none. */
-async function firstMembership(db: Db, userId: string) {
+ *  belong to none. `notCreator`: one where they're an admin or editor first (the dashboard, which creators don't use),
+ *  so a creator somewhere who's an editor elsewhere lands where they can work. */
+async function firstMembership(db: Db, userId: string, notCreator = false) {
   return db
     .prepare(
       `SELECT m.workspace_id, m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
        WHERE m.user_id = ?1 AND w.archived_at IS NULL
-       ORDER BY m.created_at, m.workspace_id LIMIT 1`,
+       ORDER BY ${notCreator ? "CASE WHEN m.role = 'creator' THEN 1 ELSE 0 END, " : ""}m.created_at, m.workspace_id
+       LIMIT 1`,
     )
     .bind(userId)
     .first<{ workspace_id: string; role: string }>();
@@ -45,10 +47,12 @@ async function firstMembership(db: Db, userId: string) {
 
 /** The workspace a request works in: the one its session names (sessions.workspace_id) when the user is a member
  *  there, or an instance admin, and it isn't archived; else the user's first. `role` is the membership's, "admin" for
- *  an instance admin without one. Null when there's none: the request works nowhere. */
+ *  an instance admin without one. Null when there's none: the request works nowhere. `notCreator`: the dashboard's
+ *  first pick (firstMembership). */
 export async function sessionWorkspace(
   db: Db,
   s: { userId: string; workspaceId: string | null },
+  opts: { notCreator?: boolean } = {},
 ): Promise<{ workspaceId: string; role: Role | null; instanceAdmin: boolean } | null> {
   const instanceAdmin = await isInstanceAdmin(db, s.userId);
   const roleOf = (role: string | null | undefined): Role | null =>
@@ -63,7 +67,7 @@ export async function sessionWorkspace(
       .first<{ id: string; role: string | null }>();
     if (r && (r.role || instanceAdmin)) return { workspaceId: r.id, role: roleOf(r.role), instanceAdmin };
   }
-  const m = await firstMembership(db, s.userId);
+  const m = await firstMembership(db, s.userId, opts.notCreator);
   return m ? { workspaceId: m.workspace_id, role: roleOf(m.role), instanceAdmin } : null;
 }
 

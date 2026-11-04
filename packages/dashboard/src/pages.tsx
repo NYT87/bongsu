@@ -2079,6 +2079,8 @@ interface Member {
   email: string | null;
   name: string | null;
   role: string;
+  /** Only in an instance admin's list: whether this member is one too. */
+  instanceAdmin?: boolean;
 }
 interface Invite {
   id: string;
@@ -2225,6 +2227,37 @@ export function Members({ state }: Props) {
                       </select>
                     </td>
                     <td className="right">
+                      {state.instanceAdmin && m.instanceAdmin !== undefined && (
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={() =>
+                            confirm({
+                              title: m.instanceAdmin
+                                ? `Remove ${m.name ?? m.email ?? m.userId} as an instance admin?`
+                                : `Make ${m.name ?? m.email ?? m.userId} an instance admin?`,
+                              detail: m.instanceAdmin
+                                ? "They keep their role in this workspace, but no longer see the instance's workspaces, media stores and OAuth apps."
+                                : "They'll manage the whole instance: every workspace (as its admin), the media stores, the OAuth apps and who the instance admins are.",
+                              verb: m.instanceAdmin ? "Remove instance admin" : "Make instance admin",
+                              run: async () => {
+                                await withFreshCheck(() =>
+                                  api("instance-admins", { userId: m.userId, on: !m.instanceAdmin }),
+                                );
+                                toast({
+                                  ok: true,
+                                  text: `${m.name ?? m.email ?? m.userId} ${m.instanceAdmin ? "is no longer" : "is now"} an instance admin.`,
+                                });
+                                // their own: the sidebar's Instance group goes with it
+                                if (m.userId === me && m.instanceAdmin) location.reload();
+                                else reload();
+                              },
+                            })
+                          }
+                        >
+                          {m.instanceAdmin ? "Remove instance admin" : "Make instance admin"}
+                        </button>
+                      )}{" "}
                       <button
                         type="button"
                         className="link danger"
@@ -2317,24 +2350,55 @@ interface Entry {
   detail: string | null;
 }
 
-export function Audit(_: Props) {
+export function Audit({ state }: Props) {
   const [entries, setEntries] = useState<Entry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [more, setMore] = useState(true);
-  const load = (before?: number) =>
-    api<{ entries: Entry[] }>(`audit${before ? `?before=${before}` : ""}`)
+  // the workspace's log, or (instance admins only) the instance's: new workspaces, media stores, OAuth apps, instance
+  // admins. In no workspace, only the instance's.
+  const [instance, setInstance] = useState(state.noWorkspace);
+  const load = (before?: number) => {
+    const q = new URLSearchParams({
+      ...(before ? { before: String(before) } : {}),
+      ...(instance ? { instance: "1" } : {}),
+    }).toString();
+    return api<{ entries: Entry[] }>(`audit${q ? `?${q}` : ""}`)
       .then((r) => {
         setEntries((old) => (before ? [...(old ?? []), ...r.entries] : r.entries));
         setMore(r.entries.length === 50);
         setError(null);
       })
       .catch((e: Error) => setError(e.message));
+  };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloads when the log shown changes
   useEffect(() => {
+    setEntries(null);
     load();
-  }, []);
+  }, [instance]);
   return (
-    <Page title="Audit" intro="Every change to this instance: who, what, when.">
-      <Card>
+    <Page
+      title="Audit"
+      intro={
+        instance
+          ? "Every change to this instance: who, what, when."
+          : "Every change to this workspace: who, what, when."
+      }
+    >
+      <Card
+        actions={
+          state.instanceAdmin &&
+          !state.noWorkspace && (
+            <select
+              aria-label="Which log"
+              value={instance ? "instance" : "workspace"}
+              onChange={(e) => setInstance(e.target.value === "instance")}
+            >
+              <option value="workspace">This workspace</option>
+              <option value="instance">The instance</option>
+            </select>
+          )
+        }
+      >
         {!entries ? (
           <Loading error={error} retry={() => load()} />
         ) : entries.length === 0 ? (
@@ -2407,7 +2471,13 @@ function Step({ n, title, done, children }: { n: number; title: string; done: bo
   );
 }
 
-export function GetStarted({ go }: Props) {
+/** A Get started step that's the instance's (OAuth apps, media stores): its instance admin's to set up, for every
+ *  workspace, so a workspace's admin has nothing to open there. */
+const InstanceStep = () => (
+  <p className="muted small">Your instance admin sets this up, for every workspace: ask them if it's still to do.</p>
+);
+
+export function GetStarted({ state, go }: Props) {
   const { data, error, reload } = useLoad<Overview>("overview");
   const settings = useLoad<{ timezone: string; digestHour: number }>("settings");
   const toast = useToast();
@@ -2485,26 +2555,34 @@ export function GetStarted({ go }: Props) {
               app for YouTube (the page shows the exact redirect URLs to register). Connecting through Composio needs
               neither.
             </p>
-            <div className="actions">
-              <button type="button" className={data.setup.oauthApp ? "" : "primary"} onClick={() => go("apps")}>
-                Open OAuth apps
-              </button>
-            </div>
+            {state.instanceAdmin ? (
+              <div className="actions">
+                <button type="button" className={data.setup.oauthApp ? "" : "primary"} onClick={() => go("apps")}>
+                  Open OAuth apps
+                </button>
+              </div>
+            ) : (
+              <InstanceStep />
+            )}
           </Step>
           <Step n={3} title="Where your media live" done={data.setup.mediaStore}>
             <p className="muted">
               Your Reels and photos stay in a store you control: Google Drive, an S3-compatible bucket (AWS, R2, B2,
               MinIO) or, with Docker, this server's disk. Bongsu reads them from there and publishes them.
             </p>
-            <div className="actions">
-              <button
-                type="button"
-                className={data.setup.oauthApp && !data.setup.mediaStore ? "primary" : ""}
-                onClick={() => go("media")}
-              >
-                Open Media
-              </button>
-            </div>
+            {state.instanceAdmin ? (
+              <div className="actions">
+                <button
+                  type="button"
+                  className={data.setup.oauthApp && !data.setup.mediaStore ? "primary" : ""}
+                  onClick={() => go("media")}
+                >
+                  Open Media
+                </button>
+              </div>
+            ) : (
+              <InstanceStep />
+            )}
           </Step>
           <Step n={4} title="Connect an account" done={data.setup.connection}>
             <p className="muted">An Instagram account or a YouTube channel to publish to.</p>

@@ -140,13 +140,25 @@ async function refused(db: Db, workspaceId: string, userId: string): Promise<Mem
   return m ? new MemberError(409, LAST_ADMIN) : new MemberError(404, "not a member of this workspace");
 }
 
-/** Changes a member's role. The last admin stays one, unless an instance admin changes it. */
+/** Revokes the invites `userId` sent in the workspace that are still pending: someone no longer its admin can't let
+ *  anyone in, themselves included, with a link sent before. ?1 the workspace, ?2 the member, ?3 now. */
+const revokeSentInvites = (db: Db, workspaceId: string, userId: string, nowS: number) =>
+  db
+    .prepare(
+      `UPDATE invites SET revoked_at = ?3 WHERE workspace_id = ?1 AND invited_by = ?2 AND used_at IS NULL
+         AND revoked_at IS NULL`,
+    )
+    .bind(workspaceId, userId, nowS);
+
+/** Changes a member's role. The last admin stays one, unless an instance admin changes it. Someone made editor or
+ *  creator loses the invites they sent as an admin. */
 export async function setRole(
   db: Db,
   workspaceId: string,
   userId: string,
   role: Role,
   by: { instanceAdmin: boolean },
+  nowS: number,
 ): Promise<void> {
   const r = await db
     .prepare(
@@ -156,10 +168,12 @@ export async function setRole(
     .bind(workspaceId, userId, role, by.instanceAdmin ? 1 : 0)
     .first();
   if (!r) throw await refused(db, workspaceId, userId);
+  if (role !== "admin") await revokeSentInvites(db, workspaceId, userId, nowS).run();
 }
 
 /** Removes a member, cut off at once from this workspace: their sessions working in it and their push devices there
- *  go, their CLI tokens for it are revoked (kept, marked, as the token list shows them), with the membership (a
+ *  go, their CLI tokens for it and the invites they sent there are revoked (kept, marked, as the lists show them),
+ *  with the membership (a
  *  session in no particular workspace stays, but no longer finds this one). The last admin stays, unless an instance
  *  admin removes them. */
 export async function removeMember(
@@ -182,5 +196,6 @@ export async function removeMember(
       .prepare("UPDATE api_keys SET revoked_at = ?3 WHERE workspace_id = ?1 AND user_id = ?2 AND revoked_at IS NULL")
       .bind(workspaceId, userId, nowS),
     db.prepare("DELETE FROM push_subs WHERE workspace_id = ?1 AND user_id = ?2").bind(workspaceId, userId),
+    revokeSentInvites(db, workspaceId, userId, nowS),
   ]);
 }

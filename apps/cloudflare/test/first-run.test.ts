@@ -1,7 +1,7 @@
 // The first run (Phase 13, docs/superpowers/specs/2026-11-04-phase13-people-roles-design.md, section 0): on an empty
 // instance the setup token makes an instance admin who belongs to no workspace; they create the first one.
 import { env } from "cloudflare:workers";
-import { adminRoutes } from "@bongsu/api/dashboard/routes";
+import { adminRoutes, FRESH_S } from "@bongsu/api/dashboard/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -91,6 +91,8 @@ describe("the first run", () => {
       signedIn: true,
       instanceAdmin: true,
       noWorkspace: true,
+      // none at all: the first run's "create your first workspace"
+      anyWorkspace: false,
     });
     // nothing landed in a workspace no one chose: the bootstrap's audit row is the instance's
     expect(await env.DB.prepare("SELECT action, workspace_id FROM audit").all()).toMatchObject({
@@ -128,6 +130,8 @@ describe("the first run", () => {
       { name: " ", timezone: "Europe/Madrid", admin: "me" },
       { name: "Demo Travel", timezone: "Mars/Base", admin: "me" },
       { name: "Demo Travel", timezone: "Europe/Madrid", admin: "nope" },
+      // the rename's limit too: refused, not cut short
+      { name: "x".repeat(81), timezone: "Europe/Madrid", admin: "me" },
     ];
     for (const b of bad) expect((await call("/admin-api/workspaces", b)).status, JSON.stringify(b)).toBe(400);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces").first("n")).toBe(0);
@@ -151,6 +155,50 @@ describe("the first run", () => {
     expect((await call("/admin-api/state")).json).toMatchObject({ noWorkspace: false, role: "admin" });
     const token = invite.url.split("/").pop();
     expect((await call(`/admin-api/invite/${token}`)).json).toEqual({ workspace: "Demo Running", role: "admin" });
+  });
+
+  it("signs in again in no workspace: the passkey check works there, then a workspace can be made", async () => {
+    await bootstrap();
+    // the first workspace is a client's: its admin is someone else, so the instance admin is a member of none
+    expect(
+      (await call("/admin-api/workspaces", { name: "Client", timezone: "UTC", admin: "client@example.com" })).status,
+    ).toBe(200);
+    await call("/admin-api/signout", {});
+    const o = await call("/admin-api/signin/options", { email: "first@example.com" });
+    const v = await call("/admin-api/signin/verify", {
+      challengeId: o.json.challengeId,
+      response: { id: "first-key" },
+    });
+    expect(v.status).toBe(200);
+    // the Instance pages, not "create your first workspace": there is one
+    expect((await call("/admin-api/state")).json).toMatchObject({
+      instanceAdmin: true,
+      noWorkspace: true,
+      anyWorkspace: true,
+    });
+    expect((await call("/admin-api/workspaces")).status).toBe(200);
+    expect((await call("/admin-api/passkeys")).status).toBe(200);
+    // signed in in no workspace: the instance's row
+    expect(
+      await env.DB.prepare("SELECT workspace_id FROM audit WHERE action = 'signin'").first("workspace_id"),
+    ).toBeNull();
+    // later: the sign-in's check is stale
+    await env.DB.prepare("UPDATE sessions SET verified_at = verified_at - ?1")
+      .bind(FRESH_S + 60)
+      .run();
+    const body = { name: "Second", timezone: "UTC", admin: "me" };
+    const stale = await call("/admin-api/workspaces", body);
+    expect([stale.status, stale.json.verify]).toEqual([403, true]);
+    const vo = await call("/admin-api/verify/options", {});
+    expect(vo.status).toBe(200);
+    const vv = await call("/admin-api/verify/verify", {
+      challengeId: vo.json.challengeId,
+      response: { id: "first-key" },
+    });
+    expect(vv.json).toEqual({ verified: true });
+    const made = await call("/admin-api/workspaces", body);
+    expect(made.status).toBe(200);
+    expect((await call("/admin-api/state")).json).toMatchObject({ noWorkspace: false, role: "admin" });
   });
 
   it("only an instance admin creates workspaces", async () => {

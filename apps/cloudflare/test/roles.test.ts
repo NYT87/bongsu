@@ -319,6 +319,24 @@ describe("a request's workspace", () => {
     expect((await inB("/admin-api/settings", { timezone: "Asia/Seoul" })).status).toBe(403);
   });
 
+  it("the dashboard lands a creator somewhere who's an editor elsewhere where they edit; the app keeps the oldest", async () => {
+    await member("default", "dee", "creator");
+    await member("b", "dee", "editor");
+    await env.DB.prepare("UPDATE memberships SET created_at = 1 WHERE user_id = 'dee' AND workspace_id = 'b'").run();
+    const dash = await sessionIn("dee", null);
+    expect((await dash("/admin-api/state")).json).toMatchObject({ role: "editor", noWorkspace: false });
+    expect((await dash("/admin-api/overview")).status).toBe(200);
+    expect(await sessionWorkspace(env.DB, { userId: "dee", workspaceId: null }, { notCreator: true })).toMatchObject({
+      workspaceId: "b",
+      role: "editor",
+    });
+    // the app takes creators: there the oldest membership still comes first
+    expect(await sessionWorkspace(env.DB, { userId: "dee", workspaceId: null })).toMatchObject({
+      workspaceId: "default",
+      role: "creator",
+    });
+  });
+
   it("an instance admin acts as an admin in the workspace their session names, without a membership", async () => {
     expect(await sessionWorkspace(env.DB, { userId: "ina", workspaceId: "b" })).toEqual({
       workspaceId: "b",

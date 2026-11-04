@@ -570,12 +570,19 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
 
   if (c.dry) {
     await c.setJob(job.id, { state: "done", dry_run: 1, last_error: "dry run: nothing published" });
-    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, {
-      kind: job.kind,
-      account: p.account,
-      media: media.length,
-      location: p.location,
-    });
+    await audit(
+      c.env.DB,
+      c.nowS,
+      "would_publish",
+      job.item_key,
+      {
+        kind: job.kind,
+        account: p.account,
+        media: media.length,
+        location: p.location,
+      },
+      job.workspace_id,
+    );
     await c.note.send(
       N.dryRunPublish(
         job.item_key,
@@ -660,7 +667,14 @@ async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
   if (v.problem) return refuse(c, job, `trial copy: ${v.problem}`);
   if (c.dry) {
     await c.setJob(job.id, { state: "done", dry_run: 1, last_error: "dry run: trial copy not posted" });
-    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, { kind: "trial", account: p.account, media: 1 });
+    await audit(
+      c.env.DB,
+      c.nowS,
+      "would_publish",
+      job.item_key,
+      { kind: "trial", account: p.account, media: 1 },
+      job.workspace_id,
+    );
     return;
   }
   const m = p.approval!.media[0];
@@ -719,7 +733,14 @@ async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step
       last_error: "dry run: nothing published (the container stays unpublished)",
       payload: { ...p, step },
     });
-    await audit(c.env.DB, c.nowS, "would_publish", job.item_key, { kind: job.kind, account: p.account });
+    await audit(
+      c.env.DB,
+      c.nowS,
+      "would_publish",
+      job.item_key,
+      { kind: job.kind, account: p.account },
+      job.workspace_id,
+    );
     await c.note.send(N.dryRunPublish(job.item_key, job.kind, p.account), job.workspace_id);
     return;
   }

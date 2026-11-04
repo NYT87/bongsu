@@ -35,7 +35,7 @@ import { HTTPException } from "hono/http-exception";
 import { type Caller, type Scope, scopesOf } from "../agent/auth";
 import * as ops from "../agent/ops";
 import { resolveItem, type Snapshot, sameSnapshot, snapshot, writeApproval } from "./approve";
-import { AcceptError, inviteOptions, invitePreview, inviteVerify } from "./invite";
+import { AcceptError, APP_ROLES, inviteOptions, invitePreview, inviteVerify } from "./invite";
 import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
 import {
   createSession,
@@ -288,11 +288,11 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   };
   app.get(
     "/app-api/invite/:token",
-    accepting((c) => invitePreview(c.env, c.req.param("token") ?? "", nowS(), "creator")),
+    accepting((c) => invitePreview(c.env, c.req.param("token") ?? "", nowS(), APP_ROLES)),
   );
   app.post(
     "/app-api/invite/:token/options",
-    accepting(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS(), "creator")),
+    accepting(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS(), APP_ROLES)),
   );
   app.post(
     "/app-api/invite/:token/verify",
@@ -304,7 +304,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         c.req.param("token") ?? "",
         await body(c),
         nowS(),
-        "creator",
+        APP_ROLES,
       );
       // signed in, working in the workspace just joined
       const token = await createSession(c.env.DB, nowS(), { userId: j.userId });
@@ -471,13 +471,19 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     "/app-api/drafts/new",
     owned(async (c) => draftFromUploads(c.env, fetcher, await body(c), nowS(), me(c).workspaceId)),
   );
-  // What went wrong on a device (upload failures): kept in the audit log, read in the dashboard's audit page.
+  // What went wrong on a device (upload failures): kept in the audit log of the caller's workspace, read in the
+  // dashboard's audit page.
   app.post("/app-api/client-error", async (c) => {
     const b = await body(c);
     await c.env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail) VALUES (?1, 'owner', 'client_error', NULL, ?2)",
+      "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, 'owner', 'client_error', NULL, ?2, ?3, ?4)",
     )
-      .bind(nowS(), JSON.stringify({ msg: String(b.msg ?? "").slice(0, 300), detail: b.detail ?? null }).slice(0, 2000))
+      .bind(
+        nowS(),
+        JSON.stringify({ msg: String(b.msg ?? "").slice(0, 300), detail: b.detail ?? null }).slice(0, 2000),
+        me(c).userId ?? null,
+        me(c).workspaceId,
+      )
       .run();
     return c.json({ ok: true });
   });

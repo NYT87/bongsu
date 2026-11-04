@@ -40,6 +40,8 @@ type Me = {
   scopes?: string[];
   /** An admin or a creator of the workspace: Settings offers connecting accounts. */
   connects?: boolean;
+  /** Signed in, but a member of no workspace (yet, or any more): nothing to show but "ask for an invite". */
+  noWorkspace?: boolean;
 };
 type Status = {
   dry_run: boolean;
@@ -557,7 +559,33 @@ export function App() {
       />
     );
   if (!me.signedIn) return <SignIn me={me} onDone={refreshMe} />;
+  if (me.noWorkspace) return <NoWorkspace onSignOut={refreshMe} />;
   return <SignedIn me={me} hash={hash} onSignOut={refreshMe} />;
+}
+
+/** Signed in, in no workspace (removed, or never invited): every page would answer 403, so only this and the way
+ *  out. */
+function NoWorkspace({ onSignOut }: { onSignOut: () => void }) {
+  return (
+    <main className="center">
+      <h1 className="brand-title">
+        {LOGO}
+        {BRAND.name}
+      </h1>
+      <h2>{t("noWorkspace.title")}</h2>
+      <p className="muted">{t("noWorkspace.detail")}</p>
+      <button
+        onClick={() =>
+          api("logout", {}).then(() => {
+            cachePrune(true);
+            onSignOut();
+          })
+        }
+      >
+        {t("settings.signOut")}
+      </button>
+    </main>
+  );
 }
 
 /** Where the item page's back link goes: the last list page the owner was on (Today when unknown). */

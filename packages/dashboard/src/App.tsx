@@ -34,6 +34,9 @@ export interface State {
   role: string | null;
   /** Signed in, in no workspace: the first run's "create one" (an instance admin), or waiting for an invite. */
   noWorkspace: boolean;
+  /** Whether the instance has a workspace at all (archived ones too): an instance admin in none of them gets the
+   *  Instance pages, not the first run's "create your first workspace". */
+  anyWorkspace: boolean;
   dryRun: boolean;
   publicUrl: string;
 }
@@ -57,6 +60,9 @@ const INSTANCE = [
 ] as const;
 /** What an editor doesn't see (the server refuses them too): the workspace's connections, members and settings. */
 const ADMINS_ONLY: readonly string[] = ["connections", "members", "settings"];
+/** What an instance admin in no workspace has besides the Instance group: their own passkeys and devices, and the
+ *  instance's audit. */
+const OUTSIDE: readonly string[] = ["devices", "audit"];
 /** Pages reached from other pages, not the sidebar. */
 const HIDDEN = [["start", "Get started", GetStarted]] as const;
 
@@ -139,7 +145,8 @@ export function App() {
       />
     );
   if (!state.signedIn) return <SignIn onDone={load} />;
-  if (state.noWorkspace)
+  // an instance admin in no workspace, on an instance that has some: the Instance pages (Shell), to open or restore one
+  if (state.noWorkspace && !(state.instanceAdmin && state.anyWorkspace))
     return (
       <FirstWorkspace
         state={state}
@@ -179,9 +186,16 @@ function Shell({
 }) {
   const [open, setOpen] = useState(false);
   const instance = state.instanceAdmin ? INSTANCE : [];
-  const sections = manages(state) ? SECTIONS : SECTIONS.filter(([s]) => !ADMINS_ONLY.includes(s));
-  const hidden = manages(state) ? HIDDEN : [];
-  const current = [...sections, ...instance, ...hidden].find(([s]) => s === section) ?? SECTIONS[0];
+  // an instance admin in no workspace: nothing of a workspace's, so the Instance group is where they land
+  const outside = state.noWorkspace;
+  const sections = outside
+    ? SECTIONS.filter(([s]) => OUTSIDE.includes(s))
+    : manages(state)
+      ? SECTIONS
+      : SECTIONS.filter(([s]) => !ADMINS_ONLY.includes(s));
+  const hidden = manages(state) && !outside ? HIDDEN : [];
+  const current =
+    [...sections, ...instance, ...hidden].find(([s]) => s === section) ?? (outside ? INSTANCE[0] : SECTIONS[0]);
   const link = ([s, label]: (typeof SECTIONS | typeof INSTANCE)[number]) => (
     <a
       key={s}
@@ -256,16 +270,18 @@ function Shell({
               <span className="banner-more">
                 Every step runs and notifies instead (set <code>DRY_RUN = "0"</code> in the wrangler files to go live).
               </span>{" "}
-              <a
-                className="banner-short"
-                href="/dashboard/settings"
-                onClick={(e) => {
-                  e.preventDefault();
-                  go("settings");
-                }}
-              >
-                How to go live
-              </a>
+              {!outside && (
+                <a
+                  className="banner-short"
+                  href="/dashboard/settings"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    go("settings");
+                  }}
+                >
+                  How to go live
+                </a>
+              )}
             </div>
           )}
           <Body state={state} go={go} />

@@ -421,8 +421,12 @@ describe("signed in", () => {
     expect(conns.connections.find((x) => x.id === "c_demo_travel")?.accounts).toEqual(["demo_travel"]);
     expect(conns.kinds.map((k) => k.provider)).toEqual(expect.arrayContaining(["instagram", "composio", "youtube"]));
     const audit = (await call("/admin-api/audit")).json.entries as { action: string; actor: string }[];
-    expect(audit.map((x) => x.action)).toEqual(expect.arrayContaining(["bootstrap", "account_update", "settings"]));
+    expect(audit.map((x) => x.action)).toEqual(expect.arrayContaining(["account_update", "settings"]));
     expect(audit[0].actor).toBe(`user:${me}`);
+    // the bootstrap is the instance's, read by its instance admins on their own
+    expect(audit.map((x) => x.action)).not.toContain("bootstrap");
+    const instance = (await call("/admin-api/audit?instance=1")).json.entries as { action: string }[];
+    expect(instance.map((x) => x.action)).toContain("bootstrap");
   });
 
   it("caption rules per account: the defaults shown, an override stored, bad values refused, editors read-only", async () => {

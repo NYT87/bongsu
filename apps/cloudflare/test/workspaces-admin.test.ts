@@ -347,4 +347,23 @@ describe("the Workspaces page", () => {
     const bob = await dash("bob");
     expect((await bob("/admin-api/instance-admins", { userId: "bob", on: false })).status).toBe(409);
   });
+
+  it("the Members page tells an instance admin who's one, for its Make instance admin control; not anyone else", async () => {
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id <> 'ina'").run();
+    const ina = await dash("ina", "b");
+    const flags = async () =>
+      ((await ina("/admin-api/members")).json.members as { userId: string; instanceAdmin?: boolean }[])
+        .map((m) => [m.userId, m.instanceAdmin])
+        .sort();
+    expect(await flags()).toEqual([
+      ["bob", false],
+      ["cara", false],
+      ["eda", false],
+    ]);
+    expect((await ina("/admin-api/instance-admins", { userId: "eda", on: true })).status).toBe(200);
+    expect(await flags()).toContainEqual(["eda", true]);
+    // B's own admin sees the members, not who runs the instance
+    const members = (await (await dash("bob"))("/admin-api/members")).json.members as Record<string, unknown>[];
+    expect(members.every((m) => !("instanceAdmin" in m))).toBe(true);
+  });
 });

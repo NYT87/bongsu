@@ -500,6 +500,61 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect((await start()).status).toBe(200);
   });
 
+  it("the audit log: a workspace's people read only its rows, the instance's rows only an instance admin", async () => {
+    await env.DB.batch(
+      [
+        "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ina3', 'ina3@example.com', 'Ina', 0, 1) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO users (id, email, name, created_at) VALUES ('ed', 'ed@example.com', 'Ed', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ed', 'editor', 0) ON CONFLICT DO NOTHING",
+        "DELETE FROM audit",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    // the instance admin makes workspace A for someone else, and changes a media store: instance rows, and A's own
+    const made = await send("ina3", "dashboard", "/admin-api/workspaces", {
+      name: "Client A",
+      timezone: "UTC",
+      admin: "ann@example.com",
+    });
+    expect(made.status).toBe(200);
+    const a = String(made.json.id);
+    const stores = (await as("ina3", "dashboard", "/admin-api/media-stores")).json.stores as { kind: string }[];
+    expect(stores.length).toBeGreaterThan(0);
+    const inbox = await send("ina3", "dashboard", `/admin-api/media-stores/${stores[0].kind}/inbox`, { workspace: a });
+    expect(inbox.status).toBe(200);
+    const where = async () =>
+      (
+        await env.DB.prepare("SELECT action, workspace_id FROM audit ORDER BY id").all<{
+          action: string;
+          workspace_id: string | null;
+        }>()
+      ).results;
+    expect(await where()).toEqual([
+      { action: "workspace_create", workspace_id: null },
+      { action: "invite_create", workspace_id: a },
+      { action: "media_store_inbox", workspace_id: null },
+    ]);
+    // B's admin and editor: none of A's rows, none of the instance's, and no way to ask for them; a device's error
+    // in B's app is B's
+    expect((await send("ed", "pwa", "/app-api/client-error", { msg: "upload failed" })).status).toBe(200);
+    for (const who of ["bea", "ed"]) {
+      const log = await as(who, "dashboard", "/admin-api/audit");
+      expect(log.status, who).toBe(200);
+      expect(
+        (log.json.entries as { action: string }[]).map((x) => x.action),
+        who,
+      ).toEqual(["client_error"]);
+      expect((await as(who, "dashboard", "/admin-api/audit?instance=1")).status, who).toBe(403);
+    }
+    // the instance admin, in no workspace (A's admin is someone else): the instance's rows
+    const inst = await as("ina3", "dashboard", "/admin-api/audit?instance=1");
+    expect(inst.status).toBe(200);
+    expect((inst.json.entries as { action: string }[]).map((x) => x.action)).toEqual([
+      "media_store_inbox",
+      "workspace_create",
+    ]);
+    expect((await as("ina3", "dashboard", "/admin-api/audit")).json).toMatchObject({ noWorkspace: true });
+  });
+
   it("a user in no workspace is turned away", async () => {
     expect((await as("nobody", "dashboard", "/admin-api/accounts")).status).toBe(403);
     expect((await as("nobody", "pwa", "/app-api/status")).status).toBe(403);
