@@ -2,7 +2,7 @@
 // assets) and talks only to these routes, same origin. Sign-in is a passkey (the first one registered with a
 // one-time code made in the dashboard's Devices & passkeys); approving needs a fresh passkey assertion every time.
 
-import { DEFAULT_WORKSPACE, instagramAccounts } from "@bongsu/core/accounts";
+import { instagramAccounts } from "@bongsu/core/accounts";
 import { calendar } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import { replyToComment } from "@bongsu/core/comments";
@@ -20,7 +20,14 @@ import { connectSpecs } from "@bongsu/core/providers/index";
 import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { mayBeLive } from "@bongsu/core/tick";
-import { callerZone, sessionWorkspace, setUserZone, workspaceSettings, workspaceZone } from "@bongsu/core/workspaces";
+import {
+  callerZone,
+  FALLBACK_ZONE,
+  sessionWorkspace,
+  setUserZone,
+  workspaceSettings,
+  workspaceZone,
+} from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { type Caller, type Scope, scopesOf } from "../agent/auth";
@@ -42,15 +49,8 @@ type Vars = { Bindings: Env; Variables: { caller: Caller } };
 type C = Context<Vars>;
 // The app works as the signed-in user, in their session's workspace (core/workspaces.ts sessionWorkspace), with their
 // role's rights there (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming need
-// "approve" / "resume", pausing "pause", changing the plan "plan". Only the signed-out routes (who am I, setup, login)
-// fall back to OWNER: the default workspace, read-only.
-const OWNER: Caller = {
-  id: "owner",
-  name: "owner (app)",
-  scopes: ["read"],
-  workspaceId: DEFAULT_WORKSPACE,
-  userId: "owner",
-};
+// "approve" / "resume", pausing "pause", changing the plan "plan". The signed-out routes (who am I, setup, login) act
+// for no one and in no workspace.
 /** The scope each change needs; a POST not listed needs "plan" unless it's the person's own (session, device, zone). */
 const NEEDS: [RegExp, Scope | null][] = [
   [/^\/app-api\/approve\//, "approve"],
@@ -69,8 +69,12 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     if (!caller) throw new HTTPException(401, { res: Response.json({ error: "sign in" }, { status: 401 }) });
     return caller;
   };
-  /** Who a signed-out route (who am I, setup) acts as: the signed-in caller if there is one, else OWNER. */
-  const anyone = (c: C) => c.get("caller") ?? OWNER;
+  /** The signed-in user's id: every app caller is one (callerFor). */
+  const userOf = (c: C): string => {
+    const u = me(c).userId;
+    if (!u) throw new HTTPException(401, { res: Response.json({ error: "sign in" }, { status: 401 }) });
+    return u;
+  };
   const callerFor = async (c: C, s: Session): Promise<Caller | null> => {
     const where = await sessionWorkspace(c.env.DB, s);
     if (!where) return null;
@@ -88,11 +92,20 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   const opctx = (c: C): ops.OpCtx => ({ env: c.env, fetch: fetcher, now: new Date(), caller: me(c) });
   /** The signed-in user's time zone (their own, else the workspace's): what the app shows and takes times in. */
   const zone = (c: C) => callerZone(c.env.DB, me(c).workspaceId, me(c).userId);
-  const audit = (c: C, action: string, target: string | null, detail: unknown) =>
+  /** An audit row of the caller's, in their workspace; a signed-out route's (a new passkey) names its user and, without
+   *  a workspace, is the instance's. */
+  const audit = (c: C, action: string, target: string | null, detail: unknown, userId?: string) =>
     c.env.DB.prepare(
       "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, 'owner', ?2, ?3, ?4, ?5, ?6)",
     )
-      .bind(nowS(), action, target, JSON.stringify(detail), anyone(c).userId ?? null, anyone(c).workspaceId)
+      .bind(
+        nowS(),
+        action,
+        target,
+        JSON.stringify(detail),
+        userId ?? c.get("caller")?.userId ?? null,
+        c.get("caller")?.workspaceId ?? null,
+      )
       .run();
   /** Sets (or, with null, removes) one of an item's platform options; returns the item, or null when it isn't one of
    *  the workspace's. The options are read and written whole (no database-specific JSON functions). */
@@ -119,7 +132,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       nowS: nowS(),
       ttlS: LINK_TTL_S,
     });
-  const signIn = async (c: C, userId = "owner") => {
+  const signIn = async (c: C, userId: string) => {
     c.header("Set-Cookie", sessionCookie(await createSession(c.env.DB, nowS(), { userId })));
     return c.json({ signedIn: true });
   };
@@ -134,7 +147,6 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
     const caller = s && (await callerFor(c, s));
     if (caller) c.set("caller", caller);
-    const who = anyone(c);
     // active accounts of the caller's workspace: none means the app points at the dashboard's setup
     const accounts = caller
       ? await c.env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE workspace_id = ?1 AND status = 'active'")
@@ -146,11 +158,14 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       // the role's scopes (ROLE_SCOPES): the app shows an action only to someone who can take it
       scopes: caller?.scopes ?? [],
       setupNeeded: (n?.n ?? 0) === 0,
+      // signed in, but a member of no workspace (yet, or any more): the app says to ask for one
+      noWorkspace: !!s && !caller,
       accounts: accounts?.n ?? 0,
       vapidPublicKey: c.env.VAPID_PUBLIC_KEY,
       dryRun: c.env.DRY_RUN !== "0",
-      timezone: await callerZone(c.env.DB, who.workspaceId, who.userId),
-      workspaceTimezone: await workspaceZone(c.env.DB, who.workspaceId),
+      // the user's own zone, else their workspace's; UTC without one (never another workspace's)
+      timezone: s ? await callerZone(c.env.DB, caller?.workspaceId ?? null, s.userId) : FALLBACK_ZONE,
+      workspaceTimezone: caller ? await workspaceZone(c.env.DB, caller.workspaceId) : FALLBACK_ZONE,
       // the text the app shows (packages/web/src/i18n.ts): the workspace's, English for someone not signed in
       locale: caller ? (await workspaceSettings(c.env.DB, caller.workspaceId)).locale : "en",
     });
@@ -186,9 +201,11 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   app.post("/app-api/setup/verify", async (c) => {
     const b = await body(c);
-    let userId = "owner";
+    // the code's user, whom the challenge names: a code always belongs to someone (made in the dashboard)
+    let userId: string | null = null;
     const useCode = async (data: unknown) => {
-      userId = (data as { userId?: string } | null)?.userId ?? "owner";
+      userId = (data as { userId?: string } | null)?.userId ?? null;
+      if (!userId) return false;
       return !!(await c.env.DB.prepare(
         "UPDATE setup_codes SET used_at = ?1 WHERE code_hash = ?2 AND used_at IS NULL AND expires_at >= ?1 RETURNING code_hash",
       )
@@ -206,12 +223,13 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       nowS(),
       useCode,
     );
-    if (!ok) return c.json({ error: "passkey registration failed" }, 400);
-    // logged in the workspace the new device's user works in
-    const caller = await callerFor(c, { userId, app: "pwa", verifiedAt: nowS(), workspaceId: null });
+    const user = userId as string | null; // set by useCode
+    if (!ok || !user) return c.json({ error: "passkey registration failed" }, 400);
+    // logged in the workspace the new device's user works in (the instance's log when they have none yet)
+    const caller = await callerFor(c, { userId: user, app: "pwa", verifiedAt: nowS(), workspaceId: null });
     if (caller) c.set("caller", caller);
-    await audit(c, "passkey_add", null, { name: b.name ?? "device", user: userId });
-    return signIn(c, userId);
+    await audit(c, "passkey_add", null, { name: b.name ?? "device", user }, user);
+    return signIn(c, user);
   });
 
   app.post("/app-api/login/options", async (c) => {
@@ -520,7 +538,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         { error: "it changed since you opened it: check the new version, then approve", changed: true },
         409,
       );
-    return c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "approve", snap, nowS(), me(c).userId ?? "owner"));
+    return c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "approve", snap, nowS(), userOf(c)));
   });
 
   app.post("/app-api/approve/verify", async (c) => {
@@ -534,7 +552,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       "approve",
       b.response as { id?: string },
       nowS(),
-      me(c).userId ?? "owner",
+      userOf(c),
     );
     if (!v) return c.json({ error: "passkey check failed" }, 401);
     const shown = v.data as Snapshot;
@@ -548,7 +566,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         { error: "it changed since you opened it: check the new version, then approve", changed: true },
         409,
       );
-    await writeApproval(c.env, fetcher, r, now, new Date(), me(c).userId ?? "owner", "owner@app");
+    await writeApproval(c.env, fetcher, r, now, new Date(), userOf(c), "owner@app");
     await audit(c, "approve", shown.key, { due_at: shown.dueAt, media: shown.media.length });
     return c.json({ approved: true, key: shown.key, due: r.due });
   });
@@ -561,16 +579,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // Resuming can release approved items at once, so it needs a fresh passkey assertion, like approving. The challenge
   // reuses the "approve" purpose, tagged { action: "resume" }; each verify route rejects the other's challenges.
   app.post("/app-api/resume/options", async (c) =>
-    c.json(
-      await authenticationOptions(
-        c.env.DB,
-        c.env.RP_ID,
-        "approve",
-        { action: "resume" },
-        nowS(),
-        me(c).userId ?? "owner",
-      ),
-    ),
+    c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "approve", { action: "resume" }, nowS(), userOf(c))),
   );
   app.post("/app-api/resume/verify", async (c) => {
     const b = await body(c);
@@ -583,7 +592,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       "approve",
       b.response as { id?: string },
       nowS(),
-      me(c).userId ?? "owner",
+      userOf(c),
     );
     if (!v || (v.data as { action?: string } | null)?.action !== "resume")
       return c.json({ error: "passkey check failed" }, 401);
@@ -611,7 +620,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         "approve",
         { action: "release", video, at },
         nowS(),
-        me(c).userId ?? "owner",
+        userOf(c),
       );
     }),
   );
@@ -626,7 +635,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       "approve",
       b.response as { id?: string },
       nowS(),
-      me(c).userId ?? "owner",
+      userOf(c),
     );
     const bound = v?.data as { action?: string; video?: string; at?: number } | null | undefined;
     if (!v || bound?.action !== "release" || !bound.video || typeof bound.at !== "number")
@@ -640,7 +649,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
           at,
           nowS: nowS(),
           tz: await zone(c),
-          actor: { kind: "owner", userId: me(c).userId ?? null },
+          actor: { kind: "owner", userId: userOf(c) },
         }),
       );
     } catch (e) {
@@ -783,11 +792,11 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     wrap(async (c) => {
       const tz = (await body(c)).timezone;
       try {
-        await setUserZone(c.env.DB, me(c).userId ?? "owner", tz ? String(tz) : null);
+        await setUserZone(c.env.DB, userOf(c), tz ? String(tz) : null);
       } catch (e) {
         throw new ops.ApiError(400, (e as Error).message);
       }
-      await audit(c, "user_timezone", me(c).userId ?? "owner", { timezone: tz ?? null });
+      await audit(c, "user_timezone", userOf(c), { timezone: tz ?? null });
       return { timezone: await zone(c), workspaceTimezone: await workspaceZone(c.env.DB, me(c).workspaceId) };
     }),
   );

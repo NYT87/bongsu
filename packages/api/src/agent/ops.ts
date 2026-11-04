@@ -670,7 +670,8 @@ export async function pause(c: OpCtx, reason: string) {
   const set = await setPaused(
     c.env.DB,
     reason || "paused",
-    `${c.caller.id === "owner" ? "owner" : `API key "${c.caller.name}"`}`,
+    // the app's caller is the signed-in person (its id is theirs); a CLI token or an agent key is a key
+    c.caller.userId && c.caller.id === c.caller.userId ? "owner" : `API key "${c.caller.name}"`,
     c.now,
   );
   if (!set) return { paused: true, already: true };

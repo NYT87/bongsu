@@ -1,7 +1,7 @@
 // The plan data in D1 (see migrations/0001_init.sql): what's planned, approved, posted, the Shorts comments and
 // the pause switch. D1 is the source of truth; the repo only holds the content (captions, comments, alt texts).
 
-import { DEFAULT_WORKSPACE, findAccount, trialCapable, trialDefaultOn } from "./accounts";
+import { findAccount, trialCapable, trialDefaultOn } from "./accounts";
 import type { Db } from "./db";
 import type { Approval, MediaRef } from "./formats/approved";
 import {
@@ -23,7 +23,7 @@ export const defaultTime = (format: Format | null | undefined) => (format === "v
 export interface PlanItem {
   /** An opaque id: nothing parses it (older keys look like "reel:<project>/<base>"). */
   item_key: string;
-  workspace_id?: string;
+  workspace_id: string;
   account: string;
   folder: string;
   name: string;
@@ -70,7 +70,7 @@ export const keyClass = (format: Format | null | undefined) => (format === "vide
 export async function trialDefault(
   db: Db,
   accountId: string,
-  workspaceId = DEFAULT_WORKSPACE,
+  workspaceId: string,
 ): Promise<{ capable: boolean; on: boolean }> {
   const a = await findAccount(db, accountId, workspaceId, "instagram");
   if (!a || !trialCapable(a)) return { capable: false, on: false };
@@ -82,7 +82,7 @@ export async function trialFor(
   db: Db,
   i: Pick<PlanItem, "account" | "options" | "workspace_id">,
 ): Promise<{ capable: boolean; on: boolean; byDefault: boolean; explicit: boolean }> {
-  const d = await trialDefault(db, i.account, i.workspace_id ?? DEFAULT_WORKSPACE);
+  const d = await trialDefault(db, i.account, i.workspace_id);
   const t = itemOptions(i).trial;
   const explicit = typeof t === "boolean";
   return { capable: d.capable, byDefault: d.on, explicit, on: d.capable && (explicit ? t === true : d.on) };
@@ -490,23 +490,14 @@ export async function recordPosted(
     publishedAt: number;
     /** Now, in unix seconds. */
     recordedAt: number;
-    workspaceId?: string;
+    workspaceId: string;
   },
 ): Promise<boolean> {
   const r = await db
     .prepare(
       "INSERT INTO posted (item_key, account, media_id, permalink, source, published_at, workspace_id, at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8) ON CONFLICT (item_key) DO NOTHING RETURNING item_key",
     )
-    .bind(
-      p.key,
-      p.account,
-      p.mediaId,
-      p.permalink,
-      p.source,
-      p.publishedAt,
-      p.workspaceId ?? DEFAULT_WORKSPACE,
-      p.recordedAt,
-    )
+    .bind(p.key, p.account, p.mediaId, p.permalink, p.source, p.publishedAt, p.workspaceId, p.recordedAt)
     .first();
   return !!r;
 }
@@ -550,14 +541,14 @@ export async function recordCommented(
     threadId: string | null;
     label: string | null;
     source: "scheduler" | "manual" | "import";
-    workspaceId?: string;
+    workspaceId: string;
   },
 ) {
   await db
     .prepare(
       "INSERT INTO shorts_commented (video_id, channel, date_pt, thread_id, label, source, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (video_id) DO NOTHING",
     )
-    .bind(c.video, c.channel, c.datePt, c.threadId, c.label, c.source, c.workspaceId ?? DEFAULT_WORKSPACE)
+    .bind(c.video, c.channel, c.datePt, c.threadId, c.label, c.source, c.workspaceId)
     .run();
 }
 

@@ -9,6 +9,8 @@ import type { Platform } from "./platforms/types";
 
 /** A registered platform's id (platforms/index.ts): "instagram", "youtube"… */
 export type PlatformId = string;
+/** The workspace instances made before Phase 13 keep their data in (a fresh one has none): what reads that data, the
+ *  tests, name it. Nothing falls back to it. */
 export const DEFAULT_WORKSPACE = "default";
 
 export interface Connection {
@@ -192,7 +194,7 @@ export async function setAccountSettings(db: Db, id: string, patch: Record<strin
 
 export interface NewConnection {
   id: string;
-  workspaceId?: string;
+  workspaceId: string;
   provider: Connection["provider"];
   kind: Connection["kind"];
   label?: string | null;
@@ -214,7 +216,7 @@ export async function upsertConnection(db: Db, c: NewConnection, nowS: number) {
     )
     .bind(
       c.id,
-      c.workspaceId ?? DEFAULT_WORKSPACE,
+      c.workspaceId,
       c.provider,
       c.kind,
       c.label ?? null,
@@ -228,7 +230,7 @@ export async function upsertConnection(db: Db, c: NewConnection, nowS: number) {
 
 export interface NewAccount {
   id: string;
-  workspaceId?: string;
+  workspaceId: string;
   platform: PlatformId;
   handle: string;
   displayName?: string | null;
@@ -252,7 +254,7 @@ export async function upsertAccount(db: Db, a: NewAccount, nowS: number) {
     )
     .bind(
       a.id,
-      a.workspaceId ?? DEFAULT_WORKSPACE,
+      a.workspaceId,
       a.platform,
       a.handle,
       a.displayName ?? null,

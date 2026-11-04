@@ -42,8 +42,16 @@ describe("/health", () => {
     await env.DB.prepare("DELETE FROM accounts").run();
     await env.DB.prepare("DELETE FROM connections").run();
     expect((await health({ COMPOSIO_CONSUMER_KEY: undefined })).missing_secrets).toEqual([]); // no Composio connection
-    await upsertConnection(env.DB, { id: "c1", provider: "composio", kind: "composio", externalRef: "x" }, 0);
-    await upsertConnection(env.DB, { id: "g1", provider: "instagram", kind: "oauth", secretName: "IG" }, 0);
+    await upsertConnection(
+      env.DB,
+      { workspaceId: "default", id: "c1", provider: "composio", kind: "composio", externalRef: "x" },
+      0,
+    );
+    await upsertConnection(
+      env.DB,
+      { workspaceId: "default", id: "g1", provider: "instagram", kind: "oauth", secretName: "IG" },
+      0,
+    );
     expect((await health({ COMPOSIO_CONSUMER_KEY: undefined, ENCRYPTION_KEY: undefined })).missing_secrets).toEqual([
       "COMPOSIO_CONSUMER_KEY",
       "ENCRYPTION_KEY",

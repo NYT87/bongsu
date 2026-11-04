@@ -6,7 +6,6 @@
 import {
   type Account,
   captionRules,
-  DEFAULT_WORKSPACE,
   listAccounts,
   setAccountSettings,
   trialCapable,
@@ -41,6 +40,7 @@ import {
   savedCredentials,
   saveStore,
   setDefaultStore,
+  setInboxWorkspace,
   startDriveConnect,
   testStore,
   waitingApprovalsIn,
@@ -134,9 +134,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return {};
     }
   };
-  /** The signed-in user's workspace (set with the session; the default one before sign-in). */
-  const ws = (c: C) => c.get("workspace") ?? DEFAULT_WORKSPACE;
-  /** `workspaceId` null: an instance-level row (the bootstrap, a new workspace), in no workspace. */
+  /** The signed-in user's workspace (set with the session). A request without one (an instance admin in none, on the
+   *  instance's pages) has nothing of a workspace's to read or change. */
+  const ws = (c: C): string => {
+    const w = c.get("workspace");
+    if (!w) throw new AdminError(403, "you're not a member of any workspace", { noWorkspace: true });
+    return w;
+  };
+  /** `workspaceId` null: an instance-level row (the bootstrap, a new workspace, the media stores, the OAuth apps), in
+   *  no workspace; left out, the request's workspace, or none (a sign-in, before the session's workspace is known). */
   const audit = (
     c: C,
     action: string,
@@ -155,7 +161,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         target,
         JSON.stringify(detail),
         userId ?? c.get("session")?.userId ?? null,
-        workspaceId === undefined ? ws(c) : workspaceId,
+        workspaceId === undefined ? (c.get("workspace") ?? null) : workspaceId,
       )
       .run();
   const wrap = (fn: (c: C) => Promise<unknown>) => async (c: C) => {
@@ -430,7 +436,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         },
         nowS(),
       );
-      await audit(c, "media_store_save", "drive", { connected: true }, r.userId, DEFAULT_WORKSPACE);
+      await audit(c, "media_store_save", "drive", { connected: true }, r.userId, null);
       return back({ connected: "drive" });
     } catch (e) {
       return back({ error: (e as Error).message.slice(0, 300) });
@@ -1068,7 +1074,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         c.get("session").userId,
         nowS(),
       );
-      await audit(c, "oauth_app_save", id, { clientId: String(b.clientId ?? "").trim() });
+      await audit(c, "oauth_app_save", id, { clientId: String(b.clientId ?? "").trim() }, undefined, null);
       return { saved: true };
     }),
   );
@@ -1078,7 +1084,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       fresh(c);
       const id = c.req.param("id") ?? "";
       await removeOAuthApp(c.env.DB, id);
-      await audit(c, "oauth_app_remove", id, {});
+      await audit(c, "oauth_app_remove", id, {}, undefined, null);
       return { removed: true };
     }),
   );
@@ -1139,8 +1145,16 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           lastCheckedAt: r.lastCheckedAt ? utcIso(r.lastCheckedAt) : null,
           // what removing it would void
           waitingApprovals: await waitingApprovalsIn(c.env, r.kind),
+          inboxWorkspace: r.inboxWorkspace,
         })),
       ),
+      // what an inbox can feed
+      workspaces: (
+        await c.env.DB.prepare("SELECT id, name FROM workspaces WHERE archived_at IS NULL ORDER BY name, id").all<{
+          id: string;
+          name: string;
+        }>()
+      ).results,
       offered: offeredKinds(),
       googleApp: !!(await c.env.DB.prepare("SELECT 1 FROM oauth_apps WHERE id = 'google'").first()),
       encryptionKeySet: !!c.env.ENCRYPTION_KEY,
@@ -1173,7 +1187,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const kind = storeKind(c);
       const { settings, credentials } = await storeInput(c, kind, await body(c));
       await saveStore(c.env, fetcher, kind, settings, credentials, c.get("session").userId, nowS());
-      await audit(c, "media_store_save", kind, kind === "s3" ? { ...settings } : {});
+      await audit(c, "media_store_save", kind, kind === "s3" ? { ...settings } : {}, undefined, null);
       return { saved: true };
     }),
   );
@@ -1189,8 +1203,20 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const kind = storeKind(c);
       await setDefaultStore(c.env, kind, nowS());
-      await audit(c, "media_store_default", kind, {});
+      await audit(c, "media_store_default", kind, {}, undefined, null);
       return { default: kind };
+    }),
+  );
+  // The workspace that gets the drafts of the projects in this store's inbox that no plan has yet (null: they wait).
+  app.post(
+    "/admin-api/media-stores/:kind/inbox",
+    wrap(async (c) => {
+      const kind = storeKind(c);
+      const w = (await body(c)).workspace;
+      const workspace = typeof w === "string" && w ? w : null;
+      await setInboxWorkspace(c.env, kind, workspace, nowS());
+      await audit(c, "media_store_inbox", kind, { workspace }, undefined, null);
+      return { inboxWorkspace: workspace };
     }),
   );
   app.post(
@@ -1200,7 +1226,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const kind = storeKind(c);
       const voided = await waitingApprovalsIn(c.env, kind);
       await removeStore(c.env, kind, nowS());
-      await audit(c, "media_store_remove", kind, { voidedApprovals: voided });
+      await audit(c, "media_store_remove", kind, { voidedApprovals: voided }, undefined, null);
       return { removed: true, voidedApprovals: voided };
     }),
   );

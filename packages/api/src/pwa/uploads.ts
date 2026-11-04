@@ -2,7 +2,7 @@
 // store the owner picks (createUpload: a Drive resumable session, an S3 presigned PUT), so big Reels never pass through
 // the Worker. Files land in the app's own folder in that store, APP_FOLDER.
 
-import { DEFAULT_WORKSPACE, instagramAccounts } from "@bongsu/core/accounts";
+import { instagramAccounts } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
 import { type MediaStores, mediaStores } from "@bongsu/core/media/index";
 import { isMedia, isVideo } from "@bongsu/core/media/store";
@@ -64,7 +64,7 @@ export async function draftFromUploads(
   fetcher: typeof fetch,
   b: Record<string, unknown>,
   nowS: number,
-  workspaceId = DEFAULT_WORKSPACE,
+  workspaceId: string,
 ): Promise<{ id: string }> {
   const ids = Array.isArray(b.files) ? b.files.map(String) : [];
   if (!ids.length || ids.length > 10) throw new UploadError(400, "1 to 10 files");
@@ -108,8 +108,8 @@ export async function draftFromUploads(
       "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'pwa', 'owner', 'draft', ?5, ?5, ?6)",
     ).bind(id, kind, account, JSON.stringify(payload), nowS, workspaceId),
     env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail) VALUES (?1, 'owner', 'draft_upload', ?2, ?3)",
-    ).bind(nowS, id, JSON.stringify({ kind, files: files.length })),
+      "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'owner', 'draft_upload', ?2, ?3, ?4)",
+    ).bind(nowS, id, JSON.stringify({ kind, files: files.length }), workspaceId),
   ]);
   return { id };
 }

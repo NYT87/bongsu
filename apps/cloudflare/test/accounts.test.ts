@@ -37,10 +37,10 @@ describe("accounts", () => {
 
   it("keeps the Trial Reels default in the account's settings", async () => {
     await testEnv(env);
-    expect(await trialDefault(env.DB, "demo_running")).toEqual({ capable: true, on: true });
-    expect(await trialDefault(env.DB, "demo_travel")).toEqual({ capable: false, on: false });
+    expect(await trialDefault(env.DB, "demo_running", "default")).toEqual({ capable: true, on: true });
+    expect(await trialDefault(env.DB, "demo_travel", "default")).toEqual({ capable: false, on: false });
     await setAccountSettings(env.DB, "demo_running", { trialReels: false }, 1);
-    expect(await trialDefault(env.DB, "demo_running")).toEqual({ capable: true, on: false });
+    expect(await trialDefault(env.DB, "demo_running", "default")).toEqual({ capable: true, on: false });
     const a = await findAccount(env.DB, "demo_running", "default");
     expect(trialDefaultOn(a!)).toBe(false);
   });
@@ -53,8 +53,16 @@ describe("connections", () => {
     expect(JSON.parse((await connectionSecret(e, main!.connection))!).refresh_token).toBe("r-main");
 
     const sealed = await encryptSecret("an-encryption-key-for-the-tests", '{"refresh_token":"r-db"}');
-    await upsertConnection(env.DB, { id: "c_db", provider: "youtube", kind: "oauth", credentials: sealed }, 1);
-    await upsertAccount(env.DB, { id: "third", platform: "youtube", handle: "third", connectionId: "c_db" }, 1);
+    await upsertConnection(
+      env.DB,
+      { workspaceId: "default", id: "c_db", provider: "youtube", kind: "oauth", credentials: sealed },
+      1,
+    );
+    await upsertAccount(
+      env.DB,
+      { workspaceId: "default", id: "third", platform: "youtube", handle: "third", connectionId: "c_db" },
+      1,
+    );
     const third = await findAccount(env.DB, "third", "default");
     expect(JSON.parse((await connectionSecret(e, third!.connection))!).refresh_token).toBe("r-db");
     await expect(

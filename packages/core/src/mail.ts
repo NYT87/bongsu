@@ -49,14 +49,22 @@ export function mailer(env: Partial<Env>, fetcher: typeof fetch): Mailer {
   };
 }
 
-/** The emails of a workspace's owners and admins: who hears about its connections. */
+/** The emails of a workspace's admins: who hears about its connections. */
 export async function workspaceAdmins(db: Db, workspaceId: string): Promise<string[]> {
   const r = await db
     .prepare(
       `SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id
-       WHERE m.workspace_id = ?1 AND m.role IN ('owner', 'admin') AND u.email IS NOT NULL ORDER BY u.email`,
+       WHERE m.workspace_id = ?1 AND m.role = 'admin' AND u.email IS NOT NULL ORDER BY u.email`,
     )
     .bind(workspaceId)
+    .all<{ email: string }>();
+  return r.results.map((x) => x.email);
+}
+
+/** The emails of the instance admins: who hears about what's the instance's (the media stores). */
+export async function instanceAdmins(db: Db): Promise<string[]> {
+  const r = await db
+    .prepare("SELECT email FROM users WHERE instance_admin = 1 AND email IS NOT NULL ORDER BY email")
     .all<{ email: string }>();
   return r.results.map((x) => x.email);
 }

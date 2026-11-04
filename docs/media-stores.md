@@ -20,7 +20,9 @@ agent API, the upload page's first choice).
 credentials don't decrypt, or a kind the runtime doesn't offer, lands in `errors` instead of failing the request), with
 `for(ref)` (the store a reference names, or null), `default`, `all` and `uploadable`. `media/manage.ts` is the
 dashboard's side: `testStore`, `saveStore` (tests first), `setDefaultStore`, `removeStore`, `waitingApprovalsIn`,
-Connect Google Drive (`startDriveConnect`, `finishDriveConnect`) and the weekly `checkStores` in the inbox's cron run.
+Connect Google Drive (`startDriveConnect`, `finishDriveConnect`), `setInboxWorkspace` and the weekly `checkStores` in
+the inbox's cron run. The stores are the instance's: a broken one is told to the instance admins
+(`notifyInstanceAdmins`: the audit log in no workspace, and an email with a `Mailer`), not to any workspace.
 
 ## How a store is used
 
@@ -28,7 +30,7 @@ Connect Google Drive (`startDriveConnect`, `finishDriveConnect`) and the weekly 
 |---|---|
 | Publishing (`core/tick.ts`) | `stat` each approved file in its own store just before publishing: it must still exist with the approved checksum |
 | Media links (`core/media.ts`) | `publicUrl` when the file's store has it (Instagram fetches the store directly); otherwise a signed `/m/<store>/<id>` link that `stat`s and `stream`s the file, ranges included |
-| The inbox (`core/inbox.ts`) | in every store: `resolve("UPLOADS/inbox")`, `list` each project, `readText` the caption files; a store that fails doesn't stop the others |
+| The inbox (`core/inbox.ts`) | in every store: `resolve("UPLOADS/inbox")`, `list` each project, `readText` the caption files; a store that fails doesn't stop the others. A project's draft goes to the workspace whose plan has it, else to the store's **inbox feeds** workspace (`media_store.inbox_workspace`, the Media page); without one it waits (`inboxWorkspace`) |
 | Cleanup (`core/cleanup.ts`) | `move` posted media (a post as its folder) to `UPLOADS/_posted/` in its own store, `ensureFolder` |
 | The app (`api/pwa/approve.ts`, `uploads.ts`) | `resolve` / `list` / `stat` an item's media for the approval page; `createUpload` in the store the owner picks |
 

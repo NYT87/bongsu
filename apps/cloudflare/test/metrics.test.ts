@@ -456,7 +456,7 @@ describe("the metrics sampler", () => {
 describe("the metrics routes", () => {
   let cookie = "";
   beforeEach(async () => {
-    cookie = `bongsu_session=${await createSession(env.DB, Math.floor(Date.now() / 1000), { app: "pwa" })}`;
+    cookie = `bongsu_session=${await createSession(env.DB, Math.floor(Date.now() / 1000), { app: "pwa", userId: "owner" })}`;
   });
   const get = async <T = Record<string, unknown>>(path: string) => {
     const r = await appRoutes(w.fetch).request(`https://bongsu.test${path}`, { headers: { Cookie: cookie } }, e);

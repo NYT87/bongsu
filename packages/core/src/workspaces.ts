@@ -1,7 +1,6 @@
 // A workspace's settings (workspace_settings): its time zone (the default for showing and entering times; the database
 // keeps UTC), the daily digest's hour and the locale. A user may pick their own zone (users.timezone).
 
-import { DEFAULT_WORKSPACE } from "./accounts";
 import type { Db } from "./db";
 import { isTimeZone } from "./formats/time";
 import { isInstanceAdmin, isRole, type Role } from "./roles";
@@ -13,9 +12,11 @@ export interface WorkspaceSettings {
   locale: string;
 }
 
-const FALLBACK = { timezone: "UTC", digestHour: 8, locale: "en" };
+/** The zone of a workspace without settings, and of someone in no workspace. */
+export const FALLBACK_ZONE = "UTC";
+const FALLBACK = { timezone: FALLBACK_ZONE, digestHour: 8, locale: "en" };
 
-export async function workspaceSettings(db: Db, workspaceId = DEFAULT_WORKSPACE): Promise<WorkspaceSettings> {
+export async function workspaceSettings(db: Db, workspaceId: string): Promise<WorkspaceSettings> {
   const r = await db
     .prepare("SELECT timezone, digest_hour, locale FROM workspace_settings WHERE workspace_id = ?1")
     .bind(workspaceId)
@@ -29,16 +30,16 @@ export async function workspaceSettings(db: Db, workspaceId = DEFAULT_WORKSPACE)
   };
 }
 
-/** The user's first workspace that isn't archived (the oldest membership; the default workspace first among equals),
- *  with their role there. Null when they belong to none. */
+/** The user's first workspace that isn't archived (the oldest membership), with their role there. Null when they
+ *  belong to none. */
 async function firstMembership(db: Db, userId: string) {
   return db
     .prepare(
       `SELECT m.workspace_id, m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
        WHERE m.user_id = ?1 AND w.archived_at IS NULL
-       ORDER BY m.created_at, m.workspace_id = ?2 DESC, m.workspace_id LIMIT 1`,
+       ORDER BY m.created_at, m.workspace_id LIMIT 1`,
     )
-    .bind(userId, DEFAULT_WORKSPACE)
+    .bind(userId)
     .first<{ workspace_id: string; role: string }>();
 }
 
@@ -72,8 +73,7 @@ export async function sessionWorkspace(
 }
 
 /** The workspace's time zone. */
-export const workspaceZone = async (db: Db, workspaceId = DEFAULT_WORKSPACE) =>
-  (await workspaceSettings(db, workspaceId)).timezone;
+export const workspaceZone = async (db: Db, workspaceId: string) => (await workspaceSettings(db, workspaceId)).timezone;
 
 export async function setWorkspaceSettings(
   db: Db,
@@ -93,8 +93,9 @@ export async function setWorkspaceSettings(
     .run();
 }
 
-/** The zone a person sees and enters times in: their own (users.timezone), else their workspace's. */
-export async function callerZone(db: Db, workspaceId: string, userId?: string | null): Promise<string> {
+/** The zone a person sees and enters times in: their own (users.timezone), else their workspace's; UTC for someone in
+ *  no workspace (signed in before they have one). */
+export async function callerZone(db: Db, workspaceId: string | null, userId?: string | null): Promise<string> {
   if (userId) {
     const r = await db
       .prepare("SELECT timezone FROM users WHERE id = ?1")
@@ -102,7 +103,7 @@ export async function callerZone(db: Db, workspaceId: string, userId?: string | 
       .first<{ timezone: string | null }>();
     if (r?.timezone && isTimeZone(r.timezone)) return r.timezone;
   }
-  return workspaceZone(db, workspaceId);
+  return workspaceId ? workspaceZone(db, workspaceId) : FALLBACK.timezone;
 }
 
 /** A user's own zone; null goes back to the workspace's. */

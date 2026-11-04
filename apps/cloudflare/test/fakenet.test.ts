@@ -73,10 +73,21 @@ beforeEach(async () => {
 describe("a third network", () => {
   it("is listed, planned, approved and published through the same code as Instagram", async () => {
     const e = await testEnv(env);
-    await upsertConnection(env.DB, { id: "c_fake", provider: "fakenet", kind: "oauth", secretName: "UNUSED" }, 0);
+    await upsertConnection(
+      env.DB,
+      { workspaceId: "default", id: "c_fake", provider: "fakenet", kind: "oauth", secretName: "UNUSED" },
+      0,
+    );
     await upsertAccount(
       env.DB,
-      { id: "fake_writer", platform: "fakenet", handle: "fake_writer", externalId: "fn-user", connectionId: "c_fake" },
+      {
+        workspaceId: "default",
+        id: "fake_writer",
+        platform: "fakenet",
+        handle: "fake_writer",
+        externalId: "fn-user",
+        connectionId: "c_fake",
+      },
       0,
     );
     const c = { ...ctx(e), caller: { ...ctx(e).caller, scopes: ["read", "plan"] as ("read" | "plan")[] } };
@@ -140,10 +151,21 @@ describe("a third network", () => {
 
   it("its caption rules block approval when they fail", async () => {
     const e = await testEnv(env);
-    await upsertConnection(env.DB, { id: "c_fake", provider: "fakenet", kind: "oauth", secretName: "UNUSED" }, 0);
+    await upsertConnection(
+      env.DB,
+      { workspaceId: "default", id: "c_fake", provider: "fakenet", kind: "oauth", secretName: "UNUSED" },
+      0,
+    );
     await upsertAccount(
       env.DB,
-      { id: "fake_writer", platform: "fakenet", handle: "fake_writer", externalId: "fn-user", connectionId: "c_fake" },
+      {
+        workspaceId: "default",
+        id: "fake_writer",
+        platform: "fakenet",
+        handle: "fake_writer",
+        externalId: "fn-user",
+        connectionId: "c_fake",
+      },
       0,
     );
     const c = { ...ctx(e), caller: { ...ctx(e).caller, scopes: ["read", "plan"] as ("read" | "plan")[] } };

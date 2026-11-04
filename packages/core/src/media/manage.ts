@@ -1,11 +1,10 @@
 // Setting up the media stores (the dashboard's Media page; docs/media-stores.md): save one (its settings, its
 // credentials encrypted), test it before saving, make it the default, remove it (with how many waiting approvals that
 // voids), connect Google Drive with the owner's Google app, and check every store weekly in the inbox's cron run.
-import { DEFAULT_WORKSPACE } from "../accounts";
 import { authorizeUrl, type CallbackQuery, ConnectError, driveRedirectUri, oauthApp, takeState } from "../connections";
 import { decryptSecret, encryptSecret } from "../crypto";
 import type { Env } from "../env";
-import { notifier } from "../notify";
+import { notifyInstanceAdmins } from "../notify";
 import { mediaStoreProblem } from "../texts/notifications";
 import { DRIVE_SCOPE } from "./drive";
 import { buildStore, offeredKinds, type StoreKind, storeRows } from "./index";
@@ -128,6 +127,20 @@ export async function setDefaultStore(env: Env, kind: StoreKind, nowS: number) {
   ]);
 }
 
+/** The workspace a store's inbox feeds with projects no plan has yet (core/inbox.ts inboxWorkspace); null: none, they
+ *  wait. An archived or unknown workspace is refused. */
+export async function setInboxWorkspace(env: Env, kind: StoreKind, workspaceId: string | null, nowS: number) {
+  if (!(await storeRows(env.DB)).some((r) => r.kind === kind)) throw new StoreError(`no ${kind} store is set up`);
+  if (
+    workspaceId !== null &&
+    !(await env.DB.prepare("SELECT 1 FROM workspaces WHERE id = ?1 AND archived_at IS NULL").bind(workspaceId).first())
+  )
+    throw new StoreError(`no workspace ${workspaceId}`);
+  await env.DB.prepare("UPDATE media_store SET inbox_workspace = ?1, updated_at = ?2 WHERE kind = ?3")
+    .bind(workspaceId, nowS, kind)
+    .run();
+}
+
 /** Approvals of items not published yet whose media are in a store: what removing it voids. */
 export async function waitingApprovalsIn(env: Env, kind: StoreKind): Promise<number> {
   const r = await env.DB.prepare(
@@ -218,7 +231,8 @@ export async function finishDriveConnect(env: Env, fetcher: typeof fetch, q: Cal
 
 // ---- the weekly check
 
-/** Each store, weekly (in the inbox's cron run): it still answers, or it's marked broken and the owner is told once. */
+/** Each store, weekly (in the inbox's cron run): it still answers, or it's marked broken and the instance admins are
+ *  told once. */
 export async function checkStores(
   env: Env,
   deps: { fetch: typeof fetch; now: Date },
@@ -242,8 +256,7 @@ export async function checkStores(
     (error ? out.broken : out.checked).push(r.kind);
     if (error && r.status !== "broken") problems.push(`${r.kind}: ${error}`);
   }
-  // the stores are the instance's: the default workspace (the instance owner's) hears of them
-  if (problems.length)
-    await notifier(env, deps.fetch, nowS).send(mediaStoreProblem(problems.join("\n")), DEFAULT_WORKSPACE);
+  // the stores are the instance's: its admins hear of them, not any one workspace
+  if (problems.length) await notifyInstanceAdmins(env, deps.fetch, mediaStoreProblem(problems.join("\n")), nowS);
   return out;
 }

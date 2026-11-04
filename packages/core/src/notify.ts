@@ -4,6 +4,7 @@
 // topic or devices.
 import type { Db } from "./db";
 import type { Env } from "./env";
+import { instanceAdmins, mailer } from "./mail";
 import { postNtfy, workspaceNtfy } from "./ntfy";
 import { sendPush } from "./push";
 import type { Note } from "./texts/notifications";
@@ -86,6 +87,27 @@ export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifie
       );
     },
   };
+}
+
+/** A notice about the instance itself (a broken media store), for the instance admins: the audit log in no workspace,
+ *  and an email to each of them with an address when a Mailer is set. No workspace's topic or devices get it: the
+ *  instance isn't any one workspace's. A mail failure is logged; the audit row is already written. */
+export async function notifyInstanceAdmins(env: Env, fetcher: typeof fetch, note: Note, nowS: number) {
+  console.log(`notify (instance): ${note.title}: ${note.text}`);
+  await env.DB.prepare(
+    "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, NULL)",
+  )
+    .bind(nowS, note.target ?? null, JSON.stringify({ title: note.title, text: note.text }))
+    .run();
+  try {
+    const mail = mailer(env, fetcher);
+    if (mail.id === "none") return;
+    const to = await instanceAdmins(env.DB);
+    const link = note.mail ? `\n\n${env.PUBLIC_URL.replace(/\/$/, "")}${note.mail.page}` : "";
+    await mail.send({ to, subject: note.mail?.subject ?? `Bongsu: ${note.title}`, text: `${note.text}${link}` });
+  } catch (e) {
+    console.log(`mail: ${(e as Error).message}`);
+  }
 }
 
 export async function audit(db: Db, nowS: number, action: string, target: string | null, detail: unknown) {

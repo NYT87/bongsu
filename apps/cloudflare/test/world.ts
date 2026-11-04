@@ -594,10 +594,23 @@ export async function seedAccounts(db: Env["DB"] = env.DB) {
     ["demo_cycling", "17841400000000003", "instagram_conn-c", {}],
   ] as const;
   for (const [i, [id, igId, ref, caps]] of ig.entries()) {
-    await upsertConnection(db, { id: `c_${id}`, provider: "composio", kind: "composio", externalRef: ref }, at);
+    await upsertConnection(
+      db,
+      { workspaceId: "default", id: `c_${id}`, provider: "composio", kind: "composio", externalRef: ref },
+      at,
+    );
     await upsertAccount(
       db,
-      { id, platform: "instagram", handle: id, externalId: igId, connectionId: `c_${id}`, capabilities: caps, sort: i },
+      {
+        workspaceId: "default",
+        id,
+        platform: "instagram",
+        handle: id,
+        externalId: igId,
+        connectionId: `c_${id}`,
+        capabilities: caps,
+        sort: i,
+      },
       at,
     );
   }
@@ -605,10 +618,22 @@ export async function seedAccounts(db: Env["DB"] = env.DB) {
     ["main", "Main", "YT_MAIN_OAUTH"],
     ["vlogs", "Vlogs", "YT_VLOGS_OAUTH"],
   ].entries()) {
-    await upsertConnection(db, { id: `c_${id}`, provider: "youtube", kind: "oauth", secretName: secret }, at);
+    await upsertConnection(
+      db,
+      { workspaceId: "default", id: `c_${id}`, provider: "youtube", kind: "oauth", secretName: secret },
+      at,
+    );
     await upsertAccount(
       db,
-      { id, platform: "youtube", handle: id, displayName: name, connectionId: `c_${id}`, sort: i },
+      {
+        workspaceId: "default",
+        id,
+        platform: "youtube",
+        handle: id,
+        displayName: name,
+        connectionId: `c_${id}`,
+        sort: i,
+      },
       at,
     );
   }
@@ -698,6 +723,7 @@ export async function planItem(o: {
   time?: string | null;
   location?: string | null;
   hold?: boolean;
+  workspaceId?: string;
 }) {
   const kind = o.kind ?? "reel"; // the tests' shorthand: a reel is a video, a post's media decide its format
   const format = kind === "reel" ? "video" : null;
@@ -705,7 +731,7 @@ export async function planItem(o: {
   const date = o.date === undefined ? "2026-10-20" : o.date;
   const due = date === null ? null : await localToUnix(date, o.time ?? defaultTime(format));
   await env.DB.prepare(
-    "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, (SELECT COALESCE(MAX(sort),0)+1 FROM plan_items), 0, 0)",
+    "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, (SELECT COALESCE(MAX(sort),0)+1 FROM plan_items), 0, 0, ?9)",
   )
     .bind(
       key,
@@ -716,6 +742,7 @@ export async function planItem(o: {
       due,
       JSON.stringify(o.location ? { location: o.location } : {}),
       o.hold ? 1 : 0,
+      o.workspaceId ?? "default",
     )
     .run();
   return key;
@@ -846,7 +873,14 @@ export async function seedReel(
 export async function connectGraph(accountId = "demo_cycling", igUserId = "17841400000000003") {
   await upsertConnection(
     env.DB,
-    { id: `g_${accountId}`, provider: "instagram", kind: "oauth", label: `@${accountId}`, secretName: "IG_TOKEN_DEMO" },
+    {
+      workspaceId: "default",
+      id: `g_${accountId}`,
+      provider: "instagram",
+      kind: "oauth",
+      label: `@${accountId}`,
+      secretName: "IG_TOKEN_DEMO",
+    },
     0,
   );
   await env.DB.prepare(

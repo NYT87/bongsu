@@ -152,6 +152,36 @@ describe("the dashboard's Media page", () => {
   });
 });
 
+describe("the workspace a store's inbox feeds", () => {
+  it("is chosen per store by an instance admin, among the workspaces; none leaves new projects waiting", async () => {
+    const listed = async () => (await call("/admin-api/media-stores")).json;
+    const first = await listed();
+    expect((first.stores as { kind: string; inboxWorkspace: string | null }[])[0]).toMatchObject({
+      kind: "drive",
+      inboxWorkspace: null,
+    });
+    expect(first.workspaces).toEqual(expect.arrayContaining([{ id: "default", name: expect.any(String) }]));
+    expect(await call("/admin-api/media-stores/drive/inbox", { workspace: "default" })).toMatchObject({
+      status: 200,
+      json: { inboxWorkspace: "default" },
+    });
+    expect((await listed()).stores).toEqual([expect.objectContaining({ kind: "drive", inboxWorkspace: "default" })]);
+    const audit = await env.DB.prepare(
+      "SELECT target, detail, workspace_id FROM audit WHERE action = 'media_store_inbox'",
+    ).first<{ target: string; detail: string; workspace_id: string | null }>();
+    expect(audit).toEqual({ target: "drive", detail: '{"workspace":"default"}', workspace_id: null });
+    // a workspace that doesn't exist, or a store that isn't set up, is refused
+    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: "nope" })).status).toBe(400);
+    expect((await call("/admin-api/media-stores/s3/inbox", { workspace: "default" })).status).toBe(400);
+    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: null })).json).toEqual({
+      inboxWorkspace: null,
+    });
+    // a workspace admin who isn't an instance admin can't choose it
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE email = 'owner@example.com'").run();
+    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: "default" })).status).toBe(403);
+  });
+});
+
 describe("Connect Google Drive", () => {
   it("asks Google for the drive scope with PKCE, and saves the grant as the Drive store", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
@@ -205,6 +235,8 @@ describe("Connect Google Drive", () => {
 describe("several stores side by side", () => {
   it("drafts what's dropped in the inbox of every store, each draft naming its store", async () => {
     await seedS3Store();
+    // "trip" is in no plan: the stores' inboxes feed the default workspace
+    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'default'").run();
     const env2 = { ...e };
     w.drivePut("UPLOADS/inbox/trip/fromdrive.mp4", {
       md5: "d1",
@@ -226,6 +258,7 @@ describe("several stores side by side", () => {
 
   it("keeps scanning the other stores when one fails", async () => {
     await seedS3Store();
+    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'default'").run();
     await w.s3.put("UPLOADS/inbox/trip/frombucket.mp4", "video", "video/mp4");
     w.googleRefuse = true; // the Drive grant was revoked
     const r = await scanInbox(e, { fetch: w.fetch, now: new Date(Date.now() + 3600_000) });
@@ -242,12 +275,45 @@ describe("several stores side by side", () => {
     clearTokenCache(); // the access token from the first check would still be good
     const later = new Date(AT.getTime() + (CHECK_EVERY_S + 60) * 1000);
     expect(await checkStores(e, { fetch: w.fetch, now: later })).toEqual({ checked: ["s3"], broken: ["drive"] });
-    expect(w.notifications.map((n) => n.title)).toEqual(["A media store needs attention"]);
+    // the stores are the instance's: its admins hear of it (the audit log, in no workspace), no workspace's topic
+    expect(w.notifications).toEqual([]);
+    const said = await env.DB.prepare(
+      "SELECT detail, workspace_id FROM audit WHERE action = 'notify' AND target = 'media_stores'",
+    ).all<{ detail: string; workspace_id: string | null }>();
+    expect(said.results.map((r) => [JSON.parse(r.detail).title, r.workspace_id])).toEqual([
+      ["A media store needs attention", null],
+    ]);
     const h = await createApp(w.fetch).request("/health", {}, e);
     expect(h.status).toBe(503);
     expect(((await h.json()) as { media_stores: unknown }).media_stores).toEqual([
       { kind: "drive", status: "broken", default: true },
       { kind: "s3", status: "ok", default: false },
+    ]);
+  });
+
+  it("tells the instance admins when a store breaks", async () => {
+    const m = await testEnv(env, {
+      MAILER: "resend",
+      MAIL_FROM: "Bongsu <bongsu@example.com>",
+      RESEND_API_KEY: "re_test",
+    } as Partial<Env>);
+    // a workspace admin who isn't an instance admin isn't told: the stores aren't theirs
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, name, created_at) VALUES ('ada', 'ada@example.com', 'Ada', 0) ON CONFLICT (id) DO NOTHING",
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'ada', 'admin', 0) ON CONFLICT (workspace_id, user_id) DO NOTHING",
+    ).run();
+    w.googleRefuse = true;
+    clearTokenCache();
+    expect(await checkStores(m, { fetch: w.fetch, now: AT })).toEqual({ checked: [], broken: ["drive"] });
+    expect(w.mails).toEqual([
+      expect.objectContaining({
+        from: "Bongsu <bongsu@example.com>",
+        to: ["owner@example.com"],
+        subject: "Bongsu: a media store needs attention",
+        text: expect.stringMatching(/^drive: [\s\S]*\/dashboard\/media$/),
+      }),
     ]);
   });
 

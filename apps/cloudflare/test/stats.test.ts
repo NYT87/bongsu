@@ -27,7 +27,7 @@ beforeEach(async () => {
   );
   e = await testEnv(env);
   w = new World();
-  cookie = `bongsu_session=${await createSession(env.DB, Math.floor(Date.now() / 1000), { app: "pwa" })}`;
+  cookie = `bongsu_session=${await createSession(env.DB, Math.floor(Date.now() / 1000), { app: "pwa", userId: "owner" })}`;
   const tz = await callerZone(env.DB, "default");
   now = zoneToUnix(zoneDate(new Date(), tz), "12:00", tz) as number;
 });

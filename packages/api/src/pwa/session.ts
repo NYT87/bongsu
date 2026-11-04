@@ -26,14 +26,15 @@ const b64url = (b: Uint8Array) =>
     .replace(/=+$/, "");
 export const randomToken = (n = 32) => b64url(crypto.getRandomValues(new Uint8Array(n)));
 
-export async function createSession(db: Db, nowS: number, o: { app?: App; userId?: string } = {}): Promise<string> {
+/** A new session of `userId` in `app`: always someone's (sign-in, a new passkey), never a default user's. */
+export async function createSession(db: Db, nowS: number, o: { app?: App; userId: string }): Promise<string> {
   const app = o.app ?? "pwa";
   const token = randomToken();
   await db
     .prepare(
       "INSERT INTO sessions (token_hash, created_at, expires_at, user_id, app, verified_at) VALUES (?1, ?2, ?3, ?4, ?5, ?2)",
     )
-    .bind(await sha256Hex(token), nowS, nowS + SESSION_S[app], o.userId ?? "owner", app)
+    .bind(await sha256Hex(token), nowS, nowS + SESSION_S[app], o.userId, app)
     .run();
   await db.prepare("DELETE FROM sessions WHERE expires_at < ?1").bind(nowS).run();
   return token;

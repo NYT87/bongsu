@@ -2,7 +2,7 @@
 // from the media store, caption, self-comment, alt texts, time), confirms with a passkey, and the server appends the
 // approval in D1. The passkey challenge is bound to a snapshot of what was shown; at verify time
 // the item is resolved again and must match it exactly, so nothing can change between looking and approving.
-import { captionRules, DEFAULT_WORKSPACE, findAccount } from "@bongsu/core/accounts";
+import { captionRules, findAccount } from "@bongsu/core/accounts";
 import {
   addApproval,
   contentPaths,
@@ -149,7 +149,7 @@ export async function resolveItem(
   problems.push(...missing);
   if (story && files.length !== 1) problems.push(`a Story is one image or one video (it has ${files.length})`);
   // the caption check and the limits are the account's platform's (platforms/<id>.ts)
-  const acc = await findAccount(env.DB, i.account, i.workspace_id ?? DEFAULT_WORKSPACE);
+  const acc = await findAccount(env.DB, i.account, i.workspace_id);
   const plat = acc ? platform(acc.platform) : null;
   if (!acc || !plat) problems.push(`unknown account ${i.account}`);
   const checks = captionRaw === null || story || !plat || !acc ? [] : plat.lint(caption, captionRules(plat, acc));

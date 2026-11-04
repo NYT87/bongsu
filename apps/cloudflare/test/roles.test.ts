@@ -276,6 +276,8 @@ describe("a request's workspace", () => {
   it("uses the role of the request's workspace for a user in two", async () => {
     await member("default", "dee", "editor");
     await member("b", "dee", "admin");
+    // she joined b later: the default workspace is her first (the oldest membership)
+    await env.DB.prepare("UPDATE memberships SET created_at = 1 WHERE user_id = 'dee' AND workspace_id = 'b'").run();
     const before = await zoneOf("default");
     const inB = await sessionIn("dee", "b");
     expect((await inB("/admin-api/settings", { timezone: "Asia/Seoul" })).status).toBe(200);
@@ -343,5 +345,26 @@ describe("a request's workspace", () => {
       expect((await anon(path)).status, path).toBe(401);
     // who am I answers signed out, read-only
     expect((await anon("/app-api/me")).json).toMatchObject({ signedIn: false, scopes: [] });
+  });
+
+  it("who am I, signed in without a workspace: says so, on UTC, never the default workspace's zone", async () => {
+    const tz = await zoneOf("default");
+    await env.DB.prepare("UPDATE workspace_settings SET timezone = 'Asia/Tokyo' WHERE workspace_id = 'default'").run();
+    const ina = await sessionIn("ina", null, "pwa"); // an instance admin with no membership
+    expect((await ina("/app-api/me")).json).toMatchObject({
+      signedIn: true,
+      noWorkspace: true,
+      scopes: [],
+      accounts: 0,
+      timezone: "UTC",
+      workspaceTimezone: "UTC",
+    });
+    // the user's own zone still counts
+    await env.DB.prepare("UPDATE users SET timezone = 'Europe/Madrid' WHERE id = 'ina'").run();
+    expect((await ina("/app-api/me")).json).toMatchObject({ timezone: "Europe/Madrid", workspaceTimezone: "UTC" });
+    // a member: no flag
+    expect((await (await sessionIn("ina", "b", "pwa"))("/app-api/me")).json).toMatchObject({ noWorkspace: false });
+    await env.DB.prepare("UPDATE users SET timezone = NULL WHERE id = 'ina'").run();
+    await env.DB.prepare("UPDATE workspace_settings SET timezone = ?1 WHERE workspace_id = 'default'").bind(tz).run();
   });
 });

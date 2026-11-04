@@ -11,7 +11,7 @@
 // dry-run (DRY_RUN != "0") nothing is written outside the jobs/audit tables: each item ends as a done job with
 // dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
 
-import { type Account, DEFAULT_WORKSPACE, findAccount, listAccounts } from "./accounts";
+import { type Account, findAccount, listAccounts } from "./accounts";
 import { AUDIT_KEEP_S, CATCH_UP_S, JOBS_PER_TICK, JOBS_PER_TICK_MAX, LINK_TTL_S, MAX_POLLS } from "./constants";
 import {
   contentPaths,
@@ -151,13 +151,13 @@ class Ctx {
     this.dry = env.DRY_RUN !== "0";
     this.note = notifier(env, deps.fetch, this.nowS);
   }
-  /** The provider that reaches the job's account (its connection), looked up once per run. Jobs queued before the
-   *  providers name only a Composio connection. */
-  async provider(p: Payload): Promise<Provider> {
-    const k = `${p.workspaceId ?? DEFAULT_WORKSPACE}/${p.username ?? p.account}`;
+  /** The provider that reaches the job's account (its connection, in the job's workspace), looked up once per run.
+   *  Jobs queued before the providers name only a Composio connection. */
+  async provider(p: Payload, workspaceId: string): Promise<Provider> {
+    const k = `${workspaceId}/${p.username ?? p.account}`;
     let pr = this.providers.get(k);
     if (!pr) {
-      const a = p.username ? await findAccount(this.env.DB, p.username, p.workspaceId ?? DEFAULT_WORKSPACE) : null;
+      const a = p.username ? await findAccount(this.env.DB, p.username, workspaceId) : null;
       pr =
         (a && (await providerFor(this.env, this.deps.fetch, a))) ??
         new InstagramProvider(
@@ -261,6 +261,8 @@ interface Candidate {
   dueAt: number;
   payload: Payload;
   mediaCount: number;
+  /** The account's workspace: the job's. */
+  workspaceId: string;
 }
 
 async function discover(c: Ctx, a: Account) {
@@ -281,6 +283,7 @@ async function discover(c: Ctx, a: Account) {
       format: i.format ?? null,
       dueAt: at,
       mediaCount: i.format === "video" ? 1 : 0,
+      workspaceId: a.workspaceId,
       payload: {
         ...base,
         postedKey: shortKey(i.item_key),
@@ -392,11 +395,11 @@ async function create(c: Ctx, cand: Candidate, a: Approval | undefined) {
       c.dry ? 1 : 0,
       JSON.stringify(payload),
       c.nowS,
-      cand.payload.workspaceId ?? DEFAULT_WORKSPACE,
+      cand.workspaceId,
     )
     .first<{ id: number }>();
   if (r && v.state !== "pending") {
-    await c.note.send(N.jobVerdict(cand.key, v.state, v.reason), cand.payload.workspaceId ?? DEFAULT_WORKSPACE);
+    await c.note.send(N.jobVerdict(cand.key, v.state, v.reason), cand.workspaceId);
     await c.setJob(r.id, { notified: true });
   }
 }
@@ -602,7 +605,7 @@ function postOptions(p: Payload, format: Format): Record<string, unknown> {
 
 /** The provider's first step; its state goes with the job (payload.step) for check and finish on the next runs. */
 async function startPublishing(c: Ctx, job: JobRow, p: Payload, post: OutgoingPost) {
-  const pr = await c.provider(p);
+  const pr = await c.provider(p, job.workspace_id);
   const step = await pr.start(post);
   const next: Payload = {
     ...p,
@@ -665,12 +668,12 @@ async function queueTrial(c: Ctx, job: JobRow, p: Payload) {
     `INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id)
      VALUES (?1, 'video', ?2, ?3, 'pending', 0, ?4, ?3, ?3, ?5) ON CONFLICT (item_key) DO NOTHING`,
   )
-    .bind(`trial:${job.item_key}`, p.account, c.nowS, JSON.stringify(payload), p.workspaceId ?? DEFAULT_WORKSPACE)
+    .bind(`trial:${job.item_key}`, p.account, c.nowS, JSON.stringify(payload), job.workspace_id)
     .run();
 }
 
 async function stepContainer(c: Ctx, job: JobRow, p: Payload) {
-  const pr = await c.provider(p);
+  const pr = await c.provider(p, job.workspace_id);
   const step = p.step ?? (await legacyStep(c, job, p));
   const next = await pr.check(step);
   if (next.state === "failed") return failStep(c, job, p, pr, next);
@@ -755,12 +758,19 @@ async function pollWait(c: Ctx, job: JobRow, pr: Provider) {
 /** A comment under the live post, exactly as approved: the text is read again and must still hash to the approval's
  *  (an agent can edit it between the post and this run); nothing goes out in dry run. Never fatal, the post is live:
  *  the note says what didn't happen, for the owner to do by hand. */
-async function postComment(c: Ctx, p: Payload, what: string, text: string | null, approvedSha: string | null) {
+async function postComment(
+  c: Ctx,
+  job: JobRow,
+  p: Payload,
+  what: string,
+  text: string | null,
+  approvedSha: string | null,
+) {
   if (!text && !approvedSha) return "";
   if ((text ? await sha256Hex(text) : null) !== approvedSha) return ` (the ${what} changed after approval: not posted)`;
   if (c.dry) return ` (dry run: ${what} not posted)`;
   try {
-    await (await c.provider(p)).comment?.(p.mediaId!, text!);
+    await (await c.provider(p, job.workspace_id)).comment?.(p.mediaId!, text!);
     return "";
   } catch (e) {
     return ` (${what} failed: ${(e as Error).message}; post it by hand)`;
@@ -776,7 +786,7 @@ async function stepPublished(c: Ctx, job: JobRow, p: Payload) {
   if (!p.commented) {
     const caption = captionText((await c.read(p.captionPath)) ?? "");
     const comment = commentText(caption, await c.read(p.commentPath));
-    const note = await postComment(c, p, "self-comment", comment, p.approval?.commentSha256 ?? null);
+    const note = await postComment(c, job, p, "self-comment", comment, p.approval?.commentSha256 ?? null);
     p.commented = true;
     firstNote = note;
     await c.setJob(job.id, { payload: p, last_error: note || null });
@@ -784,7 +794,7 @@ async function stepPublished(c: Ctx, job: JobRow, p: Payload) {
   if (!p.commented2) {
     // the second comment, right after the first (only when it has text)
     const comment2 = p.comment2Path ? comment2Text(await c.read(p.comment2Path)) : null;
-    const note = await postComment(c, p, "second comment", comment2, p.approval?.comment2Sha256 ?? null);
+    const note = await postComment(c, job, p, "second comment", comment2, p.approval?.comment2Sha256 ?? null);
     p.commented2 = true;
     await c.setJob(job.id, { payload: p, ...(note ? { last_error: `${firstNote}${note}`.trim() } : {}) });
   }

@@ -3,7 +3,7 @@
 // verifier server side (oauth_states, single use), and a finished flow's grant becomes a connection (credentials
 // encrypted with ENCRYPTION_KEY) plus the accounts it reaches: existing rows are found again by their platform id, so a
 // reconnect keeps each account's plan and settings. Providers only supply the exchange (providers/index.ts).
-import { DEFAULT_WORKSPACE, listAccounts } from "./accounts";
+import { listAccounts } from "./accounts";
 import { decryptSecret, encryptSecret } from "./crypto";
 import type { Db, DbStatement } from "./db";
 import type { Env } from "./env";
@@ -219,7 +219,7 @@ export async function pasteConnect(
   provider: string,
   value: string,
   nowS: number,
-  workspaceId = DEFAULT_WORKSPACE,
+  workspaceId: string,
 ) {
   const reg = providerRegistration(provider);
   if (!reg?.paste) throw new ConnectError(`${provider} can't be connected by pasting`);
@@ -241,7 +241,7 @@ export async function saveGrant(
   g: Grant,
   nowS: number,
   reconnect: string | null,
-  ws = DEFAULT_WORKSPACE,
+  ws: string,
 ) {
   if (!g.accounts.length) throw new ConnectError("the grant reaches no account");
   const db = env.DB;
@@ -336,7 +336,7 @@ export async function saveGrant(
 
 /** Removes a connection: its accounts stay (with their plans) but can't publish until connected again; the grant is
  *  revoked at the provider where it allows that. */
-export async function removeConnection(env: Env, fetcher: typeof fetch, id: string, workspaceId = DEFAULT_WORKSPACE) {
+export async function removeConnection(env: Env, fetcher: typeof fetch, id: string, workspaceId: string) {
   const c = await env.DB.prepare(
     "SELECT provider, label, credentials FROM connections WHERE id = ?1 AND workspace_id = ?2",
   )

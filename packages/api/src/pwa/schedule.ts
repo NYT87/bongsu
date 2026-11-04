@@ -1,7 +1,7 @@
 // Draft → scheduled item: the owner picks the account, date and time in the app, edits
 // the texts, and the draft becomes a plan item whose texts and media live in D1 (content = 'db'). It still needs
 // the usual passkey approval (same fingerprints: text sha256 + the media's checksums) before the scheduler publishes it.
-import { DEFAULT_WORKSPACE, instagramAccounts } from "@bongsu/core/accounts";
+import { instagramAccounts } from "@bongsu/core/accounts";
 import {
   dueFrom,
   freeSlots,
@@ -45,7 +45,7 @@ export async function scheduleDraft(
   b: Record<string, unknown>,
   nowS: number,
   tz: string,
-  workspaceId = DEFAULT_WORKSPACE,
+  workspaceId: string,
 ): Promise<{ key: string }> {
   const d = await env.DB.prepare(
     "SELECT id, kind, account, payload, status, workspace_id FROM drafts WHERE id = ?1 AND workspace_id = ?2",
@@ -134,8 +134,8 @@ export async function scheduleDraft(
   await env.DB.batch([
     env.DB.prepare("UPDATE drafts SET status = 'approved', updated_at = ?1 WHERE id = ?2").bind(nowS, id),
     env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail) VALUES (?1, 'owner', 'draft_schedule', ?2, ?3)",
-    ).bind(nowS, key, JSON.stringify({ draft: id, due_at: due })),
+      "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'owner', 'draft_schedule', ?2, ?3, ?4)",
+    ).bind(nowS, key, JSON.stringify({ draft: id, due_at: due }), workspaceId),
   ]);
   return { key };
 }
@@ -146,7 +146,7 @@ export async function editTexts(
   key: string,
   b: Record<string, unknown>,
   nowS: number,
-  workspaceId = DEFAULT_WORKSPACE,
+  workspaceId: string,
 ): Promise<{ key: string }> {
   const i = await getItem(env.DB, key, workspaceId);
   if (!i) throw new ScheduleError(404, `${key} isn't planned`);
@@ -168,8 +168,8 @@ export async function editTexts(
       workspaceId,
     ),
     env.DB.prepare(
-      "INSERT INTO audit (at, actor, action, target, detail) VALUES (?1, 'owner', 'edit_texts', ?2, '{}')",
-    ).bind(nowS, key),
+      "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'owner', 'edit_texts', ?2, '{}', ?3)",
+    ).bind(nowS, key, workspaceId),
   ]);
   return { key };
 }
