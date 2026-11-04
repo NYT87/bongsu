@@ -19,22 +19,15 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs } from "@bongsu/core/providers/index";
 import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
-import { isInstanceAdmin } from "@bongsu/core/roles";
 import { mayBeLive } from "@bongsu/core/tick";
-import {
-  callerZone,
-  setUserZone,
-  userRole,
-  userWorkspace,
-  workspaceSettings,
-  workspaceZone,
-} from "@bongsu/core/workspaces";
+import { callerZone, sessionWorkspace, setUserZone, workspaceSettings, workspaceZone } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
 import { type Caller, type Scope, scopesOf } from "../agent/auth";
 import * as ops from "../agent/ops";
 import { resolveItem, type Snapshot, sameSnapshot, snapshot, writeApproval } from "./approve";
 import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
-import { createSession, endSession, readCookie, sessionCookie, validSession } from "./session";
+import { createSession, endSession, readCookie, type Session, sessionCookie, validSession } from "./session";
 import { draftFromUploads, startUpload, UploadError } from "./uploads";
 import {
   authenticationOptions,
@@ -47,9 +40,10 @@ import {
 
 type Vars = { Bindings: Env; Variables: { caller: Caller } };
 type C = Context<Vars>;
-// The app works as the signed-in user, in their workspace (core/workspaces.ts userWorkspace; Phase 13 adds a picker),
-// with their role's rights (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming
-// need "approve" / "resume", pausing "pause", changing the plan "plan". Before sign-in (who am I, setup, login) it's the first user's default workspace, read-only.
+// The app works as the signed-in user, in their session's workspace (core/workspaces.ts sessionWorkspace), with their
+// role's rights there (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming need
+// "approve" / "resume", pausing "pause", changing the plan "plan". Only the signed-out routes (who am I, setup, login)
+// fall back to OWNER: the default workspace, read-only.
 const OWNER: Caller = {
   id: "owner",
   name: "owner (app)",
@@ -69,14 +63,19 @@ const nowS = () => Math.floor(Date.now() / 1000);
 
 export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVerifiers) {
   const app = new Hono<Vars>();
-  /** The signed-in caller (set by the session check below), else the default. */
-  const me = (c: C) => c.get("caller") ?? OWNER;
-  const callerFor = async (c: C, userId: string): Promise<Caller | null> => {
-    const workspaceId = await userWorkspace(c.env.DB, userId);
-    if (!workspaceId) return null;
-    const role = await userRole(c.env.DB, userId, workspaceId);
-    const scopes = scopesOf(role, await isInstanceAdmin(c.env.DB, userId));
-    return { ...OWNER, id: userId, name: `${userId} (app)`, scopes, workspaceId, userId };
+  /** The signed-in caller, set by the session check below; a request without one is refused, never defaulted. */
+  const me = (c: C): Caller => {
+    const caller = c.get("caller");
+    if (!caller) throw new HTTPException(401, { res: Response.json({ error: "sign in" }, { status: 401 }) });
+    return caller;
+  };
+  /** Who a signed-out route (who am I, setup) acts as: the signed-in caller if there is one, else OWNER. */
+  const anyone = (c: C) => c.get("caller") ?? OWNER;
+  const callerFor = async (c: C, s: Session): Promise<Caller | null> => {
+    const where = await sessionWorkspace(c.env.DB, s);
+    if (!where) return null;
+    const scopes = scopesOf(where.role, where.instanceAdmin);
+    return { id: s.userId, name: `${s.userId} (app)`, scopes, workspaceId: where.workspaceId, userId: s.userId };
   };
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");
   const body = async (c: C) => {
@@ -93,7 +92,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     c.env.DB.prepare(
       "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, 'owner', ?2, ?3, ?4, ?5, ?6)",
     )
-      .bind(nowS(), action, target, JSON.stringify(detail), me(c).userId ?? null, me(c).workspaceId)
+      .bind(nowS(), action, target, JSON.stringify(detail), anyone(c).userId ?? null, anyone(c).workspaceId)
       .run();
   /** Sets (or, with null, removes) one of an item's platform options; returns the item, or null when it isn't one of
    *  the workspace's. The options are read and written whole (no database-specific JSON functions). */
@@ -133,8 +132,9 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   app.get("/app-api/me", async (c) => {
     const n = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys").first<{ n: number }>();
     const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
-    const caller = s && (await callerFor(c, s.userId));
+    const caller = s && (await callerFor(c, s));
     if (caller) c.set("caller", caller);
+    const who = anyone(c);
     // active accounts of the caller's workspace: none means the app points at the dashboard's setup
     const accounts = caller
       ? await c.env.DB.prepare("SELECT COUNT(*) AS n FROM accounts WHERE workspace_id = ?1 AND status = 'active'")
@@ -149,8 +149,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       accounts: accounts?.n ?? 0,
       vapidPublicKey: c.env.VAPID_PUBLIC_KEY,
       dryRun: c.env.DRY_RUN !== "0",
-      timezone: await zone(c),
-      workspaceTimezone: await workspaceZone(c.env.DB, me(c).workspaceId),
+      timezone: await callerZone(c.env.DB, who.workspaceId, who.userId),
+      workspaceTimezone: await workspaceZone(c.env.DB, who.workspaceId),
       // the text the app shows (packages/web/src/i18n.ts): the workspace's, English for someone not signed in
       locale: caller ? (await workspaceSettings(c.env.DB, caller.workspaceId)).locale : "en",
     });
@@ -207,6 +207,9 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       useCode,
     );
     if (!ok) return c.json({ error: "passkey registration failed" }, 400);
+    // logged in the workspace the new device's user works in
+    const caller = await callerFor(c, { userId, app: "pwa", verifiedAt: nowS(), workspaceId: null });
+    if (caller) c.set("caller", caller);
     await audit(c, "passkey_add", null, { name: b.name ?? "device", user: userId });
     return signIn(c, userId);
   });
@@ -243,8 +246,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   app.use("/app-api/*", async (c, next) => {
     const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
     if (!s) return c.json({ error: "sign in" }, 401);
-    const caller = await callerFor(c, s.userId);
-    if (!caller) return c.json({ error: "you're not a member of any workspace" }, 403);
+    const caller = await callerFor(c, s);
+    if (!caller) return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     c.set("caller", caller);
     await next();
   });

@@ -51,7 +51,7 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isInstanceAdmin } from "@bongsu/core/roles";
-import { callerZone, setWorkspaceSettings, userRole, userWorkspace, workspaceSettings } from "@bongsu/core/workspaces";
+import { callerZone, sessionWorkspace, setWorkspaceSettings, workspaceSettings } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
 import { scopesOf, withinAttempts } from "../agent/auth";
 import {
@@ -206,14 +206,14 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1").bind(s.userId).first()
         : null;
       // what the sidebar shows: the Instance group for instance admins; a creator is pointed at the app
-      const workspace = s && (await userWorkspace(c.env.DB, s.userId));
+      const where = s && (await sessionWorkspace(c.env.DB, s));
       return {
         bootstrapNeeded: !(await bootstrapped(c)),
         setupTokenSet: !!c.env.SETUP_TOKEN,
         signedIn: !!s,
         user,
-        instanceAdmin: !!s && (await isInstanceAdmin(c.env.DB, s.userId)),
-        role: (s && workspace && (await userRole(c.env.DB, s.userId, workspace))) || null,
+        instanceAdmin: !!s && (where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId))),
+        role: where?.role ?? null,
         dryRun: c.env.DRY_RUN !== "0",
         publicUrl: origin(c),
       };
@@ -423,17 +423,17 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     const token = readCookie(c.req.header("Cookie"), "dashboard");
     const s = await validSession(c.env.DB, token, nowS(), "dashboard");
     if (!s || !token) return c.json({ error: "sign in" }, 401);
-    const instanceAdmin = await isInstanceAdmin(c.env.DB, s.userId);
     const path = new URL(c.req.url).pathname;
-    // Everything below works in the user's workspace (Phase 13 adds a picker for users in several). An instance admin
-    // without one still reaches the instance's own pages.
-    const workspace = await userWorkspace(c.env.DB, s.userId);
-    if (!workspace && !(instanceAdmin && INSTANCE.test(path)))
-      return c.json({ error: "you're not a member of any workspace" }, 403);
+    // Everything below works in the session's workspace (core/workspaces.ts sessionWorkspace), with the role it has
+    // there. An instance admin without one still reaches the instance's own pages.
+    const where = await sessionWorkspace(c.env.DB, s);
+    const instanceAdmin = where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId));
+    if (!where && !(instanceAdmin && INSTANCE.test(path)))
+      return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     c.set("session", s);
     c.set("token", token);
-    if (workspace) c.set("workspace", workspace);
-    c.set("role", (workspace && (await userRole(c.env.DB, s.userId, workspace))) || "");
+    if (where) c.set("workspace", where.workspaceId);
+    c.set("role", where?.role ?? "");
     c.set("instanceAdmin", instanceAdmin);
     await next();
   });

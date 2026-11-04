@@ -14,6 +14,9 @@ export interface Session {
   app: App;
   /** The last passkey check (sign-in or a fresh check), unix seconds. */
   verifiedAt: number;
+  /** The workspace the session works in (sessions.workspace_id), null for the user's first (core/workspaces.ts
+   *  sessionWorkspace checks it on every request). */
+  workspaceId: string | null;
 }
 
 const b64url = (b: Uint8Array) =>
@@ -58,12 +61,24 @@ export async function validSession(
   if (!token || !/^[A-Za-z0-9_-]{20,}$/.test(token)) return null;
   const row = await db
     .prepare(
-      "SELECT expires_at, user_id, app, verified_at, created_at FROM sessions WHERE token_hash = ?1 AND app = ?2",
+      "SELECT expires_at, user_id, app, verified_at, created_at, workspace_id FROM sessions WHERE token_hash = ?1 AND app = ?2",
     )
     .bind(await sha256Hex(token), app)
-    .first<{ expires_at: number; user_id: string; app: App; verified_at: number | null; created_at: number }>();
+    .first<{
+      expires_at: number;
+      user_id: string;
+      app: App;
+      verified_at: number | null;
+      created_at: number;
+      workspace_id: string | null;
+    }>();
   if (!row || row.expires_at <= nowS) return null;
-  return { userId: row.user_id, app: row.app, verifiedAt: row.verified_at ?? row.created_at };
+  return {
+    userId: row.user_id,
+    app: row.app,
+    verifiedAt: row.verified_at ?? row.created_at,
+    workspaceId: row.workspace_id ?? null,
+  };
 }
 
 /** A fresh passkey check on this session. */
@@ -71,6 +86,14 @@ export async function markVerified(db: Db, token: string, nowS: number) {
   await db
     .prepare("UPDATE sessions SET verified_at = ?1 WHERE token_hash = ?2")
     .bind(nowS, await sha256Hex(token))
+    .run();
+}
+
+/** The workspace this session works in from now on (the Workspaces page's "open", later the switcher). */
+export async function setSessionWorkspace(db: Db, token: string, workspaceId: string): Promise<void> {
+  await db
+    .prepare("UPDATE sessions SET workspace_id = ?1 WHERE token_hash = ?2")
+    .bind(workspaceId, await sha256Hex(token))
     .run();
 }
 

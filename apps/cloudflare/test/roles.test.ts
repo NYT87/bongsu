@@ -5,11 +5,12 @@ import { env } from "cloudflare:workers";
 import { authenticate } from "@bongsu/api/agent/auth";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
-import { createSession } from "@bongsu/api/pwa/session";
+import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { isInstanceAdmin } from "@bongsu/core/roles";
+import { sessionWorkspace } from "@bongsu/core/workspaces";
 import { beforeEach, describe, expect, it } from "vitest";
 import { testEnv, World } from "./world";
 
@@ -80,7 +81,10 @@ beforeEach(async () => {
       "DELETE FROM sessions",
       "DELETE FROM api_keys",
       "DELETE FROM settings WHERE key = 'paused'",
-      "DELETE FROM memberships WHERE user_id IN ('bea', 'ina')",
+      "DELETE FROM memberships WHERE user_id IN ('bea', 'ina', 'dee')",
+      "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO UPDATE SET archived_at = NULL",
+      "UPDATE workspaces SET archived_at = NULL",
+      "INSERT INTO users (id, name, created_at, instance_admin) VALUES ('dee', 'Dee', 0, 0) ON CONFLICT (id) DO UPDATE SET instance_admin = 0",
       "INSERT INTO users (id, name, created_at, instance_admin) VALUES ('bea', 'Bea', 0, 0) ON CONFLICT (id) DO UPDATE SET instance_admin = 0",
       "INSERT INTO users (id, name, created_at, instance_admin) VALUES ('ina', 'Ina', 0, 1) ON CONFLICT (id) DO UPDATE SET instance_admin = 1",
     ].map((s) => env.DB.prepare(s)),
@@ -248,5 +252,96 @@ describe("the roles table", () => {
       expect((await call("/app-api/comments")).status, role).toBe(200);
       expect((await call("/app-api/comments/seen", {})).status, role).toBe(200);
     }
+  });
+});
+
+/** A session of `userId` in `app` that names `workspaceId` (as the Workspaces page's "open" will). */
+const sessionIn = async (userId: string, workspaceId: string | null, app: "dashboard" | "pwa" = "dashboard") => {
+  const token = await createSession(env.DB, nowS(), { app, userId });
+  if (workspaceId) await setSessionWorkspace(env.DB, token, workspaceId);
+  return caller(app, `${app === "dashboard" ? "bongsu_admin" : "bongsu_session"}=${token}`);
+};
+const member = (workspaceId: string, userId: string, role: string) =>
+  env.DB.prepare("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES (?1, ?2, ?3, 0)")
+    .bind(workspaceId, userId, role)
+    .run();
+const zoneOf = async (workspaceId: string) =>
+  (
+    await env.DB.prepare("SELECT timezone FROM workspace_settings WHERE workspace_id = ?1")
+      .bind(workspaceId)
+      .first<{ timezone: string }>()
+  )?.timezone ?? null;
+
+describe("a request's workspace", () => {
+  it("uses the role of the request's workspace for a user in two", async () => {
+    await member("default", "dee", "editor");
+    await member("b", "dee", "admin");
+    const before = await zoneOf("default");
+    const inB = await sessionIn("dee", "b");
+    expect((await inB("/admin-api/settings", { timezone: "Asia/Seoul" })).status).toBe(200);
+    expect(await zoneOf("b")).toBe("Asia/Seoul");
+    expect(await zoneOf("default")).toBe(before);
+    expect((await inB("/admin-api/state")).json).toMatchObject({ role: "admin" });
+    const inDefault = await sessionIn("dee", "default");
+    expect((await inDefault("/admin-api/settings", { timezone: "Europe/Madrid" })).status).toBe(403);
+    expect((await inDefault("/admin-api/state")).json).toMatchObject({ role: "editor" });
+    // the app too: in b she approves, in the default workspace (an editor) she doesn't
+    expect((await (await sessionIn("dee", "b", "pwa"))("/app-api/me")).json.scopes).toContain("approve");
+    expect((await (await sessionIn("dee", "default", "pwa"))("/app-api/me")).json.scopes).not.toContain("approve");
+    // a session that names no workspace works in her first one
+    expect(await sessionWorkspace(env.DB, { userId: "dee", workspaceId: null })).toEqual({
+      workspaceId: "default",
+      role: "editor",
+      instanceAdmin: false,
+    });
+    // only her first one when the session names a workspace she isn't in
+    expect(await sessionWorkspace(env.DB, { userId: "dee", workspaceId: "nowhere" })).toMatchObject({
+      workspaceId: "default",
+    });
+    // a user whose only workspace is archived works nowhere
+    await member("b", "bea", "admin");
+    await env.DB.prepare("UPDATE workspaces SET archived_at = 1 WHERE id = 'b'").run();
+    expect(await sessionWorkspace(env.DB, { userId: "bea", workspaceId: "b" })).toBeNull();
+    expect(await sessionWorkspace(env.DB, { userId: "bea", workspaceId: null })).toBeNull();
+    for (const app of ["dashboard", "pwa"] as const) {
+      const r = await (await sessionIn("bea", "b", app))(
+        app === "dashboard" ? "/admin-api/overview" : "/app-api/status",
+      );
+      expect([r.status, r.json], app).toEqual([
+        403,
+        { error: "you're not a member of any workspace", noWorkspace: true },
+      ]);
+    }
+    // and Dee, whose session names the archived one, is back in the default workspace
+    expect((await inB("/admin-api/state")).json).toMatchObject({ role: "editor" });
+    expect((await inB("/admin-api/settings", { timezone: "Asia/Seoul" })).status).toBe(403);
+  });
+
+  it("an instance admin acts as an admin in the workspace their session names, without a membership", async () => {
+    expect(await sessionWorkspace(env.DB, { userId: "ina", workspaceId: "b" })).toEqual({
+      workspaceId: "b",
+      role: "admin",
+      instanceAdmin: true,
+    });
+    const ina = await sessionIn("ina", "b");
+    expect((await ina("/admin-api/settings", { timezone: "Asia/Tokyo" })).status).toBe(200);
+    expect(await zoneOf("b")).toBe("Asia/Tokyo");
+    expect((await ina("/admin-api/state")).json).toMatchObject({ role: "admin", instanceAdmin: true });
+    expect((await (await sessionIn("ina", "b", "pwa"))("/app-api/status")).status).toBe(200);
+    // not in an archived one, nor in one that doesn't exist
+    expect(await sessionWorkspace(env.DB, { userId: "ina", workspaceId: "nowhere" })).toBeNull();
+    await env.DB.prepare("UPDATE workspaces SET archived_at = 1 WHERE id = 'b'").run();
+    expect(await sessionWorkspace(env.DB, { userId: "ina", workspaceId: "b" })).toBeNull();
+    expect((await ina("/admin-api/settings", { timezone: "Asia/Seoul" })).status).toBe(403);
+    // the instance's own pages still answer
+    expect((await ina("/admin-api/media-stores")).status).toBe(200);
+  });
+
+  it("the app's signed-in routes need a session: no default caller", async () => {
+    const anon = caller("pwa", "");
+    for (const path of ["/app-api/status", "/app-api/queue", "/app-api/me/timezone"])
+      expect((await anon(path)).status, path).toBe(401);
+    // who am I answers signed out, read-only
+    expect((await anon("/app-api/me")).json).toMatchObject({ signedIn: false, scopes: [] });
   });
 });

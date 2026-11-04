@@ -4,6 +4,7 @@
 import { DEFAULT_WORKSPACE } from "./accounts";
 import type { Db } from "./db";
 import { isTimeZone } from "./formats/time";
+import { isInstanceAdmin, isRole, type Role } from "./roles";
 
 export interface WorkspaceSettings {
   workspaceId: string;
@@ -28,25 +29,46 @@ export async function workspaceSettings(db: Db, workspaceId = DEFAULT_WORKSPACE)
   };
 }
 
-/** The workspace a signed-in user works in: their membership (the default workspace first, while there's no picker;
- *  Phase 13 adds one). Null when they belong to none. */
-export async function userWorkspace(db: Db, userId: string): Promise<string | null> {
-  const r = await db
+/** The user's first workspace that isn't archived (the oldest membership; the default workspace first among equals),
+ *  with their role there. Null when they belong to none. */
+async function firstMembership(db: Db, userId: string) {
+  return db
     .prepare(
-      "SELECT workspace_id FROM memberships WHERE user_id = ?1 ORDER BY workspace_id = ?2 DESC, created_at LIMIT 1",
+      `SELECT m.workspace_id, m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+       WHERE m.user_id = ?1 AND w.archived_at IS NULL
+       ORDER BY m.created_at, m.workspace_id = ?2 DESC, m.workspace_id LIMIT 1`,
     )
     .bind(userId, DEFAULT_WORKSPACE)
-    .first<{ workspace_id: string }>();
-  return r?.workspace_id ?? null;
+    .first<{ workspace_id: string; role: string }>();
 }
 
-/** The user's role in the workspace (memberships), or null when they're not a member. */
-export async function userRole(db: Db, userId: string, workspaceId: string): Promise<string | null> {
-  const r = await db
-    .prepare("SELECT role FROM memberships WHERE user_id = ?1 AND workspace_id = ?2")
-    .bind(userId, workspaceId)
-    .first<{ role: string }>();
-  return r?.role ?? null;
+/** The workspace a signed-in user works in, without a session (a provider's redirect back): their first one. */
+export async function userWorkspace(db: Db, userId: string): Promise<string | null> {
+  return (await firstMembership(db, userId))?.workspace_id ?? null;
+}
+
+/** The workspace a request works in: the one its session names (sessions.workspace_id) when the user is a member
+ *  there, or an instance admin, and it isn't archived; else the user's first. `role` is the membership's, "admin" for
+ *  an instance admin without one. Null when there's none: the request works nowhere. */
+export async function sessionWorkspace(
+  db: Db,
+  s: { userId: string; workspaceId: string | null },
+): Promise<{ workspaceId: string; role: Role | null; instanceAdmin: boolean } | null> {
+  const instanceAdmin = await isInstanceAdmin(db, s.userId);
+  const roleOf = (role: string | null | undefined): Role | null =>
+    isRole(role) ? role : instanceAdmin ? "admin" : null;
+  if (s.workspaceId) {
+    const r = await db
+      .prepare(
+        `SELECT w.id, m.role FROM workspaces w LEFT JOIN memberships m ON m.workspace_id = w.id AND m.user_id = ?2
+         WHERE w.id = ?1 AND w.archived_at IS NULL`,
+      )
+      .bind(s.workspaceId, s.userId)
+      .first<{ id: string; role: string | null }>();
+    if (r && (r.role || instanceAdmin)) return { workspaceId: r.id, role: roleOf(r.role), instanceAdmin };
+  }
+  const m = await firstMembership(db, s.userId);
+  return m ? { workspaceId: m.workspace_id, role: roleOf(m.role), instanceAdmin } : null;
 }
 
 /** The workspace's time zone. */
