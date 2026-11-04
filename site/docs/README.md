@@ -31,4 +31,5 @@ Guides for people who run Bongsu: install it, connect your accounts, use it, giv
 | [Platform terms](platform-terms.md) | Official APIs only, rate limits, no scraping, your responsibility |
 | [Updating](updating.md) | Updating on Cloudflare and Docker, reading the changelogs, breaking changes |
 | [Backups and restore](backups.md) | D1, SQLite and Postgres backups, the media, restoring, what a backup doesn't hold |
+| [Changelog](changelog.md) | What changed in each release, the packages it published and their versions |
 | [FAQ and troubleshooting](faq.md) | A post that didn't go out, expired tokens, limits, missing media, time zones, passkeys |
