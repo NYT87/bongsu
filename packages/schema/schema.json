@@ -1486,6 +1486,10 @@
         "updated_at": {
           "type": "timestamp",
           "notNull": true
+        },
+        "notify_url": {
+          "type": "text",
+          "description": "the workspace's ntfy topic URL, encrypted; NULL: none"
         }
       }
     },

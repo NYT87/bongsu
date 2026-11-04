@@ -648,7 +648,8 @@ of the project (2.6).
       (Already generic: the server is `bongsu`, `list_accounts` exists, the instructions say approving and resuming
       are owner-only, #79.)
 - [x] Notifications: web push + optional `NOTIFY_URL` (ntfy) as today; wording through one template file. (Done
-      2026-10-31: every message is a builder in `core/texts/notifications.ts`, #80.)
+      2026-10-31: every message is a builder in `core/texts/notifications.ts`, #80. 2026-11-04: the ntfy topic is a
+      setting of each workspace, in the dashboard, and `NOTIFY_URL` is gone, #54.)
 - [x] YouTube: move a scheduled Short or video's release date (private with `publishAt`, to a future time) from the
       PWA and the dashboard with the passkey, and from the API and MCP with the opt-in `reschedule` scope (#134).
       (Done 2026-10-31: `youtube_reschedule` with a 1-hour lead, the PWA and the dashboard's Videos page, #134.)

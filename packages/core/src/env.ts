@@ -8,8 +8,6 @@ export interface Env {
   DRY_RUN: string;
   /** This Worker's public URL, for the signed media links Instagram fetches. */
   PUBLIC_URL: string;
-  /** Optional: where notifications are POSTed too (e.g. https://ntfy.sh/<topic>). */
-  NOTIFY_URL?: string;
   /** The app's WebAuthn relying-party id: the Worker's hostname. */
   RP_ID: string;
   /** Web Push (VAPID): public key (base64url, public by design), subject (mailto:). The private key is a secret. */

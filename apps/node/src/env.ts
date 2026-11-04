@@ -27,7 +27,6 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
   };
   // the optional ones, only when set
   for (const k of [
-    "NOTIFY_URL",
     "VAPID_PRIVATE_KEY",
     "COMPOSIO_CONSUMER_KEY",
     "MEDIA_STORE",

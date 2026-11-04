@@ -162,7 +162,7 @@ export async function postResults(env: Env, deps: { fetch: typeof fetch; now: Da
     );
     fetched.push(d.item_key);
   }
-  const note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env);
+  const note = notifier(env, deps.fetch, nowS);
   for (const [ws, { lines, keys }] of byWs)
     await note.send(resultsNote(lines, keys.length === 1 ? `results:${keys[0]}` : undefined), ws);
   return { fetched };

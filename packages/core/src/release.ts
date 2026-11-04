@@ -75,10 +75,7 @@ export async function moveRelease(env: Env, fetcher: typeof fetch, req: ReleaseR
   const stamp = (s: number) => `${zoneStamp(s, tz)} ${tz}`;
   const fromS = Math.floor(Date.parse(from) / 1000);
   const by = actor.kind === "owner" ? "you" : actor.name;
-  await notifier(env.DB, fetcher, env.NOTIFY_URL, nowS, env).send(
-    releaseMoved(upload.title, stamp(fromS), stamp(at), by),
-    req.workspaceId,
-  );
+  await notifier(env, fetcher, nowS).send(releaseMoved(upload.title, stamp(fromS), stamp(at), by), req.workspaceId);
   return {
     video: videoId,
     title: upload.title,

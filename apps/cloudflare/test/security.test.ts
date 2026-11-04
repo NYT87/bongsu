@@ -497,6 +497,8 @@ describe("roles", () => {
       const call = await admin(role);
       expect((await call("/admin-api/keys", { name: "k", scopes: ["plan", "pause"] })).status, role).toBe(403);
       expect((await call("/admin-api/settings", { timezone: "Europe/Madrid" })).status, role).toBe(403);
+      expect((await call("/admin-api/settings/ntfy", { url: "https://ntfy.sh/x" })).status, role).toBe(403);
+      expect((await call("/admin-api/settings/ntfy/test", {})).status, role).toBe(403);
       expect((await call("/admin-api/keys")).status, role).toBe(200); // reading is fine
     }
     const call = await admin("admin");

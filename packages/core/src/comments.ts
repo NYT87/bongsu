@@ -116,7 +116,7 @@ export async function pollComments(
     await env.DB.prepare("UPDATE comment_polls SET checked_at = ?1 WHERE media_id = ?2").bind(nowS, p.media_id).run();
   }
   // one message per workspace: its members see only its comments
-  const note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env);
+  const note = notifier(env, deps.fetch, nowS);
   for (const ws of new Set(fresh.map((f) => f.workspaceId))) {
     const mine = fresh.filter((f) => f.workspaceId === ws);
     const lines = mine.slice(0, 4).map((f) => `${f.who}: ${f.text.replace(/\s+/g, " ").slice(0, 90)}`);
