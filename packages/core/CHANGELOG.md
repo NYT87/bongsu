@@ -1,5 +1,38 @@
 # @bongsu/core
 
+## 0.4.0
+
+### Minor Changes
+
+- 057bff6: The ntfy topic is a setting of each workspace: the dashboard's **Settings → Notifications (ntfy)** sets, tests and
+  removes it, and only that workspace's notifications go there. It's stored encrypted (it needs `ENCRYPTION_KEY`) and
+  the page shows only its server. Bongsu posts to it without following redirects and with a time limit.
+  
+  To update: `NOTIFY_URL` is gone. If you used it, paste the same topic in the dashboard's Settings (migration `0016`
+  adds the column) and remove the variable or secret.
+- de54272: Media stores are set up in the dashboard (**Media**), and there can be several side by side.
+  
+  - **S3-compatible buckets**: AWS S3, Cloudflare R2, Backblaze B2, MinIO. Instagram fetches the files from the bucket
+    through presigned links and the app uploads straight to it ([S3-compatible buckets](site/docs/s3.md)).
+  - **Connect Google Drive** with your Google app (the one YouTube uses): no service account any more
+    ([Google Drive](site/docs/drive.md)).
+  - One store of each kind, one of them the default; each file is read from the store it's in, the inbox is read in
+    every store, and the app's upload page lets you pick the store. A weekly check marks a store that stopped answering.
+  - Get started has a fifth step for it; the app's Settings and `/health` list the stores.
+  
+  To update: the `MEDIA_STORE`, `DRIVE_SA_JSON` and `DRIVE_OWNER_OAUTH` variables are gone. Set the store up again on the
+  dashboard's Media page (Drive with **Connect Google Drive**; on Docker, **This server's disk** for the `local` store),
+  and remove those secrets. Migration `0017` adds the `media_store` table. Signed media links now name their store
+  (`/m/<store>/<id>`), so links made before the update stop working; they only last a few hours.
+
+### Patch Changes
+
+- 18c6031: Push notifications go only to the members of the workspace they're about: a device belongs to the user who turned
+  notifications on and the workspace they did it in, and stops getting them when that user leaves it. **Send a test**
+  reaches only your own devices. Push subscriptions are only taken for the browsers' push services, and Bongsu sends to
+  them without following redirects and with a time limit. A device subscribed before this update keeps working for the
+  default workspace's owner; others turn notifications on again in Settings.
+
 ## 0.3.0
 
 No changes in this release.
