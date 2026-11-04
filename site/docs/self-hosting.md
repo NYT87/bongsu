@@ -51,8 +51,8 @@ new ones. Check `https://<DOMAIN>/health` (`ok: true`, no missing secrets): Dock
 
 Without the `https` profile, Bongsu listens on port 8787 (`BONGSU_PORT` to change it), for your own reverse proxy.
 
-Then open `https://<DOMAIN>/dashboard` and sign up with the `SETUP_TOKEN`: from there it's the same as on Cloudflare
-(Get started, OAuth apps, connections, devices).
+Then open `https://<DOMAIN>/dashboard` and sign up with the `SETUP_TOKEN`: you become the instance admin and create the first workspace, and from there it's the
+same as on Cloudflare (Get started, OAuth apps, connections, devices).
 
 ## Postgres (optional)
 

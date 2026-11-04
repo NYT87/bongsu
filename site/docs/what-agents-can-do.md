@@ -23,7 +23,7 @@ hour ahead. Each move is recorded and you are notified.
 - **Resume** after a pause, or create, change or revoke keys.
 - **Publish.** The scheduler publishes, and only what you approved.
 
-A person's CLI token is different: it acts as its person ([The command line](cli.md)). An owner's token can approve
+A person's CLI token is different: it acts as its person ([The command line](cli.md)). An admin's or creator's token can approve
 from a terminal; an agent key never can.
 
 ## Why a change needs a new approval

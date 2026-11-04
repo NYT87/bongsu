@@ -8,8 +8,27 @@ older than 10 minutes. While the instance is in dry run, an amber banner says "D
 
 ![The overview](assets/app/overview-light.png)
 
-The sidebar lists, in order: Overview, Connections, OAuth apps, Accounts, Videos, Devices & passkeys, Keys & tokens,
-Audit and Settings. This guide follows it.
+The sidebar lists, in order: Overview, Connections, Accounts, Videos, Devices & passkeys, Keys & tokens, Members, Audit
+and Settings, and for an instance admin an **Instance** group after them: Workspaces, Media and OAuth apps. This guide
+follows it, with the Instance group's pages at the end of their topics.
+
+## People and roles
+
+You work in one workspace at a time, with the role you have in it. **Admins** run the workspace: everything in this
+guide, including its connections, keys, settings and members. **Editors** can look at the accounts and videos and
+manage their own passkeys, devices and CLI tokens, but they can't change accounts and don't see Connections, agent keys,
+Settings or Members. **Creators** don't use the
+dashboard: signing in here points them to the [phone app](the-app.md), where they plan, approve and connect their own
+accounts. An **instance admin** is a person who manages the whole instance: its workspaces, its media stores and its
+OAuth apps, and who works in any workspace as its admin. [Security](security.md#roles) has the table.
+
+## First run
+
+A new instance has no workspace and no one in it. The first visit to `/dashboard` asks for the `SETUP_TOKEN`, your name
+and email and a passkey; that makes you the instance admin, who belongs to no workspace yet. The dashboard then asks
+you to **Create your first workspace**: a name, its time zone and its first admin, you preselected or someone else by
+email (they get an invite link). Once you're its admin it opens on **Get started**; otherwise it waits on the
+**Workspaces** page.
 
 ## Overview and Get started
 
@@ -152,8 +171,8 @@ an admin ask for your passkey again.
 
 ## Settings
 
-**Workspace** holds its **Name** (it can't be emptied), the **Time zone**, the default for everyone (each person can choose their own in the app), and the
-**Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the workspace's notifications to an
+**Workspace** holds its **Name** (it can't be emptied), the **Time zone**, the default for everyone (each person can
+choose their own in the app), and the **Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the workspace's notifications to an
 [ntfy](https://ntfy.sh) topic too, on ntfy.sh or your own server: paste the topic's `https://` address (a protected
 topic's token as `?auth=…`), **Save**, then **Send a test**. Anyone who knows a topic's address can read it, so pick a
 long, random name; it's stored encrypted (the instance needs `ENCRYPTION_KEY`) and the page only shows its server

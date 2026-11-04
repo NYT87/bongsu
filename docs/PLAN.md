@@ -778,13 +778,16 @@ Design: `docs/superpowers/specs/2026-11-03-phase12-media-stores-design.md`.
 Several separate sets of accounts in one deployment, each with its own people: managing other people's accounts
 without a deployment per person. The data model is already there (Phase 3).
 
-- [ ] Dashboard: create, rename and archive workspaces; a workspace switcher.
+- [ ] Dashboard: create, rename and archive workspaces; a workspace switcher. (Part 1 delivered the Workspaces page,
+      for instance admins: list, create, rename, add an admin, archive, restore, and open one to work in it, and a
+      workspace's admins rename theirs in Settings. Left: the switcher, so someone in several workspaces still goes
+      through that page or their session's first workspace; tick this with part 2.)
 - [x] **Members and invites:** invite by email: a one-time link always shown in the dashboard with Copy, sent by
       the `Mailer` too when one is configured; the invitee signs up with email + passkey and only sees the
       workspaces they're in (#107).
-- [ ] **Roles** (table below) enforced in every route: dashboard, PWA, API, MCP. (Since the security review the app
-      gates approving, resuming, pausing and plan changes by role, and the dashboard's instance changes take an owner
-      or admin; the API and MCP give CLI tokens their role's scopes. Left: the members UI and the full matrix.)
+- [x] **Roles** (table below) enforced in every route: dashboard, PWA, API, MCP: instance admin, admin, editor and
+      creator; creators use the app and connect their own accounts there (the creators' part of #33); pause and resume
+      per workspace; the first run makes an instance admin who creates the first workspace (#18, #19, #20).
 - [ ] Per-workspace: connections, accounts, media store root (e.g. its own Drive folder), agent keys, time zone,
       notifications. The OAuth apps (D10) can be shared by the instance or set per workspace.
 - [ ] PWA: a workspace picker when a user belongs to more than one; notifications say which workspace.
@@ -797,11 +800,13 @@ without a deployment per person. The data model is already there (Phase 3).
 
 | Role | Can |
 |---|---|
-| owner | everything, including members and deleting the workspace |
-| admin | connections, accounts, settings, agent keys |
-| approver | edit the plan, texts and drafts; approve and resume |
-| editor | edit the plan, texts and drafts; no approving |
-| viewer | read only |
+| instance admin | every workspace as its admin, and what is instance-wide: workspaces, media stores, OAuth apps |
+| admin | connections, accounts, settings, agent keys, members; the plan, texts and drafts; approve, pause, resume |
+| editor | edit the plan, texts and drafts; no approving, pausing or connecting; no dashboard settings |
+| creator | the app only: the plan, texts and drafts, approve, pause, resume, connect their own accounts |
+
+(Part 1 renamed the first draft's owner, approver and viewer: existing owners became admins and instance admins,
+approvers creators, viewers editors. Deleting a workspace is left out; archiving stops one completely.)
 
 ### Phase 14: More platforms (after v1, about 1 session each)
 

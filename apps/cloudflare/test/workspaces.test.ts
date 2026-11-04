@@ -364,6 +364,111 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect((await as("bea", "pwa", video)).json.samples).toMatchObject([{ views: 7 }]);
   });
 
+  // Phase 13 part 1's routes (members, invites, workspaces, connecting from the app): workspace B's people reach
+  // only workspace B. invites.test.ts and workspaces-admin.test.ts try each route's behaviour; here it's the boundary.
+  const send = async (userId: string, app: "dashboard" | "pwa", path: string, body: unknown = {}) => {
+    const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { app, userId });
+    const r = await exports.default.fetch(`https://scheduler.test${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: `${app === "dashboard" ? "bongsu_admin" : "bongsu_session"}=${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+    return { status: r.status, json: (await r.json().catch(() => ({}))) as Record<string, unknown> };
+  };
+  const role = (ws: string, user: string) =>
+    env.DB.prepare("SELECT role FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
+      .bind(ws, user)
+      .first<string>("role");
+
+  it("a workspace's admin can't touch another's members or invites, nor the Workspaces page", async () => {
+    await env.DB.batch(
+      [
+        "INSERT INTO users (id, email, name, created_at) VALUES ('dan', 'dan@example.com', 'Dan', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'dan', 'editor', 0) ON CONFLICT DO NOTHING",
+        "INSERT INTO invites (workspace_id, token_hash, email, role, invited_by, created_at, expires_at) VALUES ('default', 'inviteA000000000hash', 'p@example.com', 'editor', 'dan', 0, 4102444800)",
+      ].map((s) => env.DB.prepare(s)),
+    );
+    // bea is admin of B only: a member of the default workspace isn't hers to change, and its invite isn't there
+    expect((await send("bea", "dashboard", "/admin-api/members/dan", { role: "admin" })).status).toBe(404);
+    expect((await send("bea", "dashboard", "/admin-api/members/dan/remove")).status).toBe(404);
+    expect((await send("bea", "dashboard", "/admin-api/invites/inviteA000000000/revoke")).status).toBe(404);
+    expect(await role("default", "dan")).toBe("editor");
+    expect(
+      await env.DB.prepare("SELECT revoked_at FROM invites WHERE token_hash = 'inviteA000000000hash'").first(
+        "revoked_at",
+      ),
+    ).toBeNull();
+    // her invites land in B, whatever the body says
+    const inv = await send("bea", "dashboard", "/admin-api/invites", {
+      email: "new@example.com",
+      role: "creator",
+      workspaceId: "default",
+    });
+    expect(inv.status).toBe(200);
+    expect(
+      await env.DB.prepare("SELECT workspace_id FROM invites WHERE email = 'new@example.com'").first("workspace_id"),
+    ).toBe("b");
+    // the instance admin's page: create, rename, add an admin, archive, restore, open
+    for (const [path, body] of [
+      ["/admin-api/workspaces", { name: "Mine", timezone: "UTC", admin: "me" }],
+      ["/admin-api/workspaces/default", { name: "Mine" }],
+      ["/admin-api/workspaces/default/admins", { email: "x@example.com" }],
+      ["/admin-api/workspaces/default/archive", {}],
+      ["/admin-api/workspaces/default/restore", {}],
+      ["/admin-api/workspaces/default/open", {}],
+    ] as const)
+      expect((await send("bea", "dashboard", path, body)).status, path).toBe(403);
+    expect((await as("bea", "dashboard", "/admin-api/workspaces")).status).toBe(403);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces WHERE name = 'Mine'").first("n")).toBe(0);
+    expect(
+      await env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = 'default'").first("archived_at"),
+    ).toBeNull();
+  });
+
+  it("a workspace an instance admin creates starts empty and leaves the others alone", async () => {
+    await env.DB.prepare(
+      "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('ina2', 'ina2@example.com', 'Ina', 0, 1) ON CONFLICT (id) DO NOTHING",
+    ).run();
+    const r = await send("ina2", "dashboard", "/admin-api/workspaces", { name: "Fresh", timezone: "UTC", admin: "me" });
+    expect(r.status).toBe(200);
+    const id = String(r.json.id);
+    expect(id).not.toBe("b");
+    for (const table of ["accounts", "connections", "api_keys", "plan_items", "drafts"])
+      expect(
+        await env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE workspace_id = ?1`).bind(id).first("n"),
+        table,
+      ).toBe(0);
+    // B still sees only its own
+    const accounts = (await as("bea", "dashboard", "/admin-api/accounts")).json.accounts as { id: string }[];
+    expect(accounts.map((a) => a.id)).toContain("b_shop");
+    expect(accounts.map((a) => a.id)).not.toContain("demo_travel");
+    expect(((await as("bea", "dashboard", "/admin-api/members")).json.members as unknown[]).length).toBe(1);
+  });
+
+  it("connecting from the app: editors are refused, a creator reads and reconnects only its own workspace's", async () => {
+    await env.DB.batch(
+      [
+        "INSERT INTO users (id, email, name, created_at) VALUES ('cleo', 'cleo@example.com', 'Cleo', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO users (id, email, name, created_at) VALUES ('ed', 'ed@example.com', 'Ed', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'cleo', 'creator', 0) ON CONFLICT DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ed', 'editor', 0) ON CONFLICT DO NOTHING",
+      ].map((s) => env.DB.prepare(s)),
+    );
+    expect((await as("ed", "pwa", "/app-api/connections")).status).toBe(403);
+    expect((await send("ed", "pwa", "/app-api/connect/youtube/start")).status).toBe(403);
+    const conns = (await as("cleo", "pwa", "/app-api/connections")).json.connections as { id: string }[];
+    expect(conns.map((c) => c.id)).toContain("c_b");
+    expect(conns.map((c) => c.id)).not.toContain("c_main");
+    // the default workspace's connection id isn't B's to reconnect, with or without an OAuth app
+    const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_states").first("n");
+    const r = await send("cleo", "pwa", "/app-api/connect/youtube/start", { reconnect: "c_main" });
+    expect(r.status).toBe(400);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_states").first("n")).toBe(before);
+  });
+
   it("a user in no workspace is turned away", async () => {
     expect((await as("nobody", "dashboard", "/admin-api/accounts")).status).toBe(403);
     expect((await as("nobody", "pwa", "/app-api/status")).status).toBe(403);

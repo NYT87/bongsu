@@ -49,7 +49,7 @@ An Instagram account without a working connection and user id is skipped: nothin
 The caption check (`packages/core/src/formats/caption-lint.ts`) judges every caption against its platform's rules:
 Instagram's are a cap of 5 hashtags (a FAIL blocks approval), a first line that fits before the feed's fold at about
 125 characters, and two language-bound heuristics (a concrete hook, one call to action) written for English, Spanish
-and Korean. An owner can change them per account in the dashboard's Accounts page, under **Caption checks**:
+and Korean. An admin can change them per account in the dashboard's Accounts page, under **Caption checks**:
 `Hashtags max` (0–30), `First line chars` (50–500) and the `Language checks` switch. The values live in
 `accounts.settings.captionRules`, e.g. `{"hashtagMax": 10, "languageChecks": false}`; a missing field means the
 platform's default, and a field of the wrong type is ignored. `POST /admin-api/accounts/:id` with `captionRules`
@@ -116,7 +116,7 @@ Set on both Workers with `wrangler secret put` (never in the wrangler files).
 | `SETUP_TOKEN` | to sign up (web Worker only) | a long random string; the first person signs up in the dashboard with it, once |
 | YouTube OAuth secrets (any name, e.g. `YT_MAIN_OAUTH`) | no (channels connected without the dashboard) | JSON `{client_id, client_secret, refresh_token, token_uri}`, named by the channel's connection (`secret_name`) |
 | `VAPID_PRIVATE_KEY` | for push | the private half of the VAPID pair |
-| `RESEND_API_KEY` | with `MAILER = "resend"` | a [Resend](https://resend.com) API key: connection alerts are also emailed to the workspace's owners and admins. Set `MAILER = "resend"` and `MAIL_FROM` (a sender on a domain verified in Resend, e.g. `Bongsu <bongsu@example.com>`) as `[vars]` in the cron Worker's wrangler file |
+| `RESEND_API_KEY` | with `MAILER = "resend"` | a [Resend](https://resend.com) API key: connection alerts are also emailed to the workspace's admins. Set `MAILER = "resend"` and `MAIL_FROM` (a sender on a domain verified in Resend, e.g. `Bongsu <bongsu@example.com>`) as `[vars]` in the cron Worker's wrangler file |
 
 `/health` lists missing secrets by name: the ones every instance needs, plus those its connections and media stores
 need. It also lists the media stores and their status, and isn't `ok` until at least one is set up and none is broken.

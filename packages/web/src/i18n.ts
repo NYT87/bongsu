@@ -84,12 +84,13 @@ export const en = {
 
   // settings
   "settings.publishing": "Publishing",
-  "settings.pausedNote": "Paused: nothing is published until you resume.",
+  "settings.pausedNote": "Paused: nothing in this workspace is published until you resume.",
   "settings.resumeWithPasskey": "Resume with passkey",
   "settings.resumed": "Resumed: approved items go out at their time again; any overdue ones go out now.",
-  "settings.pauseNote": "Stops every Reel, post and Shorts comment until you resume. Approvals are kept.",
-  "settings.pauseLabel": "Pause everything",
-  "settings.pauseConfirm": "Pause all publishing?",
+  "settings.pauseNote":
+    "Stops this workspace's Reels, posts and Shorts comments until you resume. Approvals are kept; other workspaces keep publishing.",
+  "settings.pauseLabel": "Pause this workspace",
+  "settings.pauseConfirm": "Pause publishing in this workspace?",
   "settings.pauseDetail": "Nothing goes out until you resume here.",
   "settings.notifications": "Notifications",
   "settings.pushOn": "On here",

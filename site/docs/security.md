@@ -1,10 +1,11 @@
 # Security
 
-## Owner
+## Sign-in
 
-- One owner per instance, signed in with passkeys (WebAuthn). The relying party is `RP_ID`, the app's hostname.
-- The first passkey needs a one-time setup code (15 minutes, stored hashed); later devices get a code from a signed-in
-  session.
+- Everyone signs in with passkeys (WebAuthn). The relying party is `RP_ID`, the app's hostname.
+- The first person on a new instance signs up with the `SETUP_TOKEN` and becomes the instance admin. The token is
+  useless once a user exists. Anyone else joins through an invite (below).
+- Later devices get a one-time code (15 minutes, stored hashed) from a signed-in session.
 - Sessions are an HTTP-only cookie (`bongsu_session`).
 - Approving an item, resuming a paused scheduler and moving a YouTube release date each need a fresh assertion from
   the signed-in user's own passkey, not only a session.
@@ -23,13 +24,29 @@ to dry run stops every outside write, also for a job already under way.
 
 ## Roles
 
-A member's role (owner, admin, approver, editor, viewer) says what they can do: approving and resuming need `approve` /
-`resume`, changing the plan `plan` (`agent/auth.ts` `ROLE_SCOPES`), in the app as with a CLI token. In the dashboard,
-changing connections, accounts, OAuth apps, agent keys and settings takes an owner or admin; every member reads, and
-manages their own passkeys, devices and CLI tokens. A workspace's admins invite people with a one-time link (7
+A person has a role in each workspace they belong to, and the instance has admins of its own:
+
+| | Instance admin | Admin | Editor | Creator |
+|---|---|---|---|---|
+| Reaches | every workspace, as its admin | their workspaces | their workspaces | their workspaces |
+| Workspaces, media stores, OAuth apps | yes | no | no | no |
+| Members: invite, change role, remove | yes | yes | no | no |
+| Connections, accounts, settings, agent keys (dashboard) | yes | yes | read accounts only | no |
+| Connect their own accounts (app) | yes | yes | no | yes |
+| Plan, texts, drafts, release dates | yes | yes | yes | yes |
+| Approve, pause, resume | yes | yes | no | yes |
+| Dashboard | yes | yes | yes | no, they use the app |
+
+What a signed-in person's app session and CLI token carry comes from the role (`agent/auth.ts` `ROLE_SCOPES`):
+approving and resuming need `approve` / `resume`, changing the plan `plan`. Approving and resuming still ask for the
+person's own passkey, and no token ever approves. Agent keys sit outside this table: one workspace each, content only.
+
+The instance admin is a flag on a user, not a membership. The first person has it; an instance admin can give it to
+another user or take it away, never from the last one. A workspace's admins invite people with a one-time link (7
 days; only its hash is kept), change roles and remove members; a removed member's sessions, CLI tokens and devices in
 that workspace go at once, and a workspace always keeps one admin. Accepting an invite never says whether its email
-already has an account.
+already has an account. Archiving a workspace (instance admins) stops it completely: nothing publishes, its keys and
+members are refused, and its data stays.
 
 ## Agents
 
@@ -51,7 +68,8 @@ nothing.
 
 Every row of plan data carries its workspace, and the app, the API and the MCP server act within the caller's: items,
 drafts, jobs, accounts, the comments inbox and replies, manual post records. Account ids are unique across the
-instance.
+instance. Pausing is per workspace too. Nothing lands in a workspace nobody chose: a draft from a store's inbox goes
+to the workspace of its project's plan, else to the store's **Inbox feeds** workspace, else it waits.
 
 ## Secrets
 
@@ -60,7 +78,7 @@ shows which are missing, by name only.
 
 ## Audit
 
-Owner actions (approve, passkey added, setup code, pause/resume…) are written to the `audit` table, kept 180 days.
+Actions by people (approve, passkey added, setup code, pause/resume, members, workspaces…) are written to the `audit` table, kept 180 days.
 
 ## Reporting a vulnerability
 
