@@ -164,12 +164,18 @@ Every change to the workspace, newest first: when, who, what and the detail. **L
 instance admin can switch to **The instance**: new workspaces, media stores, OAuth apps, instance admins and sign-ins
 outside any workspace.
 
+## Switching workspaces
+
+Someone who can open more than one workspace sees a switcher at the top of the sidebar, naming the one they work in:
+choose another and the dashboard reloads there, with the role they have in it. It shows for people who are members of
+several workspaces and for instance admins, who can open all of them. A person in a single workspace sees no switcher.
+
 ## Workspaces
 
 Instance admins see an **Instance** group under the sidebar's sections: **Workspaces**, **Media** and **OAuth apps**.
 **Workspaces** lists every workspace with its **Members**, **Accounts**, when it was **Created** and its **Status**.
 **Create a workspace** takes a name, a time zone and its first admin: you, or someone invited by email (copy their
-link). **Open** works in that workspace, as its admin, until you open another. **Rename** changes its name (its own
+link). **Open** works in that workspace, as its admin, until you open another (the sidebar's switcher does the same). **Rename** changes its name (its own
 admins can also rename it in **Settings**), and **Add an admin** makes an invite link for a new admin.
 
 **Archive** stops a workspace completely: nothing in it publishes, its agent keys and CLI tokens stop working, its
