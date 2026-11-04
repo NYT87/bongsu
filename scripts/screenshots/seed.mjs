@@ -339,9 +339,10 @@ export async function seedDemo(scratchDir, now = new Date()) {
     db.prepare(
       "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', ?)",
     ).run(nowS);
-    // the media: the demo folder on the server's disk (MEDIA_DIR), the instance's only store
+    // the media: the demo folder on the server's disk (MEDIA_DIR), the instance's only store. Its drive inbox lands in
+    // `default`, as migration 0018 sets it on an instance that has that workspace (the demo plants an inbox draft)
     db.prepare(
-      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', ?)",
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at, inbox_workspace) VALUES ('local', 1, '{}', 'ok', ?, 'default')",
     ).run(nowS);
 
     // ---- accounts and how they are reached (no credentials: DRY_RUN never publishes, and the YouTube list is cached below)
