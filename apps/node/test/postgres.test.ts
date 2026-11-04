@@ -145,8 +145,13 @@ describe("Bongsu on Postgres (PGlite)", () => {
     expect((await call("/admin-api/accounts")).status).toBe(200);
     expect((await call("/admin-api/connections")).status).toBe(200);
     expect((await call("/admin-api/passkeys")).status).toBe(200);
+    // a workspace's audit holds only its own rows; the setup's rows are the instance's, for an instance admin
     const audit = (await call("/admin-api/audit")).json.entries as { action: string }[];
-    expect(audit.map((a) => a.action)).toEqual(expect.arrayContaining(["bootstrap", "settings", "key_create"]));
+    const actions = audit.map((a) => a.action);
+    expect(actions).toEqual(expect.arrayContaining(["settings", "key_create", "token_create"]));
+    expect(actions).not.toContain("bootstrap");
+    const instance = (await call("/admin-api/audit?instance=1")).json.entries as { action: string }[];
+    expect(instance.map((a) => a.action)).toContain("bootstrap");
   });
 
   it("the app's API on a session", async () => {
