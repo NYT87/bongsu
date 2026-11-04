@@ -28,6 +28,11 @@ export interface UploadTarget {
   url: string;
   method: "PUT" | "POST";
   headers: Record<string, string>;
+  /** The new file's id when the store knows it before the upload (S3: its key); otherwise the upload's last answer
+   *  names it (Drive). */
+  id?: string;
+  /** Sent in pieces with Content-Range (a Drive resumable session), or as one request (a presigned PUT). */
+  chunked: boolean;
 }
 
 /** A refused write (no permission): recorded and reported once, never retried. Anything else throws a plain Error. */

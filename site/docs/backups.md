@@ -95,9 +95,14 @@ it holds no approvals, accounts or connections ([The command line](cli.md)).
 
 ## Media
 
+The media stores keep the files; the database only references them (which stores are set up, with their keys and
+grants, is in the database backup, encrypted with `ENCRYPTION_KEY`).
+
 - **Drive:** the files are already Drive's own copy; Bongsu only reads them and moves posted ones to
   `UPLOADS/_posted/` ([Google Drive](drive.md)).
-- **A local directory** (`MEDIA_STORE=local`, `MEDIA_DIR`): back up the directory, on Docker the `bongsu-media` volume
+- **A bucket:** the files are the bucket's; turn on its versioning or replication if you want copies
+  ([S3-compatible buckets](s3.md)).
+- **This server's disk** (`MEDIA_DIR`): back up the directory, on Docker the `bongsu-media` volume
   (`docker compose cp bongsu:/media .` copies it out).
 
 ## Test a restore

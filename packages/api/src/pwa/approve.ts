@@ -19,7 +19,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { Check } from "@bongsu/core/formats/caption-lint";
 import { altLines, captionText, comment2Text, commentText } from "@bongsu/core/formats/texts";
-import { mediaStore } from "@bongsu/core/media/index";
+import { mediaStores } from "@bongsu/core/media/index";
 import { isMedia, isVideo, type MediaEntry } from "@bongsu/core/media/store";
 import { platform } from "@bongsu/core/platforms/index";
 import { type Format, formatLabel } from "@bongsu/core/platforms/types";
@@ -86,7 +86,7 @@ export async function resolveItem(
   if (!/^(reel|post):[^/]+\/[^/]+$/.test(key)) return null;
   const i = await getItem(env.DB, key, workspaceId);
   if (!i) return null;
-  const store = mediaStore(env, fetcher);
+  const stores = await mediaStores(env, fetcher);
   const paths = contentPaths(i);
   const problems: string[] = [];
   const db = i.content === "db";
@@ -97,19 +97,26 @@ export async function resolveItem(
     paths.alt ? readText(env.DB, paths.alt) : null,
     readText(env.DB, paths.comment2),
   ]);
-  const mediaP = (async (): Promise<{ files: MediaEntry[]; node: MediaEntry | null; missing: string[] }> => {
+  type File = MediaEntry & { store: string };
+  const mediaP = (async (): Promise<{ files: File[]; node: MediaEntry | null; missing: string[] }> => {
     if (i.format === "text") return { files: [], node: null, missing: [] }; // a text post has no media
     if (db) {
-      // the draft's files, by id, in slide order
+      // the draft's files, by id, in slide order, each from its own store
       const refs = await dbMedia(env.DB, paths.media);
-      const other = refs.filter((r) => r.store !== store.id).map((r) => `${r.id} is on the ${r.store} store`);
+      const other = refs
+        .filter((r) => !stores.for(r))
+        .map((r) => `${r.id} is on the ${r.store} store, which isn't set up`);
       const metas = await Promise.all(
-        refs.filter((r) => r.store === store.id).map(async (r) => [r.id, await store.stat(r.id)] as const),
+        refs.filter((r) => stores.for(r)).map(async (r) => [r, await stores.for(r)!.stat(r.id)] as const),
       );
-      const missing = [...other, ...metas.filter(([, m]) => !m).map(([id]) => `media file ${id} is gone`)];
-      const files = metas.flatMap(([, m]) => (m ? [m] : []));
+      const missing = [...other, ...metas.filter(([, m]) => !m).map(([r]) => `media file ${r.id} is gone`)];
+      const files = metas.flatMap(([r, m]) => (m ? [{ ...m, store: r.store }] : []));
       return { files, node: null, missing: files.length ? missing : [...missing, "no media"] };
     }
+    // an item given by path: in the default store
+    const store = stores.default;
+    if (!store)
+      return { files: [], node: null, missing: ["no media store is set up: add one in the dashboard (Media)"] };
     const node = await store.resolve(paths.media);
     if (!node)
       return {
@@ -117,9 +124,12 @@ export async function resolveItem(
         node,
         missing: [`not in the media store yet: ${paths.media} (upload it there, or from the app's inbox)`],
       };
-    if (paths.single) return { files: [node], node, missing: [] };
+    if (paths.single) return { files: [{ ...node, store: store.id }], node, missing: [] };
     return {
-      files: (await store.list(node.id)).filter((f) => isMedia(f)).sort((a, b) => a.name.localeCompare(b.name)),
+      files: (await store.list(node.id))
+        .filter((f) => isMedia(f))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((f) => ({ ...f, store: store.id })),
       node,
       missing: [],
     };
@@ -157,7 +167,7 @@ export async function resolveItem(
   if (at0 === null) problems.push("the item has no valid date/time: schedule it first");
   const posted = await isPosted(env.DB, key);
   if (posted) problems.push("already published");
-  const media = files.map((f) => ({ store: store.id, id: f.id, checksum: f.checksum, mime: f.mime, name: f.name }));
+  const media = files.map((f) => ({ store: f.store, id: f.id, checksum: f.checksum, mime: f.mime, name: f.name }));
   const opts = itemOptions(i);
   const r: Resolved = {
     key,

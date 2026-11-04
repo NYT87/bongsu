@@ -17,9 +17,9 @@ Audit and Settings. This guide follows it.
 keys. Under **Needs you** it lists what to fix: no connection yet, connections that are expiring or broken, fewer than
 two passkeys, fewer than three recovery codes left.
 
-Until setup is done, a banner reads "Finish setting up: 2 of 4 done." and **Continue** opens **Get started**. Its four
-steps can each be done later from their own page: your time zone and daily digest hour, your OAuth apps, an account to
-connect, and the device you approve on. A last card, **Then: dry run, and going live**, points to Settings.
+Until setup is done, a banner reads "Finish setting up: 2 of 5 done." and **Continue** opens **Get started**. Its five
+steps can each be done later from their own page: your time zone and daily digest hour, your OAuth apps, where your
+media live, an account to connect, and the device you approve on. A last card, **Then: dry run, and going live**, points to Settings.
 
 ## Connections
 
@@ -38,7 +38,26 @@ again, and revokes Bongsu's access where the platform allows it.
   [Instagram through Composio](instagram-composio.md).
 - **YouTube channel**: **Connect** signs in with the Google account that owns the channel. See [YouTube](youtube.md).
 
-Google Drive is not a connection here: it is set up with the instance's own settings, see [Google Drive](drive.md).
+Google Drive is not a connection here: it is a media store, set up on the **Media** page.
+
+## Media
+
+Where your Reels and photos live. **Your stores** lists each one with its **Status** and when it was last **Checked**
+(Bongsu checks every store weekly): **Test** checks it reads and writes, **Make default** makes it the store used where
+nothing names one (planned items given by a path, drafts from agents, the first choice on the app's upload page), and
+**Remove** stops Bongsu reading it, after saying how many waiting approvals that voids. Removing asks for your passkey
+again.
+
+You can set up several, one of each kind:
+
+- **Google Drive**: **Connect Google Drive** signs in with your Google app (add it under OAuth apps first). See
+  [Google Drive](drive.md).
+- **S3-compatible bucket**: **Add a bucket** takes the service (AWS S3, Cloudflare R2, Backblaze B2, MinIO or other),
+  the bucket, an optional folder in it and a key; **Test and save** saves it only once it answers. See
+  [S3-compatible buckets](s3.md).
+- **This server's disk**: on Docker and Node, the server's media folder (`MEDIA_DIR`).
+
+Keys and grants are stored encrypted and never shown again.
 
 ## OAuth apps
 

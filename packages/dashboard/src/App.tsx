@@ -11,6 +11,7 @@ import {
   Devices,
   GetStarted,
   Keys,
+  Media,
   OAuthApps,
   Overview,
   Settings,
@@ -30,6 +31,7 @@ export interface State {
 const SECTIONS = [
   ["", "Overview", Overview],
   ["connections", "Connections", Connections],
+  ["media", "Media", Media],
   ["apps", "OAuth apps", OAuthApps],
   ["accounts", "Accounts", Accounts],
   ["videos", "Videos", Videos],

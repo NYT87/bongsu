@@ -4,11 +4,13 @@
 import { env } from "cloudflare:workers";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { clearTokenCache } from "@bongsu/core/clients/google";
+import { encryptSecret } from "@bongsu/core/crypto";
 import { addApproval, defaultTime } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneToUnix } from "@bongsu/core/formats/time";
 import { clearFolderCache } from "@bongsu/core/media/drive";
+import { FakeS3 } from "@bongsu/core/media/fake-s3";
 import { setWorkspaceNtfy } from "@bongsu/core/ntfy";
 import { setWorkspaceSettings, workspaceZone } from "@bongsu/core/workspaces";
 
@@ -19,6 +21,10 @@ export interface Call {
 }
 
 export class World {
+  /** The scopes Google says it granted for a code (default: YouTube's two). */
+  googleGrantScope: string | null = null;
+  /** A bucket at https://s3.test (path style) or https://media.s3.test: the "s3" media store (seedS3Store). */
+  s3 = new FakeS3({ host: "s3.test", bucket: "media", accessKeyId: TEST_S3_KEYS.accessKeyId });
   /** Resumable upload sessions opened, and folders shared (uploads from the app). */
   uploads: { name: string; parents: string[]; origin: string | null; type: string | null }[] = [];
   shares: { file: string; role: string; emailAddress: string }[] = [];
@@ -149,6 +155,7 @@ export class World {
     const url = new URL(req.url);
     const json = (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+    if (url.hostname === "s3.test" || url.hostname.endsWith(".s3.test")) return this.s3.fetch(req);
 
     if (url.hostname === "oauth2.googleapis.com" && url.pathname === "/revoke") {
       this.googleRevoked.push(url.searchParams.get("token") ?? "");
@@ -175,6 +182,7 @@ export class World {
           refresh_token: "g-refresh",
           expires_in: 3599,
           scope:
+            this.googleGrantScope ??
             "https://www.googleapis.com/auth/youtube.force-ssl https://www.googleapis.com/auth/yt-analytics.readonly",
         });
       }
@@ -524,24 +532,45 @@ export class World {
   };
 }
 
-let saJson: string | null = null;
+/** The Drive the tests use: the media store "drive", connected with an OAuth grant and the default. */
+export const TEST_DRIVE_GRANT = JSON.stringify({
+  client_id: "c",
+  client_secret: "s",
+  refresh_token: "r-drive",
+  token_uri: "https://oauth2.googleapis.com/token",
+});
+export const TEST_S3_KEYS = { accessKeyId: "AKIDTEST", secretAccessKey: "test-secret-key" };
+export const TEST_S3_SETTINGS = {
+  endpoint: "https://s3.test",
+  region: "auto",
+  bucket: "media",
+  prefix: "",
+  pathStyle: true,
+};
+/** The bucket as a second store (not the default unless asked). */
+export async function seedS3Store(o: { isDefault?: boolean } = {}, db: Env["DB"] = env.DB) {
+  await db
+    .prepare(
+      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', ?1, ?2, ?3, 'ok', 0)",
+    )
+    .bind(
+      o.isDefault ? 1 : 0,
+      JSON.stringify(TEST_S3_SETTINGS),
+      await encryptSecret(TEST_ENCRYPTION_KEY, JSON.stringify(TEST_S3_KEYS)),
+    )
+    .run();
+  if (o.isDefault) await db.prepare("UPDATE media_store SET is_default = 0 WHERE kind != 's3'").run();
+}
 
-/** A service-account JSON with a real RSA key (the Worker really signs its JWT). */
-export async function testSaJson(): Promise<string> {
-  if (saJson) return saJson;
-  const kp = (await crypto.subtle.generateKey(
-    { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
-    true,
-    ["sign", "verify"],
-  )) as CryptoKeyPair;
-  const der = (await crypto.subtle.exportKey("pkcs8", kp.privateKey)) as ArrayBuffer;
-  const pem = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...new Uint8Array(der)))}\n-----END PRIVATE KEY-----\n`;
-  saJson = JSON.stringify({
-    client_email: "sa@test",
-    private_key: pem,
-    token_uri: "https://oauth2.googleapis.com/token",
-  });
-  return saJson;
+export async function seedMediaStore(db: Env["DB"] = env.DB, key = TEST_ENCRYPTION_KEY) {
+  const grant = TEST_DRIVE_GRANT;
+  await db.prepare("DELETE FROM media_store").run();
+  await db
+    .prepare(
+      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('drive', 1, '{}', ?1, 'ok', 0)",
+    )
+    .bind(await encryptSecret(key, grant))
+    .run();
 }
 
 /** A channel's stored OAuth credentials, granted both scopes (a channel connected before the Analytics scope was
@@ -588,12 +617,15 @@ export async function seedAccounts(db: Env["DB"] = env.DB) {
   await setWorkspaceSettings(db, "default", { timezone: "Asia/Seoul", digestHour: 8 }, at);
 }
 
+export const TEST_ENCRYPTION_KEY = "test-encryption-key-0123456789";
+
 /** The tests' environment. `NOTIFY_URL` (test-only: the Worker reads topics from the database) sets the default
  *  workspace's ntfy topic, https://ntfy.test/topic unless given (undefined: none), where `w.notifications` collects. */
 export async function testEnv(base: Env, overrides: Partial<Env> & Record<string, unknown> = {}): Promise<Env> {
   clearTokenCache();
   clearFolderCache();
   await seedAccounts(base.DB);
+  await seedMediaStore(base.DB, (overrides.ENCRYPTION_KEY as string | undefined) ?? TEST_ENCRYPTION_KEY);
   const { NOTIFY_URL, ...rest } = overrides;
   const e = await baseEnv(base, rest);
   const topic = "NOTIFY_URL" in overrides ? (NOTIFY_URL as string | undefined) : "https://ntfy.test/topic";
@@ -607,12 +639,11 @@ async function baseEnv(base: Env, overrides: Partial<Env> & Record<string, unkno
     DRY_RUN: "0",
     PUBLIC_URL: "https://scheduler.test",
     COMPOSIO_CONSUMER_KEY: "ck_test",
-    DRIVE_SA_JSON: await testSaJson(),
     MEDIA_SIGNING_KEY: "signing-key",
     YT_MAIN_OAUTH: ytOauth("r-main"),
     YT_VLOGS_OAUTH: ytOauth("r-vlogs"),
     IG_TOKEN_DEMO: "ig-token-1",
-    ENCRYPTION_KEY: "test-encryption-key-0123456789",
+    ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     ...overrides,
   } as Env;
 }

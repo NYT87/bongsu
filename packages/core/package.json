@@ -13,7 +13,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@block65/webcrypto-web-push": "2.0.0"
+    "@block65/webcrypto-web-push": "2.0.0",
+    "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
     "@electric-sql/pglite": "0.5.13",

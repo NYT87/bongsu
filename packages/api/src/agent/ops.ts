@@ -42,7 +42,7 @@ import {
 import type { Env } from "@bongsu/core/env";
 import { altLines, captionText, comment2Text, commentText } from "@bongsu/core/formats/texts";
 import { shiftDate, utcIso, zoneDate, zoneStamp, zoneToUnix } from "@bongsu/core/formats/time";
-import { storeId } from "@bongsu/core/media/index";
+import { defaultKind } from "@bongsu/core/media/index";
 import { dailyGrowth, nearest24h, type Point, type Sample, series } from "@bongsu/core/metrics";
 import { platform, requirePlatform } from "@bongsu/core/platforms/index";
 import {
@@ -631,9 +631,12 @@ export async function createDraft(c: OpCtx, body: Record<string, unknown>) {
   ]) {
     if (body[k] !== undefined) payload[k] = String(body[k]).slice(0, 5000);
   }
-  // file ids in the instance's media store, in slide order
-  if (Array.isArray(body.media))
-    payload.media = body.media.slice(0, 10).map((m) => ({ store: storeId(c.env), id: String(m).slice(0, 200) }));
+  // file ids in the instance's default media store, in slide order
+  if (Array.isArray(body.media)) {
+    const store = await defaultKind(c.env.DB);
+    if (!store) throw new ApiError(400, "no media store is set up: add one in the dashboard (Media)");
+    payload.media = body.media.slice(0, 10).map((m) => ({ store, id: String(m).slice(0, 200) }));
+  }
   if (!payload.caption && !payload.comment && !payload.note)
     throw new ApiError(400, "a draft needs at least a caption, a comment or a note");
   if (payload.date && !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.date)))

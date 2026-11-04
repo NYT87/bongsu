@@ -332,6 +332,10 @@ export async function seedDemo(scratchDir, now = new Date()) {
       "UPDATE workspace_settings SET timezone = ?, digest_hour = 8, updated_at = ? WHERE workspace_id = 'default'",
     ).run(ZONE, nowS);
     db.prepare("UPDATE workspaces SET name = 'Demo Studio' WHERE id = 'default'").run();
+    // the media: the demo folder on the server's disk (MEDIA_DIR), the instance's only store
+    db.prepare(
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', ?)",
+    ).run(nowS);
     db.prepare("UPDATE users SET email = 'owner@example.com', name = 'Demo Owner' WHERE id = 'owner'").run();
 
     // ---- accounts and how they are reached (no credentials: DRY_RUN never publishes, and the YouTube list is cached below)

@@ -1,17 +1,15 @@
-// Google Drive as a media store: the only code that talks to Drive. Reads go through the service account (read-only
-// scope); moving posted media aside and creating folders use its write scope (Editor on UPLOADS/). Uploads from the
-// app open a resumable session as the owner (scope drive.file), so the bytes go from the browser straight to Google;
-// that scope only lets the app write into folders it created, so those are created as the owner and shared with the
-// service account. Paths start at a folder shared with the service account ("UPLOADS/inbox/<project>"). Nothing here
-// trashes or deletes.
-import { refreshToken, serviceAccountToken } from "../clients/google";
+// Google Drive as a media store: the only code that talks to Drive. Everything goes through the owner's OAuth grant
+// (Connect Google Drive in the dashboard, scope drive: the files they drop in by hand too, and moving them aside).
+// Uploads from the app open a resumable session, so the bytes go from the browser straight to Google. Paths start at
+// a top folder of the owner's ("UPLOADS/inbox/<project>"). Nothing here trashes or deletes.
+import { refreshToken } from "../clients/google";
 import type { Db } from "../db";
 import { type MediaEntry, MediaRefused, type MediaStore, type UploadTarget } from "./store";
 
 const API = "https://www.googleapis.com/drive/v3/files";
 const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
-const READ = "https://www.googleapis.com/auth/drive.readonly";
-const WRITE = "https://www.googleapis.com/auth/drive";
+/** What Connect Google Drive asks for. */
+export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 const FOLDER = "application/vnd.google-apps.folder";
 const FIELDS = "id,name,mimeType,md5Checksum,size,modifiedTime,parents,trashed";
 
@@ -43,25 +41,20 @@ const toEntry = (f: DriveFile): MediaEntry => ({
 });
 
 export interface DriveStoreOptions {
-  /** The service account's JSON key. */
-  saJson: string;
+  /** The owner's grant: {client_id, client_secret, refresh_token, token_uri}, from Connect Google Drive. */
+  oauth: string;
   fetch: typeof fetch;
-  /** The owner's OAuth (client id/secret, refresh token, scope drive.file): enables uploads from the app. */
-  ownerOauth?: string;
   /** Where the folders made for uploads are remembered (settings), so each is created once. */
   db?: Db;
 }
 
 export class DriveStore implements MediaStore {
   readonly id = "drive";
-  createUpload?: (name: string, folderPath: string, mime: string, origin: string) => Promise<UploadTarget>;
 
-  constructor(private o: DriveStoreOptions) {
-    if (o.ownerOauth) this.createUpload = (n, p, m, origin) => this.upload(n, p, m, origin);
-  }
+  constructor(private o: DriveStoreOptions) {}
 
-  private async auth(scope = READ) {
-    return { Authorization: `Bearer ${await serviceAccountToken(this.o.saJson, scope, this.o.fetch)}` };
+  private async auth() {
+    return { Authorization: `Bearer ${await refreshToken(this.o.oauth, this.o.fetch)}` };
   }
 
   private async get(id: string): Promise<DriveFile | null> {
@@ -146,7 +139,7 @@ export class DriveStore implements MediaStore {
   private async mkdir(name: string, parent: string): Promise<string> {
     const r = await this.o.fetch(`${API}?fields=id`, {
       method: "POST",
-      headers: { ...(await this.auth(WRITE)), "Content-Type": "application/json" },
+      headers: { ...(await this.auth()), "Content-Type": "application/json" },
       body: JSON.stringify({ name, mimeType: FOLDER, parents: [parent] }),
     });
     if (r.status === 403) throw new MediaRefused(`Drive refused creating ${name} (403)`);
@@ -160,7 +153,7 @@ export class DriveStore implements MediaStore {
     let at = parts.length;
     let found = await this.resolve(path);
     while (!found && --at > 0) found = await this.resolve(parts.slice(0, at).join("/"));
-    if (!found) throw new Error(`drive: no top folder ${parts[0]} shared with the service account`);
+    if (!found) throw new Error(`drive: no top folder named ${parts[0]} in the connected Drive`);
     let id = found.id;
     for (let i = at; i < parts.length; i++) id = await this.mkdir(parts[i], id);
     return id;
@@ -174,43 +167,30 @@ export class DriveStore implements MediaStore {
     const qs = `&addParents=${encodeURIComponent(to)}&removeParents=${encodeURIComponent((f.parents ?? []).join(","))}`;
     const r = await this.o.fetch(`${API}/${encodeURIComponent(id)}?fields=id${qs}`, {
       method: "PATCH",
-      headers: { ...(await this.auth(WRITE)), "Content-Type": "application/json" },
+      headers: { ...(await this.auth()), "Content-Type": "application/json" },
       body: "{}",
     });
     if (r.status === 403 || r.status === 404) throw new MediaRefused(`move refused (${r.status})`);
     if (!r.ok) throw new Error(`drive move ${id}: ${r.status}`);
   }
 
-  // ---------------------------------------------------------------- uploads from the app (owner, drive.file)
+  // ---------------------------------------------------------------- uploads from the app
 
-  private async owner() {
-    return { Authorization: `Bearer ${await refreshToken(this.o.ownerOauth!, this.o.fetch)}` };
-  }
-
-  /** A top folder of the owner's for uploads, created on first use and shared with the service account (writer: it
-   *  moves posted files); remembered in settings. Only top folders: drive.file can't write into UPLOADS/. */
+  /** A top folder of the owner's for uploads, created on first use and remembered in settings. */
   private async ownerFolder(name: string): Promise<string> {
     const key = `drive_upload_folder:${name}`;
     const hit = await this.o.db
       ?.prepare("SELECT value FROM settings WHERE key = ?1")
       .bind(key)
       .first<{ value: string }>();
-    if (hit) return hit.value;
-    const h = { ...(await this.owner()), "Content-Type": "application/json" };
+    if (hit && (await this.get(hit.value))) return hit.value;
     const r = await this.o.fetch(`${API}?fields=id`, {
       method: "POST",
-      headers: h,
+      headers: { ...(await this.auth()), "Content-Type": "application/json" },
       body: JSON.stringify({ name, mimeType: FOLDER }),
     });
     if (!r.ok) throw new Error(`drive: creating "${name}": ${r.status}`);
     const id = ((await r.json()) as { id: string }).id;
-    const sa = (JSON.parse(this.o.saJson) as { client_email: string }).client_email;
-    const p = await this.o.fetch(`${API}/${id}/permissions?sendNotificationEmail=false`, {
-      method: "POST",
-      headers: h,
-      body: JSON.stringify({ type: "user", role: "writer", emailAddress: sa }),
-    });
-    if (!p.ok) throw new Error(`drive: sharing "${name}" with the service account: ${p.status}`);
     await this.o.db
       ?.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
       .bind(key, id)
@@ -218,8 +198,8 @@ export class DriveStore implements MediaStore {
     return id;
   }
 
-  /** A resumable upload session: the browser PUTs the bytes to the URL in chunks. */
-  private async upload(name: string, folderPath: string, mime: string, origin: string): Promise<UploadTarget> {
+  /** A resumable upload session: the browser PUTs the bytes to the URL in chunks; the last answer names the file. */
+  async createUpload(name: string, folderPath: string, mime: string, origin: string): Promise<UploadTarget> {
     if (folderPath.includes("/")) throw new Error("drive uploads go to a top folder of the owner's");
     const folder = await this.ownerFolder(folderPath);
     const r = await this.o.fetch(`${UPLOAD_API}?uploadType=resumable&fields=id,name,mimeType,md5Checksum,size`, {
@@ -227,7 +207,7 @@ export class DriveStore implements MediaStore {
       // Origin: Google then answers the browser's PUTs to the session URL with CORS headers for the app.
       // No X-Upload-Content-Length: a picked file can turn out a different size than it claims; the last chunk says.
       headers: {
-        ...(await this.owner()),
+        ...(await this.auth()),
         "Content-Type": "application/json; charset=UTF-8",
         "X-Upload-Content-Type": mime,
         Origin: origin,
@@ -236,6 +216,6 @@ export class DriveStore implements MediaStore {
     });
     const url = r.headers.get("Location");
     if (!r.ok || !url) throw new Error(`drive: starting the upload: ${r.status}`);
-    return { url, method: "PUT", headers: {} };
+    return { url, method: "PUT", headers: {}, chunked: true };
   }
 }

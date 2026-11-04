@@ -21,7 +21,7 @@ services:
       - "${BONGSU_PORT:-8787}:8787"
     volumes:
       - bongsu-data:/data # the SQLite database
-      - bongsu-media:/media # media, with MEDIA_STORE=local
+      - bongsu-media:/media # media, when "This server's disk" is a media store (dashboard → Media)
     depends_on:
       postgres:
         condition: service_healthy

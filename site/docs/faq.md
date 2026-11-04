@@ -41,11 +41,13 @@ attention".
 The project gets 10,000 units a day; a comment or reply costs 50. Bongsu posts at most two Shorts comments per run, so
 a few channels stay far below it; it resets daily ([YouTube](youtube.md#quota)).
 
-## "No media on Drive yet: it can't be approved until the file is there."
+## "No media in the store yet: it can't be approved until the file is there."
 
-The item's files aren't where its path says. With Drive, check the folder names against [Google Drive](drive.md) (a
-renamed folder loses its items' media); with `MEDIA_STORE=local`, the files must be under `MEDIA_DIR` at the same paths
-(the `bongsu-media` volume on Docker). A replaced file changes its checksum and needs approving again.
+The item's files aren't where its path says, in the default media store (the dashboard's **Media** page shows which
+one that is). On Drive, check the folder names against [Google Drive](drive.md) (a renamed folder loses its items'
+media); in a bucket, the keys ([S3-compatible buckets](s3.md)); on the server's disk, the files must be under
+`MEDIA_DIR` at the same paths (the `bongsu-media` volume on Docker). A replaced file changes its checksum and needs
+approving again.
 
 ## The times are off
 

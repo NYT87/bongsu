@@ -111,17 +111,19 @@ Set on both Workers with `wrangler secret put` (never in the wrangler files).
 | Secret | Required | What |
 |---|---|---|
 | `COMPOSIO_CONSUMER_KEY` | for Composio connections | Composio consumer key ([instagram-composio.md](instagram-composio.md)) |
-| `DRIVE_SA_JSON` | with the Drive store (the default) | Google service account JSON; share your `UPLOADS/` Drive folder with its email |
 | `MEDIA_SIGNING_KEY` | yes | random string; signs the media links Instagram downloads (`openssl rand -hex 32`) |
-| `ENCRYPTION_KEY` | to connect from the dashboard (and with Instagram connections) | a long random string (`openssl rand -hex 32`) that encrypts the OAuth apps' secrets and the credentials kept in the database |
+| `ENCRYPTION_KEY` | to connect from the dashboard and to set up a media store | a long random string (`openssl rand -hex 32`) that encrypts the OAuth apps' secrets, the media stores' keys and grants, and the credentials kept in the database |
 | `SETUP_TOKEN` | to sign up (web Worker only) | a long random string; the first person signs up in the dashboard with it, once |
 | YouTube OAuth secrets (any name, e.g. `YT_MAIN_OAUTH`) | no (channels connected without the dashboard) | JSON `{client_id, client_secret, refresh_token, token_uri}`, named by the channel's connection (`secret_name`) |
 | `VAPID_PRIVATE_KEY` | for push | the private half of the VAPID pair |
 | `RESEND_API_KEY` | with `MAILER = "resend"` | a [Resend](https://resend.com) API key: connection alerts are also emailed to the workspace's owners and admins. Set `MAILER = "resend"` and `MAIL_FROM` (a sender on a domain verified in Resend, e.g. `Bongsu <bongsu@example.com>`) as `[vars]` in the cron Worker's wrangler file |
-| `DRIVE_OWNER_OAUTH` | no | the owner's Google OAuth (scope `drive.file`) for uploading from the app into "Bongsu app uploads" |
 
-`/health` lists missing secrets by name: the ones every instance needs, plus those its media store and its
-connections need.
+`/health` lists missing secrets by name: the ones every instance needs, plus those its connections and media stores
+need. It also lists the media stores and their status, and isn't `ok` until at least one is set up and none is broken.
+
+The media stores themselves (Google Drive, an S3-compatible bucket, the server's disk) aren't configured here: they're
+set up in the dashboard's **Media** page and kept in the database, their keys and grants encrypted with
+`ENCRYPTION_KEY` ([Google Drive](drive.md), [S3-compatible buckets](s3.md)).
 
 ## On Node and Docker
 
@@ -129,8 +131,7 @@ The same names, from the environment (`.env` with docker-compose; [self-hosting.
 
 | Name | Default | Meaning |
 |---|---|---|
-| `MEDIA_STORE` | `drive` | `local`: the media lives in a directory on the server (`MEDIA_DIR`), streamed through the signed `/m/` links |
-| `MEDIA_DIR` | `/media` in Docker | the local store's directory (the `bongsu-media` volume) |
+| `MEDIA_DIR` | `/media` in Docker | a directory this server offers as a media store ("This server's disk" on the dashboard's Media page; the `bongsu-media` volume), streamed through the signed `/m/` links. Unset: not offered |
 | `MAILER` | none | `smtp` (Node only) or `resend` |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS` | port 587 | the SMTP relay for `MAILER=smtp` (Mailpit in the compose file's `mail` profile: `mailpit`, `1025`) |
 | `MAIL_FROM` | | the sender, e.g. `Bongsu <bongsu@example.com>` |
@@ -157,14 +158,17 @@ but a job more than 6 hours late waits for you instead (`CATCH_UP_S`).
 Bongsu has no limit of its own per account. Instagram allows 100 posts per account per 24 hours through the API
 ([Instagram](instagram-graph.md#limits)); YouTube releases scheduled videos itself, so any number go public together.
 
-## Drive layout
+## The media stores' layout
+
+The same in every store: a Drive's top folders, a bucket's key prefixes (under its folder, if it has one), the
+server's media directory.
 
 | Path | Use |
 |---|---|
-| `UPLOADS/<project>/…` | media of plan items |
-| `UPLOADS/inbox/<project>/` | drop files here to get drafts |
-| `UPLOADS/_posted/` | posted media is moved here |
-| `Bongsu app uploads/` | files uploaded from the app (owned by the owner's account, shared with the service account) |
+| `UPLOADS/<project>/…` | media of plan items (looked up in the default store) |
+| `UPLOADS/inbox/<project>/` | drop files here to get drafts (every store's inbox is read) |
+| `UPLOADS/_posted/` | posted media is moved here, in the store it's in |
+| `Bongsu app uploads/` | files uploaded from the app, in the store picked for the upload |
 
 ## Tunable limits (`packages/core/src/constants.ts`)
 

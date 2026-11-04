@@ -23,8 +23,6 @@ Fill in `.env` ([configuration.md](configuration.md) explains each setting; the 
 
 - `PUBLIC_URL` (`https://bongsu.example.com`) and `DOMAIN` (`bongsu.example.com`) for Caddy.
 - `SETUP_TOKEN`, `MEDIA_SIGNING_KEY`, `ENCRYPTION_KEY`: long random strings (`openssl rand -hex 32` each).
-- `MEDIA_STORE`: `local` keeps the media in the `bongsu-media` volume; `drive` uses Google Drive (`DRIVE_SA_JSON`,
-  [drive.md](drive.md)).
 - `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` for push notifications (`npx web-push generate-vapid-keys`).
 - Optional: `BONGSU_APP_NAME` and `BONGSU_THEME_COLOR` give the app your own name and colour, applied when the image is
   built ([configuration.md](configuration.md#branding)).

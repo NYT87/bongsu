@@ -39,7 +39,6 @@ const env = nodeEnv(
     PUBLIC_URL: "https://bongsu.test",
     RP_ID: "bongsu.test",
     SETUP_TOKEN: "setup-token-123",
-    MEDIA_STORE: "local",
     MEDIA_DIR: "/tmp/bongsu-pg-media",
     MEDIA_SIGNING_KEY: "k",
     ENCRYPTION_KEY: "a-long-random-encryption-key-for-tests",
@@ -76,6 +75,11 @@ beforeAll(async () => {
   expect(await migratePostgres(driver, join(__dirname, "../../../migrations/postgres"))).toEqual([]);
   // the baseline brings the default workspace and its owner, as SQLite's migrations do
   expect(await db.prepare("SELECT role FROM memberships WHERE user_id = 'owner'").first()).toEqual({ role: "owner" });
+  await db
+    .prepare(
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",
+    )
+    .run(); // the server's disk, as the dashboard's Media page sets it up
 });
 
 describe("Bongsu on Postgres (PGlite)", () => {

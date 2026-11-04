@@ -35,12 +35,16 @@ describe("postgres.js against a Postgres server", () => {
     const env = nodeEnv(
       {
         PUBLIC_URL: "https://bongsu.test",
-        MEDIA_STORE: "local",
         MEDIA_DIR: "/tmp/bongsu-wire",
         MEDIA_SIGNING_KEY: "k",
       },
       new PostgresDb(driver),
     );
+    await new PostgresDb(driver)
+      .prepare(
+        "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",
+      )
+      .run();
     const r = await createApp(fetch).request("/health", {}, env);
     expect(await r.json()).toMatchObject({ ok: true });
     const n = await new PostgresDb(driver).prepare("SELECT COUNT(*) AS n FROM workspaces").first<{ n: unknown }>();

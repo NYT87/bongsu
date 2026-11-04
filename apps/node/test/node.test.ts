@@ -106,10 +106,16 @@ describe("the built app, served like Workers assets", () => {
 describe("the HTTP app and the schedules on Node", () => {
   const db = migrated();
   const env = nodeEnv(
-    { PUBLIC_URL: "https://bongsu.test/", MEDIA_STORE: "local", MEDIA_DIR: join(tmp, "media"), MEDIA_SIGNING_KEY: "k" },
+    { PUBLIC_URL: "https://bongsu.test/", MEDIA_DIR: join(tmp, "media"), MEDIA_SIGNING_KEY: "k" },
     db,
   );
   registerStore("local", (e) => new LocalStore(e.MEDIA_DIR as string));
+  // the server's disk, set up as the store (the dashboard's Media page does this)
+  db.sqlite
+    .prepare(
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",
+    )
+    .run();
   const offline: typeof fetch = async (input) => {
     throw new Error(`no network in this test: ${String(input)}`);
   };

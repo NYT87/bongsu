@@ -1,5 +1,6 @@
-// The inbox, its own cron run: whatever is dropped in UPLOADS/inbox/<project>/ in the media store becomes a draft (+ a
-// notification), for the owner to review. Nothing here publishes or approves.
+// The inbox, its own cron run: whatever is dropped in UPLOADS/inbox/<project>/ in any of the media stores becomes a
+// draft (+ a notification), for the owner to review; the draft records the store its files are in. Nothing here
+// publishes or approves.
 //
 //   inbox/<project>/<name>.mp4              a Reel draft    (+ <name>.txt caption, <name>.comment.txt, <name>.comment2.txt)
 //   inbox/<project>/<name>.jpg              a photo draft   (same optional texts)
@@ -13,7 +14,7 @@
 import { DEFAULT_WORKSPACE, instagramAccounts } from "./accounts";
 import type { Db } from "./db";
 import type { Env } from "./env";
-import { mediaStore } from "./media/index";
+import { mediaStores } from "./media/index";
 import { isMedia, isVideo, type MediaEntry, type MediaStore } from "./media/store";
 import { notifier } from "./notify";
 import { jsonList } from "./sql";
@@ -25,6 +26,7 @@ export const SETTLE_S = 10 * 60;
 const ITEMS_PER_RUN = 6;
 
 interface Item {
+  store: MediaStore;
   key: string;
   project: string;
   name: string;
@@ -59,14 +61,8 @@ async function inboxId(env: Env, store: MediaStore): Promise<string | null> {
   return node.id;
 }
 
-export async function scanInbox(
-  env: Env,
-  deps: { fetch: typeof fetch; now: Date },
-): Promise<{ drafted: string[]; waiting: number; note?: string }> {
-  const nowS = Math.floor(deps.now.getTime() / 1000);
-  const store = mediaStore(env, deps.fetch);
-  const root = await inboxId(env, store);
-  if (!root) return { drafted: [], waiting: 0, note: "no UPLOADS/inbox folder" };
+/** What's waiting in one store's inbox: a Reel or photo per media file, a post per folder. */
+async function inboxItems(store: MediaStore, root: string): Promise<Item[]> {
   const items: Item[] = [];
   for (const proj of (await store.list(root)).filter((f) => f.folder && !f.name.startsWith("_"))) {
     const kids = await store.list(proj.id);
@@ -74,6 +70,7 @@ export async function scanInbox(
       const s = stem(f.name);
       const t = (n: string) => kids.find((k) => k.name === n);
       items.push({
+        store,
         key: f.id,
         project: proj.name,
         name: s,
@@ -90,6 +87,7 @@ export async function scanInbox(
       const inner = await store.list(dir.id);
       const t = (n: string) => inner.find((k) => k.name === n);
       items.push({
+        store,
         key: dir.id,
         project: proj.name,
         name: dir.name,
@@ -98,14 +96,45 @@ export async function scanInbox(
       });
     }
   }
+  return items;
+}
+
+export async function scanInbox(
+  env: Env,
+  deps: { fetch: typeof fetch; now: Date },
+): Promise<{ drafted: string[]; waiting: number; note?: string }> {
+  const nowS = Math.floor(deps.now.getTime() / 1000);
+  const stores = (await mediaStores(env, deps.fetch)).all;
+  const items: Item[] = [];
+  let inboxes = 0;
+  const failed: string[] = [];
+  for (const store of stores) {
+    // one store failing (a revoked grant, a bucket key that stopped working) doesn't stop the others
+    try {
+      const root = await inboxId(env, store);
+      if (!root) continue;
+      inboxes++;
+      items.push(...(await inboxItems(store, root)));
+    } catch (e) {
+      failed.push(`${store.id}: ${(e as Error).message.slice(0, 200)}`);
+    }
+  }
+  if (failed.length) console.log(`inbox: ${failed.join("; ")}`);
+  if (!inboxes) return { drafted: [], waiting: 0, note: "no UPLOADS/inbox folder in any media store" };
+
   if (!items.length) return { drafted: [], waiting: 0 };
-  const seen = await env.DB.prepare(
-    `SELECT media_id FROM inbox_seen WHERE store = ?2 AND media_id IN ${jsonList(env.DB, 1)}`,
-  )
-    .bind(JSON.stringify(items.map((i) => i.key)), store.id)
-    .all<{ media_id: string }>();
-  const done = new Set(seen.results.map((r) => r.media_id));
-  const fresh = items.filter((i) => !done.has(i.key) && i.media.length);
+  const done = new Set<string>();
+  for (const store of stores) {
+    const keys = items.filter((i) => i.store === store).map((i) => i.key);
+    if (!keys.length) continue;
+    const seen = await env.DB.prepare(
+      `SELECT media_id FROM inbox_seen WHERE store = ?2 AND media_id IN ${jsonList(env.DB, 1)}`,
+    )
+      .bind(JSON.stringify(keys), store.id)
+      .all<{ media_id: string }>();
+    for (const r of seen.results) done.add(`${store.id}:${r.media_id}`);
+  }
+  const fresh = items.filter((i) => !done.has(`${i.store.id}:${i.key}`) && i.media.length);
   const ready = fresh
     .filter((i) => {
       const files = [...i.media, ...Object.values(i.texts).filter((x): x is MediaEntry => !!x)];
@@ -116,6 +145,7 @@ export async function scanInbox(
   // The inbox feeds the default workspace; a project without planned items starts on its first Instagram account.
   const fallback = (await instagramAccounts(env.DB, DEFAULT_WORKSPACE))[0]?.id ?? "";
   for (const i of ready) {
+    const store = i.store;
     const account = await accountOf(env.DB, i.project);
     const video = i.media.some((m) => isVideo(m));
     const kind = i.media.length > 1 ? "carousel" : video ? "reel" : "photo";
@@ -136,8 +166,8 @@ export async function scanInbox(
     const id = `d_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'drive', 'drive-inbox', 'draft', ?5, ?5, ?6)",
-      ).bind(id, kind, account ?? fallback, JSON.stringify(payload), nowS, DEFAULT_WORKSPACE),
+        "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'drive', ?7, 'draft', ?5, ?5, ?6)",
+      ).bind(id, kind, account ?? fallback, JSON.stringify(payload), nowS, DEFAULT_WORKSPACE, `${store.id}-inbox`),
       env.DB.prepare(
         "INSERT INTO inbox_seen (store, media_id, draft_id, at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (store, media_id) DO NOTHING",
       ).bind(store.id, i.key, id, nowS),

@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { serveMedia, signedLink } from "@bongsu/core/media";
 import { mediaStoreCases } from "@bongsu/core/media/conformance";
 import { clearFolderCache, DriveStore } from "@bongsu/core/media/drive";
+import { MediaStores } from "@bongsu/core/media/index";
 import { tick } from "@bongsu/core/tick";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -14,6 +15,7 @@ import {
   planItem,
   postedRows,
   seedReel,
+  TEST_DRIVE_GRANT,
   testEnv,
   World,
 } from "./world";
@@ -150,7 +152,7 @@ describe("tick: publishing a Reel", () => {
       location_id: "111",
     });
     expect(String(create.args.video_url)).toMatch(
-      new RegExp(`^https://scheduler\\.test/m/${driveId}\\.mp4\\?exp=\\d+&sig=[0-9a-f]{64}$`),
+      new RegExp(`^https://scheduler\\.test/m/drive/${driveId}\\.mp4\\?exp=\\d+&sig=[0-9a-f]{64}$`),
     );
 
     await tick(e, { fetch: w.fetch, now: later(5) }); // IN_PROGRESS
@@ -403,7 +405,7 @@ describe("tick: a single-media post", () => {
   it("posts a video as a Reel (the slideshow Reels)", async () => {
     const args = await one("posts/reel3_green", "vid_reel3green", "video/mp4");
     expect(args).toMatchObject({ media_type: "REELS", share_to_feed: true, caption: "Green Lisbon" });
-    expect(String(args.video_url)).toMatch(/\/m\/vid_reel3green\.mp4\?/);
+    expect(String(args.video_url)).toMatch(/\/m\/drive\/vid_reel3green\.mp4\?/);
     expect("image_url" in args).toBe(false);
     expect((await jobs())[0]).toMatchObject({ kind: "image", state: "container_created" }); // planned as an image; its file makes it a video
   });
@@ -411,7 +413,7 @@ describe("tick: a single-media post", () => {
   it("still posts an image as a photo", async () => {
     const args = await one("posts/photo1", "img_photo1xx", "image/jpeg");
     expect("media_type" in args).toBe(false);
-    expect(String(args.image_url)).toMatch(/\/m\/img_photo1xx\.jpg\?/);
+    expect(String(args.image_url)).toMatch(/\/m\/drive\/img_photo1xx\.jpg\?/);
   });
 });
 
@@ -464,14 +466,30 @@ describe("tick: Shorts comments", () => {
 describe("signed media links", () => {
   it("stream a Drive file only with a valid, unexpired signature", async () => {
     w.drive.set("abcdefghij12", { md5: MD5, mimeType: "video/mp4", bytes: "VIDEO" });
-    const drive = new DriveStore({ saJson: (await testEnv(env)).DRIVE_SA_JSON, fetch: w.fetch });
+    const drive = new DriveStore({ oauth: TEST_DRIVE_GRANT, fetch: w.fetch });
+    const stores = new MediaStores(new Map([["drive", drive]]), "drive");
     const now = 1_800_000_000;
-    const good = await signedLink("https://s.test", "k", "abcdefghij12", "mp4", now + 60);
-    const r = await serveMedia(new Request(good), "k", drive, now);
+    const good = await signedLink("https://s.test", "k", "drive", "abcdefghij12", "mp4", now + 60);
+    expect(good).toContain("/m/drive/abcdefghij12.mp4?");
+    const r = await serveMedia(new Request(good), "k", stores, now);
     expect([r.status, r.headers.get("Content-Type"), await r.text()]).toEqual([200, "video/mp4", "VIDEO"]);
-    expect((await serveMedia(new Request(good), "k", drive, now + 61)).status).toBe(403);
-    expect((await serveMedia(new Request(good.replace(/sig=./, "sig=0")), "k", drive, now)).status).toBe(403);
-    expect((await serveMedia(new Request(good), "other-key", drive, now)).status).toBe(403);
+    expect((await serveMedia(new Request(good), "k", stores, now + 61)).status).toBe(403);
+    expect((await serveMedia(new Request(good.replace(/sig=./, "sig=0")), "k", stores, now)).status).toBe(403);
+    expect((await serveMedia(new Request(good), "other-key", stores, now)).status).toBe(403);
+  });
+
+  it("are signed for their store: the same id under another store is refused", async () => {
+    w.drive.set("abcdefghij12", { md5: MD5, mimeType: "video/mp4", bytes: "VIDEO" });
+    const stores = new MediaStores(
+      new Map([["drive", new DriveStore({ oauth: TEST_DRIVE_GRANT, fetch: w.fetch })]]),
+      "drive",
+    );
+    const now = 1_800_000_000;
+    const good = await signedLink("https://s.test", "k", "drive", "abcdefghij12", "mp4", now + 60);
+    expect((await serveMedia(new Request(good.replace("/m/drive/", "/m/local/")), "k", stores, now)).status).toBe(403);
+    // a store that isn't set up: not found, even with a valid signature
+    const other = await signedLink("https://s.test", "k", "s3", "abcdefghij12", "mp4", now + 60);
+    expect((await serveMedia(new Request(other), "k", stores, now)).status).toBe(404);
   });
 });
 
@@ -505,7 +523,7 @@ describe("Drive folder ids are remembered", () => {
       md5: MD5,
       mimeType: "video/mp4",
     });
-    const drive = new DriveStore({ saJson: (await testEnv(env)).DRIVE_SA_JSON, fetch: w.fetch });
+    const drive = new DriveStore({ oauth: TEST_DRIVE_GRANT, fetch: w.fetch });
     const queries = () => w.driveQueries;
     expect(
       (await drive.resolve("UPLOADS/vlogs/CONTENT/20260823_LISBON/exports/shorts/instagram/short1_a.mp4"))?.id,
@@ -559,7 +577,7 @@ describe("media store conformance: drive (the fake Drive)", () => {
     const ids: Record<string, string> = {};
     for (const [path, f] of Object.entries(files))
       ids[path] = w2.drivePut(path, { md5: `md5-${f.bytes}`, mimeType: f.mime, bytes: f.bytes });
-    return { store: new DriveStore({ saJson: (await testEnv(env)).DRIVE_SA_JSON, fetch: w2.fetch }), ids };
+    return { store: new DriveStore({ oauth: TEST_DRIVE_GRANT, fetch: w2.fetch }), ids };
   }))
     it(c.name, c.run);
 });

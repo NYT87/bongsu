@@ -14,7 +14,8 @@ Guides for people who run Bongsu: install it, connect your accounts, use it, giv
 | [Instagram](instagram-graph.md) | Creating the Meta app, the token, connecting an account, renewals |
 | [Instagram through Composio](instagram-composio.md) | The other way to post to Instagram, and its Trial Reels limit |
 | [YouTube](youtube.md) | The OAuth client and refresh token per channel, for the Shorts comments |
-| [Google Drive](drive.md) | The service account, the folders, uploads from the app |
+| [Google Drive](drive.md) | Connecting your Drive as a media store, the folders, uploads from the app |
+| [S3-compatible buckets](s3.md) | AWS S3, R2, B2 or MinIO as a media store: the key, the CORS rule, the folders |
 | **Use Bongsu** | |
 | [The phone app](the-app.md) | Installing it, Today, approving, holding, pausing, notifications, comments |
 | [Captions and checks](captions-and-checks.md) | The texts of a post, what the caption check catches, what blocks approval |

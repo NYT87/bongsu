@@ -58,7 +58,7 @@ describe("instagram-graph", () => {
       location_id: "111",
     });
     expect(create.params).not.toHaveProperty("ig_user_id"); // it's in the path
-    expect(String(create.params.video_url)).toMatch(new RegExp(`/m/${driveId}\\.mp4\\?exp=\\d+&sig=`));
+    expect(String(create.params.video_url)).toMatch(new RegExp(`/m/drive/${driveId}\\.mp4\\?exp=\\d+&sig=`));
     expect(w.graph.find((g) => g.path === "/17841400000000003/media_publish")?.params).toEqual({
       creation_id: "gcontainer-1",
     });

@@ -20,7 +20,6 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
     DRY_RUN: vars.DRY_RUN ?? "1",
     VAPID_PUBLIC_KEY: vars.VAPID_PUBLIC_KEY ?? "",
     VAPID_SUBJECT: vars.VAPID_SUBJECT ?? "",
-    DRIVE_SA_JSON: vars.DRIVE_SA_JSON ?? "",
     MEDIA_SIGNING_KEY: vars.MEDIA_SIGNING_KEY ?? "",
     // no per-invocation subrequest limit here, unlike Cloudflare's free plan: more jobs a tick
     JOBS_PER_TICK: vars.JOBS_PER_TICK ?? String(NODE_JOBS_PER_TICK),
@@ -29,11 +28,9 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
   for (const k of [
     "VAPID_PRIVATE_KEY",
     "COMPOSIO_CONSUMER_KEY",
-    "MEDIA_STORE",
     "MEDIA_DIR",
     "ENCRYPTION_KEY",
     "SETUP_TOKEN",
-    "DRIVE_OWNER_OAUTH",
     "MAILER",
     "MAIL_FROM",
     "RESEND_API_KEY",
