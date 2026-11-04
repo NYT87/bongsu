@@ -553,20 +553,54 @@ export async function recordCommented(
 }
 
 // ---------------------------------------------------------------- pause switch
+// Each workspace pauses on its own (workspace_settings.paused: {reason, by, at}, NULL while running): the tick skips a
+// paused workspace's jobs and Shorts comments, and every other workspace goes on publishing.
 
-export async function pausedState(db: Db): Promise<{ reason: string; by: string; at: string } | null> {
-  const r = await db.prepare("SELECT value FROM settings WHERE key = 'paused'").first<{ value: string }>();
-  return r ? JSON.parse(r.value) : null;
+export async function pausedState(
+  db: Db,
+  workspaceId: string,
+): Promise<{ reason: string; by: string; at: string } | null> {
+  const r = await db
+    .prepare("SELECT paused FROM workspace_settings WHERE workspace_id = ?1")
+    .bind(workspaceId)
+    .first<{ paused: string | null }>();
+  return r?.paused ? JSON.parse(r.paused) : null;
 }
 
-export async function setPaused(db: Db, reason: string, by: string, now: Date): Promise<boolean> {
+/** Pauses the workspace; false when it already was. A workspace without settings yet gets them (the defaults
+ *  workspaceSettings reads for one without). */
+export async function setPaused(db: Db, workspaceId: string, reason: string, by: string, now: Date): Promise<boolean> {
   const r = await db
-    .prepare("INSERT INTO settings (key, value) VALUES ('paused', ?1) ON CONFLICT (key) DO NOTHING RETURNING key")
-    .bind(JSON.stringify({ reason: reason.slice(0, 300), by, at: now.toISOString() }))
+    .prepare(
+      `INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at, paused)
+       VALUES (?1, 'UTC', 8, 'en', ?2, ?3)
+       ON CONFLICT (workspace_id) DO UPDATE SET paused = excluded.paused, updated_at = excluded.updated_at
+       WHERE workspace_settings.paused IS NULL
+       RETURNING workspace_id`,
+    )
+    .bind(
+      workspaceId,
+      Math.floor(now.getTime() / 1000),
+      JSON.stringify({ reason: reason.slice(0, 300), by, at: now.toISOString() }),
+    )
     .first();
   return !!r;
 }
 
-export async function clearPaused(db: Db): Promise<boolean> {
-  return !!(await db.prepare("DELETE FROM settings WHERE key = 'paused' RETURNING key").first());
+/** Resumes the workspace; false when it wasn't paused. */
+export async function clearPaused(db: Db, workspaceId: string): Promise<boolean> {
+  return !!(await db
+    .prepare(
+      "UPDATE workspace_settings SET paused = NULL WHERE workspace_id = ?1 AND paused IS NOT NULL RETURNING workspace_id",
+    )
+    .bind(workspaceId)
+    .first());
+}
+
+/** The workspaces the scheduler leaves alone this run: the paused ones. Read once per run (tick). */
+export async function heldWorkspaces(db: Db): Promise<Set<string>> {
+  const r = await db
+    .prepare("SELECT workspace_id FROM workspace_settings WHERE paused IS NOT NULL")
+    .all<{ workspace_id: string }>();
+  return new Set(r.results.map((x) => x.workspace_id));
 }

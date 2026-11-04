@@ -80,7 +80,7 @@ beforeEach(async () => {
     [
       "DELETE FROM sessions",
       "DELETE FROM api_keys",
-      "DELETE FROM settings WHERE key = 'paused'",
+      "UPDATE workspace_settings SET paused = NULL",
       "DELETE FROM memberships WHERE user_id IN ('bea', 'ina', 'dee')",
       "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO UPDATE SET archived_at = NULL",
       "UPDATE workspaces SET archived_at = NULL",
@@ -216,7 +216,7 @@ describe("the roles table", () => {
       const r = await editor(path, b);
       expect([r.status, r.json.error], path).toEqual([403, expect.stringMatching(/your role/)]);
     }
-    expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'paused'").first()).toBeNull();
+    expect(await env.DB.prepare("SELECT 1 FROM workspace_settings WHERE paused IS NOT NULL").first()).toBeNull();
     // what the app shows: an editor's scopes have no approve, pause or resume
     expect((await editor("/app-api/me")).json.scopes).toEqual(["read", "draft", "plan", "reschedule", "metrics"]);
     for (const call of [
@@ -227,7 +227,7 @@ describe("the roles table", () => {
       expect((await call("/app-api/approve/options", { key: "reel:x/y" })).status).toBe(404); // allowed; no item
       expect((await call("/app-api/resume/options", {})).status).toBe(200);
       expect((await call("/app-api/pause", { reason: "x" })).status).toBe(200);
-      await env.DB.prepare("DELETE FROM settings WHERE key = 'paused'").run();
+      await env.DB.prepare("UPDATE workspace_settings SET paused = NULL").run();
     }
     expect((await (await asRole("creator", "pwa"))("/app-api/me")).json.scopes).toContain("approve");
   });

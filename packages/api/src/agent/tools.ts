@@ -410,7 +410,8 @@ export const TOOLS: Tool[] = [
   {
     name: "pause_scheduler",
     scope: "pause",
-    description: "Stop all publishing now. Only the owner can resume.",
+    description:
+      "Stop publishing in this workspace now (other workspaces go on). Only a person can resume, in the app.",
     inputSchema: obj({ reason: { type: "string" } }, ["reason"]),
     run: (c, a) => ops.pause(c, String(a.reason)),
   },

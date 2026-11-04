@@ -46,10 +46,10 @@ beforeEach(async () => {
 });
 
 describe("tick: guards", () => {
-  it("does nothing while paused", async () => {
+  it("does nothing for a paused workspace", async () => {
     await seedReel(w);
-    await env.DB.prepare("INSERT INTO settings (key, value) VALUES ('paused', '{}')").run();
-    expect((await tick(await testEnv(env), { fetch: w.fetch, now: AT })).status).toBe("paused");
+    await env.DB.prepare("UPDATE workspace_settings SET paused = '{}' WHERE workspace_id = 'default'").run();
+    expect((await tick(await testEnv(env), { fetch: w.fetch, now: AT })).detail).toMatchObject({ held: ["default"] });
     expect(await jobs()).toEqual([]);
   });
 

@@ -1,6 +1,10 @@
 // The scheduler's tick, run by the cron every 5 minutes.
 //
-//   lock → paused? → discover due items → advance active jobs one step each → Shorts comments → prune audit
+//   lock → held workspaces (paused) → discover due items → advance active jobs one step each → Shorts comments
+//   → prune audit
+//
+// A held workspace's accounts aren't discovered, its jobs aren't advanced and its Shorts comments wait; the other
+// workspaces go on as usual.
 //
 // Everything it reads is in D1 (src/data.ts): the plan, approvals, posted log, Shorts comments and the texts
 // (captions, comments, alt texts; a repo item's are copied there by an importer); the media is in the media store. Nothing
@@ -17,11 +21,11 @@ import {
   contentPaths,
   dueItems,
   getItem,
+  heldWorkspaces,
   isPosted,
   itemDue,
   itemOptions,
   latestApprovals,
-  pausedState,
   pendingShorts,
   readText,
   recordCommented,
@@ -138,6 +142,8 @@ interface JobRow {
 class Ctx {
   /** The instance's media stores, read at the start of the run (tick). */
   stores!: MediaStores;
+  /** The workspaces this run leaves alone (data.ts heldWorkspaces), read once at its start. */
+  held = new Set<string>();
   note: Notifier;
   dry: boolean;
   nowS: number;
@@ -220,10 +226,8 @@ export async function tick(
   try {
     const c = new Ctx(env, deps);
     c.stores = await mediaStores(env, deps.fetch);
-    if (await pausedState(env.DB)) {
-      await audit(env.DB, nowS, "paused", "settings:paused", {});
-      return { status: "paused" };
-    }
+    c.held = await heldWorkspaces(env.DB);
+    for (const ws of c.held) await audit(env.DB, nowS, "paused", `workspace:${ws}`, { part }, ws);
     if (part === "shorts") {
       await shortsComments(c);
       await env.DB.prepare("DELETE FROM audit WHERE at < ?1")
@@ -232,14 +236,17 @@ export async function tick(
       return { status: "ok", detail: { part, dry_run: c.dry } };
     }
     // every account on a platform Bongsu publishes to (YouTube's are only commented on, below)
-    for (const a of await listAccounts(env.DB)) if (platform(a.platform)?.formats.length) await discover(c, a);
+    for (const a of await listAccounts(env.DB))
+      if (platform(a.platform)?.formats.length && !c.held.has(a.workspaceId)) await discover(c, a);
+    // a held workspace's jobs wait where they are, and don't take the run's share from the others
     const active = await env.DB.prepare(
-      "SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1 ORDER BY due_at LIMIT ?2",
+      `SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1
+         AND workspace_id NOT IN ${jsonList(env.DB, 3)} ORDER BY due_at LIMIT ?2`,
     )
-      .bind(nowS, jobsPerTick(env))
+      .bind(nowS, jobsPerTick(env), JSON.stringify([...c.held]))
       .all<JobRow>();
     for (const job of active.results) await advance(c, job);
-    return { status: "ok", detail: { part, advanced: active.results.length, dry_run: c.dry } };
+    return { status: "ok", detail: { part, advanced: active.results.length, held: [...c.held], dry_run: c.dry } };
   } finally {
     await release(env.DB, lock, holder);
   }
@@ -855,7 +862,9 @@ async function shortsVerdict(r: ShortRow, channel: string, a: Approval | undefin
  *  post does; one refused for the lack of it is taken up again once approved. */
 async function shortsComments(c: Ctx) {
   let budget = 2; // comments per tick (each costs ~3 subrequests)
-  const accounts = (await listAccounts(c.env.DB)).filter((a) => platform(a.platform)?.features.commentOnExisting);
+  const accounts = (await listAccounts(c.env.DB)).filter(
+    (a) => platform(a.platform)?.features.commentOnExisting && !c.held.has(a.workspaceId),
+  );
   for (const s of accounts) {
     if (budget <= 0) return;
     const pending = await pendingShorts(c.env.DB, s.id);

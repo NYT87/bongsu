@@ -135,7 +135,7 @@ export async function audit(c: OpCtx, action: string, target: string | null, det
 
 export async function status(c: OpCtx) {
   const tz = await zoneOf(c);
-  const paused = (await pausedState(c.env.DB)) !== null;
+  const paused = (await pausedState(c.env.DB, c.caller.workspaceId)) !== null;
   const states = await c.env.DB.prepare(
     "SELECT state, dry_run, COUNT(*) AS n FROM jobs WHERE updated_at >= ?1 AND workspace_id = ?2 GROUP BY state, dry_run",
   )
@@ -664,24 +664,29 @@ export async function withdrawDraft(c: OpCtx, id: string) {
   return { id, status: "withdrawn" };
 }
 
-// ---------------------------------------------------------------- pause (resume is owner-only)
+// ---------------------------------------------------------------- pause (resume needs a passkey, in the app)
+// Both act on the caller's workspace only: the others go on publishing.
 
 export async function pause(c: OpCtx, reason: string) {
   const set = await setPaused(
     c.env.DB,
+    c.caller.workspaceId,
     reason || "paused",
     // the app's caller is the signed-in person (its id is theirs); a CLI token or an agent key is a key
     c.caller.userId && c.caller.id === c.caller.userId ? "owner" : `API key "${c.caller.name}"`,
     c.now,
   );
   if (!set) return { paused: true, already: true };
-  await audit(c, "pause", "settings:paused", { reason });
-  return { paused: true, note: "Nothing is published until the owner resumes (in the app)." };
+  await audit(c, "pause", `workspace:${c.caller.workspaceId}`, { reason });
+  return {
+    paused: true,
+    note: "Nothing in this workspace is published until an admin or creator resumes it (in the app).",
+  };
 }
 
 export async function resume(c: OpCtx) {
-  const was = await clearPaused(c.env.DB);
-  await audit(c, "resume", "settings:paused", { was });
+  const was = await clearPaused(c.env.DB, c.caller.workspaceId);
+  await audit(c, "resume", `workspace:${c.caller.workspaceId}`, { was });
   return { paused: false, wasPaused: was };
 }
 

@@ -165,6 +165,9 @@ screen with a **Resume** link, and the approve button reads **Approve (held whil
 **Resume with passkey**: approved items go out at their time again, and any overdue ones go out now (within the
 6-hour window). Agents may be allowed to pause, never to resume.
 
+Pausing and resuming act on the workspace you're in: the other workspaces of the instance go on publishing. Admins and
+creators may pause and resume; editors may not.
+
 ![Settings](assets/app/settings-light.png)
 
 ## Notifications and the daily digest

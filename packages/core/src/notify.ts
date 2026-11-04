@@ -111,9 +111,16 @@ export async function notifyInstanceAdmins(env: Env, fetcher: typeof fetch, note
   }
 }
 
-export async function audit(db: Db, nowS: number, action: string, target: string | null, detail: unknown) {
+export async function audit(
+  db: Db,
+  nowS: number,
+  action: string,
+  target: string | null,
+  detail: unknown,
+  workspaceId: string | null = null,
+) {
   await db
-    .prepare("INSERT INTO audit (at, actor, action, target, detail) VALUES (?1, 'cron', ?2, ?3, ?4)")
-    .bind(nowS, action, target, JSON.stringify(detail))
+    .prepare("INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', ?2, ?3, ?4, ?5)")
+    .bind(nowS, action, target, JSON.stringify(detail), workspaceId)
     .run();
 }

@@ -2,6 +2,7 @@
 // notification (push + ntfy) with today's items and their status, what still needs approval in the next 3 days,
 // and the jobs that failed or were refused since yesterday. settings.digest_last holds the last day sent.
 import { type CalEvent, calendar } from "./calendar";
+import { pausedState } from "./data";
 import type { Env } from "./env";
 import { shiftDate, zoneDate, zoneHour } from "./formats/time";
 import { notifier } from "./notify";
@@ -41,6 +42,9 @@ export async function buildDigest(
     ? `Today: ${[...counts].map(([p, n]) => `${n} ${platform(p)?.name ?? p}`).join(", ")}`
     : "Today: nothing planned";
   const parts = [todays.length ? todays.map(line).join("\n") : "Nothing planned today."];
+  // the plan reads as usual while paused, but nothing of it goes out: say so first
+  const paused = await pausedState(env.DB, ws.workspaceId);
+  if (paused) parts.unshift(`Publishing is paused (${paused.reason}): nothing goes out until it's resumed.`);
   if (needs.length)
     parts.push(`Needs approval (${needs.length}):\n${needs.map((e) => `${e.date.slice(5)} ${line(e)}`).join("\n")}`);
   if (failed.results.length)

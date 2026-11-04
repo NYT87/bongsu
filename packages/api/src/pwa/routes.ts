@@ -571,7 +571,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return c.json({ approved: true, key: shown.key, due: r.due });
   });
 
-  // Pause and resume (resume is owner-only: no API key can do it).
+  // Pause and resume the session's workspace (resume needs a passkey: no API key can do it).
   app.post(
     "/app-api/pause",
     wrap(async (c) => ops.pause(opctx(c), String((await body(c)).reason ?? "paused from the app"))),

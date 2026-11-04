@@ -326,7 +326,11 @@ describe("pause, resume and push", () => {
   it("pauses and resumes (in D1)", async () => {
     await signUp();
     await post("/app-api/pause", { reason: "checking captions" });
-    expect(await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'paused'").first()).not.toBeNull();
+    expect(
+      await env.DB.prepare(
+        "SELECT paused FROM workspace_settings WHERE workspace_id = 'default' AND paused IS NOT NULL",
+      ).first(),
+    ).not.toBeNull();
     expect((await post("/app-api/resume")).status).toBe(404); // no passkey-less resume
     const o = (await (await post("/app-api/resume/options")).json()) as { challengeId: string };
     expect(
@@ -337,7 +341,11 @@ describe("pause, resume and push", () => {
     expect(
       await (await post("/app-api/resume/verify", { challengeId: o2.challengeId, response: { id: "cred1" } })).json(),
     ).toMatchObject({ paused: false, wasPaused: true });
-    expect(await env.DB.prepare("SELECT 1 FROM settings WHERE key = 'paused'").first()).toBeNull();
+    expect(
+      await env.DB.prepare(
+        "SELECT paused FROM workspace_settings WHERE workspace_id = 'default' AND paused IS NOT NULL",
+      ).first(),
+    ).toBeNull();
   });
 
   it("stores a device's push subscription", async () => {

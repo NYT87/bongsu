@@ -706,7 +706,10 @@ export const UNBOOTSTRAP = [
 ];
 
 export async function clearPlan() {
-  await env.DB.batch(PLAN_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+  await env.DB.batch([
+    ...PLAN_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${t}`)),
+    env.DB.prepare("UPDATE workspace_settings SET paused = NULL"), // every workspace runs again
+  ]);
 }
 
 /** Unix seconds of a local "YYYY-MM-DD" + "HH:MM" in a workspace's zone: the tests describe times as people do. */
