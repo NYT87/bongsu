@@ -14,9 +14,9 @@ fails doesn't use the code up.
 Then add the app to the home screen, which is also what lets it send notifications. Next time, **Sign in with
 passkey**. To add a second phone, use **Add a device** again; **Devices & passkeys** lists every passkey.
 
-If a workspace's admin invited you as a **creator**, you start from their invite link instead: it opens the app, and
-you make a passkey (or sign in with the one you already have) and join the workspace. The link works once, for 7
-days; ask for a new one if it has run out. Admins and editors get their links to the [dashboard](the-dashboard.md#members).
+If a workspace's admin invited you as a **creator**, you start from their invite link instead: it opens the app, and you
+make a passkey (or sign in with the one you already have) and join the workspace. The link works once, for 7 days; ask
+for a new one if it has run out. Admins and editors get their links to the [dashboard](the-dashboard.md#members).
 
 ## What your role allows
 
@@ -171,9 +171,10 @@ subscribers need the analytics scope (see [YouTube](youtube.md#2-connect-the-cha
 ## Connecting accounts
 
 Admins and creators connect their own accounts from **Settings → Accounts**: **Connect Instagram** and **Connect
-YouTube** sign in with the account and bring you back to Settings, where the accounts it reached are listed. **Reconnect** signs in again when a connection is marked "needs reconnecting". The accounts belong to the
-workspace you're in. If a button says the instance admin has to add its OAuth app first, ask them: the Meta and Google
-apps are set up once for the whole instance ([The dashboard](the-dashboard.md#oauth-apps)). Editors don't see this.
+YouTube** sign in with the account and bring you back to Settings, where the accounts it reached are listed.
+**Reconnect** signs in again when a connection is marked "needs reconnecting". The accounts belong to the workspace
+you're in. If a button says the instance admin has to add its OAuth app first, ask them: the Meta and Google apps are
+set up once for the whole instance ([The dashboard](the-dashboard.md#oauth-apps)). Editors don't see this.
 
 ## Pausing a workspace and resuming
 

@@ -22,10 +22,10 @@ Open the item in the app and read its state, then check in this order ([the phon
 
 A token expired or was revoked, and nothing is posted for that account until it's reconnected. Instagram tokens last 60
 days and Bongsu renews them every week; a renewal fails when the Instagram password changed or access was removed in
-Instagram. YouTube's refresh token is checked weekly; if the Google app is still in *Testing*, Google expires it after
-7 days, so publish the app. Go to the dashboard's **Connections** and **Reconnect**: [Instagram](instagram-graph.md#keeping-the-token-alive),
-[YouTube](youtube.md#keeping-it-working). With a mailer set, the workspace's admins also get an email, "Bongsu: a connection needs
-attention".
+Instagram. YouTube's refresh token is checked weekly; if the Google app is still in *Testing*, Google expires it after 7
+days, so publish the app. Go to the dashboard's **Connections** and **Reconnect**:
+[Instagram](instagram-graph.md#keeping-the-token-alive), [YouTube](youtube.md#keeping-it-working). With a mailer set,
+the workspace's admins also get an email, "Bongsu: a connection needs attention".
 
 ## Instagram refuses a post
 

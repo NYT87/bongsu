@@ -2,13 +2,16 @@
 // accounts; the scheduler serves every workspace, each in its own time zone.
 import { env, exports } from "cloudflare:workers";
 import { resolveItem } from "@bongsu/api/pwa/approve";
+import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { encryptSecret } from "@bongsu/core/crypto";
+import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { tick } from "@bongsu/core/tick";
 import { setWorkspaceSettings } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, seedReel, testEnv, World } from "./world";
+import { clearPlan, seedReel, TEST_ENCRYPTION_KEY, testEnv, World } from "./world";
 
 const KEY_A = "bongsu_workspaceAworkspaceAworksp";
 const KEY_B = "bongsu_workspaceBworkspaceBworksp";
@@ -462,11 +465,39 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     const conns = (await as("cleo", "pwa", "/app-api/connections")).json.connections as { id: string }[];
     expect(conns.map((c) => c.id)).toContain("c_b");
     expect(conns.map((c) => c.id)).not.toContain("c_main");
-    // the default workspace's connection id isn't B's to reconnect, with or without an OAuth app
+    // the default workspace's YouTube connection isn't B's to reconnect, with the Google app set up (so the refusal
+    // is the ownership check's, not a missing app)
+    await env.DB.prepare(
+      "INSERT INTO oauth_apps (id, client_id, client_secret, updated_at) VALUES ('google', 'google-app-id', ?1, 0) ON CONFLICT (id) DO UPDATE SET client_secret = excluded.client_secret",
+    )
+      .bind(await encryptSecret(TEST_ENCRYPTION_KEY, "google-secret"))
+      .run();
+    await upsertConnection(
+      env.DB,
+      { id: "c_def_tube", workspaceId: "default", provider: "youtube", kind: "oauth", secretName: "YT_DEF_OAUTH" },
+      0,
+    );
     const before = await env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_states").first("n");
-    const r = await send("cleo", "pwa", "/app-api/connect/youtube/start", { reconnect: "c_main" });
-    expect(r.status).toBe(400);
+    // through the app's routes with a full test env (the Worker binding here has no ENCRYPTION_KEY)
+    const e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test" } as Partial<Env>);
+    const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { app: "pwa", userId: "cleo" });
+    const start = async (body?: unknown) => {
+      const res = await appRoutes(w.fetch).request(
+        "https://bongsu.test/app-api/connect/youtube/start",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Cookie: `bongsu_session=${token}` },
+          body: JSON.stringify(body ?? {}),
+        },
+        e,
+      );
+      return { status: res.status, json: (await res.json()) as Record<string, unknown> };
+    };
+    const r = await start({ reconnect: "c_def_tube" });
+    expect([r.status, r.json.error]).toEqual([400, "no such connection to reconnect"]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_states").first("n")).toBe(before);
+    // its own flow starts fine with the app there
+    expect((await start()).status).toBe(200);
   });
 
   it("a user in no workspace is turned away", async () => {

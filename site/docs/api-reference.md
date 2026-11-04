@@ -41,9 +41,9 @@ accounts, plan, drafts, jobs and Shorts list. Items of other workspaces look abs
 
 ## CLI tokens
 
-A person's own token for the `bongsu` command line, made in **Keys & tokens** → **Your CLI tokens** (with a
-fresh passkey check) for 30, 90 or 365 days. It looks like `bongsu_cli_<random>` and works wherever an agent key does,
-but acts as its person, with their role's rights in the workspace, read on every request: an admin's or creator's token can
+A person's own token for the `bongsu` command line, made in **Keys & tokens** → **Your CLI tokens** (with a fresh
+passkey check) for 30, 90 or 365 days. It looks like `bongsu_cli_<random>` and works wherever an agent key does, but
+acts as its person, with their role's rights in the workspace, read on every request: an admin's or creator's token can
 also approve and resume. It stops working when it expires, when it's revoked, or when its person leaves the workspace.
 Agent keys never get those rights.
 

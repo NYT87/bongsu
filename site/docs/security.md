@@ -78,7 +78,8 @@ shows which are missing, by name only.
 
 ## Audit
 
-Actions by people (approve, passkey added, setup code, pause/resume, members, workspaces…) are written to the `audit` table, kept 180 days.
+Actions by people (approve, passkey added, setup code, pause/resume, members, workspaces…) are written to the `audit`
+table, kept 180 days.
 
 ## Reporting a vulnerability
 

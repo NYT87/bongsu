@@ -113,10 +113,11 @@ Check `https://<PUBLIC_URL>/health`: `ok: true`, all tables present, no missing 
 ## 8. Sign up in the dashboard
 
 1. Open `https://<PUBLIC_URL>/dashboard` on your computer. The first visit asks for the `SETUP_TOKEN` from step 6
-   (printed by `deploy-secrets`, or the one you set), your name and email, and creates your passkey (the computer's fingerprint, face or PIN). Save the recovery
-   codes it shows: one of them signs you in if you ever lose every passkey. You're the instance's admin; next the
-   dashboard asks for your first workspace (a name, its time zone, and its first admin: you, preselected). Then
-   **Get started** opens: a checklist of the steps below, each ticked as it's done (the overview links back to it until all four are).
+   (printed by `deploy-secrets`, or the one you set), your name and email, and creates your passkey (the computer's
+   fingerprint, face or PIN). Save the recovery codes it shows: one of them signs you in if you ever lose every passkey.
+   You're the instance's admin; next the dashboard asks for your first workspace (a name, its time zone, and its first
+   admin: you, preselected). Then **Get started** opens: a checklist of the steps below, each ticked as it's done (the
+   overview links back to it until all four are).
 2. **Time zone** and the daily digest's hour, right on Get started (or later in **Settings**).
 3. **OAuth apps**: paste your Meta app (Instagram) and Google app (YouTube). Each card shows the redirect URL to
    register in the app; the guides walk through making them: [instagram-graph.md](instagram-graph.md),

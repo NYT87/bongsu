@@ -15,12 +15,12 @@ follows it, with the Instance group's pages at the end of their topics.
 ## People and roles
 
 You work in one workspace at a time, with the role you have in it. **Admins** run the workspace: everything in this
-guide, including its connections, keys, settings and members. **Editors** can look at the accounts and videos and
-manage their own passkeys, devices and CLI tokens, but they can't change accounts and don't see Connections, agent keys,
-Settings or Members. **Creators** don't use the
-dashboard: signing in here points them to the [phone app](the-app.md), where they plan, approve and connect their own
-accounts. An **instance admin** is a person who manages the whole instance: its workspaces, its media stores and its
-OAuth apps, and who works in any workspace as its admin. [Security](security.md#roles) has the table.
+guide, including its connections, keys, settings and members. **Editors** can look at the accounts and videos and manage
+their own passkeys, devices and CLI tokens, but they can't change accounts and don't see Connections, agent keys,
+Settings or Members. **Creators** don't use the dashboard: signing in here points them to the [phone app](the-app.md),
+where they plan, approve and connect their own accounts. An **instance admin** is a person who manages the whole
+instance: its workspaces, its media stores and its OAuth apps, and who works in any workspace as its admin.
+[Security](security.md#roles) has the table.
 
 ## First run
 
@@ -172,11 +172,11 @@ an admin ask for your passkey again.
 ## Settings
 
 **Workspace** holds its **Name** (it can't be emptied), the **Time zone**, the default for everyone (each person can
-choose their own in the app), and the **Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the workspace's notifications to an
-[ntfy](https://ntfy.sh) topic too, on ntfy.sh or your own server: paste the topic's `https://` address (a protected
-topic's token as `?auth=…`), **Save**, then **Send a test**. Anyone who knows a topic's address can read it, so pick a
-long, random name; it's stored encrypted (the instance needs `ENCRYPTION_KEY`) and the page only shows its server
-afterwards. Each workspace has its own; changing or removing it asks for your passkey again. **Instance** shows the address and whether publishing is **Live** or in **Dry
-run**. To go live, change `DRY_RUN` where the instance is configured and deploy again; see
-[Configuration](configuration.md). The instance's name and colour are set when the app is built, see
-[Branding](configuration.md#branding).
+choose their own in the app), and the **Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the
+workspace's notifications to an [ntfy](https://ntfy.sh) topic too, on ntfy.sh or your own server: paste the topic's
+`https://` address (a protected topic's token as `?auth=…`), **Save**, then **Send a test**. Anyone who knows a topic's
+address can read it, so pick a long, random name; it's stored encrypted (the instance needs `ENCRYPTION_KEY`) and the
+page only shows its server afterwards. Each workspace has its own; changing or removing it asks for your passkey again.
+**Instance** shows the address and whether publishing is **Live** or in **Dry run**. To go live, change `DRY_RUN` where
+the instance is configured and deploy again; see [Configuration](configuration.md). The instance's name and colour are
+set when the app is built, see [Branding](configuration.md#branding).
