@@ -151,8 +151,7 @@ Under it is a chart of the post's samples (see [How it works](how-it-works.md#re
 taken). **Total | Daily** switches between the running totals and what each day added: a sampled day's growth since
 the previous sample, with a gap for a day without one (from day 30, one point a week). The metric picker
 chooses **Views** (the default), **Reach**, **Likes**, **Comments**, **Saves**, **Shares**, **Followers** or
-**Profile visits**. The Trial Reel copy is a
-second line, with its own marker. The line under the legend reads out one point: the latest at first, then the one
+**Profile visits**. The Trial Reel copy is a second line, with its own marker. The line under the legend reads out one point: the latest at first, then the one
 you tap or drag to, or pick with the arrow keys. Before the first sample the view says "No results yet: the 24 h
 numbers arrive a day after publishing."
 
@@ -202,23 +201,23 @@ editors may not.
 
 ## Notifications and the daily digest
 
-**Settings → Notifications**: **Turn on for this device**, then **Send a test** to check it. They cover published,
-refused and failed items on that device. If the browser had been told to block them, the app shows the steps to allow
-them again. Each push carries up to two buttons, such as **Open in app**; the optional ntfy topic gets the same buttons.
-A device gets the notifications of every workspace you're a member of, and they open in their workspace; when you can
-open more than one workspace, each title starts with the workspace's name (`Workspace name · `). **Send a test** goes to
-your own devices only.
+**Settings → Notifications**: **Turn on for this device**, then **Send a test** to check it. They cover your workspaces'
+notifications on that device; you choose which below. If the browser had been told to block them, the app shows the
+steps to allow them again. Each push carries up to two buttons, such as **Open in app**; the optional ntfy topic gets
+the same buttons. A device gets the notifications of every workspace you're a member of, and they open in their
+workspace; when you can open more than one workspace, each title starts with the workspace's name
+(`Workspace name · `). **Send a test** goes to your own devices only.
 
-Below the device switch, **Which notifications** sets what you get from the workspace you're in, in five groups:
+Below the device switch, **What <workspace> sends you** sets what you get from the workspace you're in, in five groups:
 **Needs you** (posts held past their time, and Shorts comments waiting for a working connection), **Problems**
 (failed, refused or stuck posts, and accounts that need reconnecting), **Published and results** (what went out, Trial
 Reels and comments included, and each post's 24 h results), **New drafts and comments** (drafts from the inbox, others'
-comments on your posts, and moved release dates) and **Daily digest** (one summary a day). Admins and creators start with all five;
-editors start with all but **Needs you**. Each is per workspace, and setting a group back to its default follows your
-role again if it changes. Removing you from a workspace deletes these settings there, and your devices stop getting
-its notifications. Instance admins get notifications only from the workspaces they're a member of; in another, the page
-says they get none from it. A workspace can also post its notifications to an ntfy topic, set in the
-dashboard's **Settings** ([The dashboard](the-dashboard.md#settings)): only that workspace's go there.
+comments on your posts, and moved release dates) and **Daily digest** (one summary a day). Admins and creators start
+with all five; editors start with all but **Needs you**. Each is per workspace, and setting a group back to its
+default follows your role again if it changes. Removing you from a workspace deletes these settings there, and your
+devices stop getting its notifications. Instance admins get notifications only from the workspaces they're a member
+of; in another, the page says they get none from it. A workspace can also post its notifications to an ntfy topic, set
+in the dashboard's **Settings** ([The dashboard](the-dashboard.md#settings)): only that workspace's go there.
 Approving always happens in the app.
 
 Once a day, at the digest hour set in the dashboard's **Settings**, one message lists today's items and their state,

@@ -211,14 +211,24 @@ describe("every builder has a group", () => {
 
   it("gives each a known group, and the ones that matter the right one", () => {
     for (const [name, n] of Object.entries(notes)) expect(isNoteGroup(n.group), name).toBe(true);
-    expect(notes.jobHeld.group).toBe("needs_you");
-    expect(notes.shortsWaiting.group).toBe("needs_you");
-    expect(notes.jobFailed.group).toBe("problems");
-    expect(notes.connectionProblem.group).toBe("problems");
-    expect(notes.mediaStoreProblem.group).toBe("problems");
-    expect(notes.published.group).toBe("published");
-    expect(notes.newDrafts.group).toBe("inbox");
-    expect(notes.releaseMoved.group).toBe("inbox");
-    expect(notes.digest.group).toBe("digest");
+    const expected: Record<string, string[]> = {
+      needs_you: ["jobHeld", "shortsWaiting"],
+      problems: [
+        "jobVerdict",
+        "jobFailed",
+        "jobRefused",
+        "providerFailed",
+        "processingTimeout",
+        "connectionProblem",
+        "cleanupRefused",
+        "mediaStoreProblem",
+      ],
+      published: ["published", "publishedTrial", "commented", "dryRunPublish", "dryRunComment", "results"],
+      inbox: ["newDrafts", "newComments", "releaseMoved"],
+      digest: ["digest"],
+    };
+    for (const [group, names] of Object.entries(expected))
+      for (const name of names) expect(notes[name as keyof typeof notes].group, name).toBe(group);
+    expect(Object.values(expected).flat().sort()).toEqual(Object.keys(notes).sort());
   });
 });

@@ -624,7 +624,7 @@ export function App() {
   if (!me.signedIn) return <SignIn me={me} onDone={refreshMe} />;
   if (me.noWorkspace) return <NoWorkspace onSignOut={refreshMe} />;
   // keyed by the workspace, so a switch starts every page and the shared lists over in the new one
-  return <SignedIn key={me.workspace?.id} me={me} hash={hash} onSignOut={refreshMe} />;
+  return <SignedIn key={me.workspace?.id} me={me} hash={hash} onRefresh={refreshMe} />;
 }
 
 /** Signed in, in no workspace (removed, or never invited): every page would answer 403, so only this and the way
@@ -655,7 +655,7 @@ function NoWorkspace({ onSignOut }: { onSignOut: () => void }) {
 /** Where the item page's back link goes: the last list page the owner was on (Today when unknown). */
 let lastList = "#/";
 
-function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: () => void }) {
+function SignedIn({ me, hash, onRefresh }: { me: Me; hash: string; onRefresh: () => void }) {
   const shared = useSharedState();
   const route = hash.replace(/^#/, "");
   // Needs you and the tab badges come from their own requests: reload them with each page, and when the app comes
@@ -721,7 +721,7 @@ function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: ()
   ) : route.startsWith("/stats") ? (
     <StatsPage />
   ) : route.startsWith("/settings") ? (
-    <SettingsPage me={me} onSignOut={onSignOut} />
+    <SettingsPage me={me} onSignOut={onRefresh} />
   ) : route.startsWith("/comments") ? (
     <CommentsPage />
   ) : (
@@ -798,7 +798,7 @@ function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: ()
           )}
         </div>
         <main>{page}</main>
-        {picking && <WorkspaceSheet me={me} onClose={() => setPicking(false)} onSwitched={onSignOut} />}
+        {picking && <WorkspaceSheet me={me} onClose={() => setPicking(false)} onSwitched={onRefresh} />}
         <nav aria-label={t("tabs.nav")}>
           {TABS.map(([h, key, icon]) => {
             const label = t(key);

@@ -104,7 +104,8 @@ export const en = {
   "settings.notifications": "Notifications",
   "settings.pushOn": "On here",
   "settings.pushOff": "Off here",
-  "settings.pushNote": "Published, refused and failed items on this device. (ntfy keeps working too.)",
+  "settings.pushNote":
+    "Notifications from your workspaces on this device; choose which below. (ntfy keeps working too.)",
   // the five notification groups (core/notify-prefs.ts), for the signed-in person in this workspace
   "settings.groups": "What {name} sends you",
   "settings.groupDefault": "Default for your role",

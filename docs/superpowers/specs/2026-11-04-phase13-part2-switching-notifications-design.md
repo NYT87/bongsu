@@ -49,8 +49,8 @@ checks one workspace for one person so that the two can't drift apart.
 - `GET /admin-api/state` adds `workspaces: { id, name, role }[]` (the list above).
 - `POST /admin-api/session/workspace { id }` checks access with the shared helper. When access is allowed, it calls
   `setSessionWorkspace` and answers `{ ok: true }`. Otherwise it answers 403, and the session keeps its workspace.
-  After a switch the client reloads its state and the current page's data, or goes to Overview when the current page
-  belongs to the previous workspace (an item, a draft).
+  After a switch the dashboard reloads and lands on Overview, except on pages that belong to no workspace (Workspaces,
+  Media, OAuth apps, Devices), where it stays.
 - The Workspaces page's **Open** uses this route instead of `/admin-api/workspaces/:id/open`. The old route stays as
   an alias until the next minor version, with a comment saying so.
 
