@@ -49,7 +49,8 @@ INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Demo Studio', 
 INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', '$TZ_NAME', 8, 'en', unixepoch())
   ON CONFLICT (workspace_id) DO UPDATE SET timezone = excluded.timezone, updated_at = excluded.updated_at;
 INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', 'owner@example.com', 'Demo Owner', unixepoch(), 1)
-  ON CONFLICT (id) DO UPDATE SET instance_admin = 1;
+  ON CONFLICT (id) DO UPDATE SET instance_admin = 1, email = COALESCE(users.email, excluded.email),
+    name = COALESCE(users.name, excluded.name);
 INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', unixepoch())
   ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'admin';
 DELETE FROM accounts WHERE id IN ('demo_travel', 'demo_running');
