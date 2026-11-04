@@ -122,20 +122,23 @@ export async function acceptInvite(
   return { workspaceId: used.workspace_id, role: role?.role ?? used.role };
 }
 
-/** Whether `userId` is the workspace's last admin. */
-async function lastAdmin(db: Db, workspaceId: string, userId: string): Promise<boolean> {
-  const r = await db
-    .prepare(
-      `SELECT m.role, (SELECT COUNT(*) FROM memberships a WHERE a.workspace_id = ?1 AND a.role = 'admin') AS admins
-       FROM memberships m WHERE m.workspace_id = ?1 AND m.user_id = ?2`,
-    )
-    .bind(workspaceId, userId)
-    .first<{ role: string; admins: number }>();
-  if (!r) throw new MemberError(404, "not a member of this workspace");
-  return r.role === "admin" && Number(r.admins) <= 1;
-}
-
 const LAST_ADMIN = "a workspace keeps one admin: make someone else admin first";
+
+/** The condition, inside the change's own statement, that the workspace keeps an admin: the member isn't an admin, or
+ *  another admin stays, or an instance admin overrides it (`override`, the parameter that's 1 then). In one statement,
+ *  so two admins demoting or removing each other at once can't both pass a check made before. ?1 the workspace, ?2
+ *  the member. */
+const keepsAdmin = (override: string) => `(role <> 'admin' OR ${override} = 1 OR EXISTS (SELECT 1 FROM memberships a
+   WHERE a.workspace_id = ?1 AND a.role = 'admin' AND a.user_id <> ?2))`;
+
+/** Why a change matched no row: not a member (404), or the last admin (409). */
+async function refused(db: Db, workspaceId: string, userId: string): Promise<MemberError> {
+  const m = await db
+    .prepare("SELECT 1 FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
+    .bind(workspaceId, userId)
+    .first();
+  return m ? new MemberError(409, LAST_ADMIN) : new MemberError(404, "not a member of this workspace");
+}
 
 /** Changes a member's role. The last admin stays one, unless an instance admin changes it. */
 export async function setRole(
@@ -145,28 +148,39 @@ export async function setRole(
   role: Role,
   by: { instanceAdmin: boolean },
 ): Promise<void> {
-  if (role !== "admin" && (await lastAdmin(db, workspaceId, userId)) && !by.instanceAdmin)
-    throw new MemberError(409, LAST_ADMIN);
-  await db
-    .prepare("UPDATE memberships SET role = ?3 WHERE workspace_id = ?1 AND user_id = ?2")
-    .bind(workspaceId, userId, role)
-    .run();
+  const r = await db
+    .prepare(
+      `UPDATE memberships SET role = ?3 WHERE workspace_id = ?1 AND user_id = ?2
+         AND (?3 = 'admin' OR ${keepsAdmin("?4")}) RETURNING user_id`,
+    )
+    .bind(workspaceId, userId, role, by.instanceAdmin ? 1 : 0)
+    .first();
+  if (!r) throw await refused(db, workspaceId, userId);
 }
 
-/** Removes a member, cut off at once from this workspace: their sessions working in it, their CLI tokens for it and
- *  their push devices there go with the membership (a session in no particular workspace stays, but no longer finds
- *  this one). The last admin stays, unless an instance admin removes them. */
+/** Removes a member, cut off at once from this workspace: their sessions working in it and their push devices there
+ *  go, their CLI tokens for it are revoked (kept, marked, as the token list shows them), with the membership (a
+ *  session in no particular workspace stays, but no longer finds this one). The last admin stays, unless an instance
+ *  admin removes them. */
 export async function removeMember(
   db: Db,
   workspaceId: string,
   userId: string,
   by: { instanceAdmin: boolean },
+  nowS: number,
 ): Promise<void> {
-  if ((await lastAdmin(db, workspaceId, userId)) && !by.instanceAdmin) throw new MemberError(409, LAST_ADMIN);
+  const r = await db
+    .prepare(
+      `DELETE FROM memberships WHERE workspace_id = ?1 AND user_id = ?2 AND ${keepsAdmin("?3")} RETURNING user_id`,
+    )
+    .bind(workspaceId, userId, by.instanceAdmin ? 1 : 0)
+    .first();
+  if (!r) throw await refused(db, workspaceId, userId);
   await db.batch([
-    db.prepare("DELETE FROM memberships WHERE workspace_id = ?1 AND user_id = ?2").bind(workspaceId, userId),
     db.prepare("DELETE FROM sessions WHERE workspace_id = ?1 AND user_id = ?2").bind(workspaceId, userId),
-    db.prepare("DELETE FROM api_keys WHERE workspace_id = ?1 AND user_id = ?2").bind(workspaceId, userId),
+    db
+      .prepare("UPDATE api_keys SET revoked_at = ?3 WHERE workspace_id = ?1 AND user_id = ?2 AND revoked_at IS NULL")
+      .bind(workspaceId, userId, nowS),
     db.prepare("DELETE FROM push_subs WHERE workspace_id = ?1 AND user_id = ?2").bind(workspaceId, userId),
   ]);
 }

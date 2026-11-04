@@ -41,17 +41,28 @@ interface Data {
   name?: string | null;
 }
 
-/** Who the invite is for, as the page shows it. */
-export async function invitePreview(env: Env, token: string, nowS: number): Promise<{ workspace: string; role: Role }> {
+/** The invite behind a link, while it can be used, or the one 404. `only`: the role this app takes (the app takes
+ *  creators; admins and editors finish in the dashboard), refused the same way so it says nothing more. */
+async function usable(env: Env, token: string, nowS: number, only?: Role) {
   const i = await inviteFor(env.DB, token, nowS);
-  if (!i) throw new AcceptError(404, NO_INVITE);
+  if (!i || (only && i.role !== only)) throw new AcceptError(404, NO_INVITE);
+  return i;
+}
+
+/** Who the invite is for, as the page shows it. */
+export async function invitePreview(
+  env: Env,
+  token: string,
+  nowS: number,
+  only?: Role,
+): Promise<{ workspace: string; role: Role }> {
+  const i = await usable(env, token, nowS, only);
   return { workspace: i.workspaceName, role: i.role };
 }
 
 /** Both ceremonies' options, the same shape for every email. */
-export async function inviteOptions(env: Env, token: string, name: unknown, nowS: number) {
-  const i = await inviteFor(env.DB, token, nowS);
-  if (!i) throw new AcceptError(404, NO_INVITE);
+export async function inviteOptions(env: Env, token: string, name: unknown, nowS: number, only?: Role) {
+  const i = await usable(env, token, nowS, only);
   const invite = await sha256Hex(token);
   const display =
     String(name ?? "")
@@ -80,9 +91,9 @@ export async function inviteVerify(
   token: string,
   b: Record<string, unknown>,
   nowS: number,
+  only?: Role,
 ): Promise<{ userId: string; workspaceId: string; role: Role; isNew: boolean }> {
-  const i = await inviteFor(env.DB, token, nowS);
-  if (!i) throw new AcceptError(404, NO_INVITE);
+  const i = await usable(env, token, nowS, only);
   const invite = await sha256Hex(token);
   const challengeId = String(b.challengeId ?? "");
   if (b.mode === "existing") {

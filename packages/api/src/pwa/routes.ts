@@ -269,7 +269,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return c.json({ signedIn: false });
   });
 
-  // ---- accepting an invite (pwa/invite.ts), signed out: creators join here, admins and editors in the dashboard
+  // ---- accepting an invite (pwa/invite.ts), signed out: creators join here; an admin's or editor's invite is the
+  // dashboard's, and here answers like any other unusable one
   const accepting = (fn: (c: C) => Promise<unknown>) => async (c: C) => {
     try {
       return c.json(await fn(c));
@@ -280,16 +281,24 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   };
   app.get(
     "/app-api/invite/:token",
-    accepting((c) => invitePreview(c.env, c.req.param("token") ?? "", nowS())),
+    accepting((c) => invitePreview(c.env, c.req.param("token") ?? "", nowS(), "creator")),
   );
   app.post(
     "/app-api/invite/:token/options",
-    accepting(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS())),
+    accepting(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS(), "creator")),
   );
   app.post(
     "/app-api/invite/:token/verify",
     accepting(async (c) => {
-      const j = await inviteVerify(c.env, verifiers, origin(c), c.req.param("token") ?? "", await body(c), nowS());
+      const j = await inviteVerify(
+        c.env,
+        verifiers,
+        origin(c),
+        c.req.param("token") ?? "",
+        await body(c),
+        nowS(),
+        "creator",
+      );
       // signed in, working in the workspace just joined
       const token = await createSession(c.env.DB, nowS(), { userId: j.userId });
       await setSessionWorkspace(c.env.DB, token, j.workspaceId);

@@ -9,7 +9,7 @@ import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
-import { createInvite } from "@bongsu/core/invites";
+import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
 import { beforeEach, describe, expect, it } from "vitest";
 import { testEnv, World } from "./world";
 
@@ -166,6 +166,17 @@ describe("invites", () => {
     const ed = await ada("/admin-api/invites", { email: "new@example.com", role: "editor" });
     expect(ed.json.url).toMatch(/^https:\/\/bongsu\.test\/dashboard\/invite\/[A-Za-z0-9_-]{43}$/);
     const token = tokenOf(ed.json.url);
+    // the app takes creators' invites only: an editor's answers there like any unusable invite, saying nothing more
+    const app = out("pwa");
+    const none = await app("/app-api/invite/unknown-token-unknown-token-unknown-token-x");
+    expect(none.status).toBe(404);
+    for (const r of [
+      await app(`/app-api/invite/${token}`),
+      await app(`/app-api/invite/${token}/options`, {}),
+      await app(`/app-api/invite/${token}/verify`, { mode: "new", challengeId: "x", response: { id: "k" } }),
+      await app(`/app-api/invite/${token}/verify`, { mode: "existing", challengeId: "x", response: { id: "k" } }),
+    ])
+      expect([r.status, r.json]).toEqual([404, none.json]);
     const site = out("dashboard");
     expect((await site(`/admin-api/invite/${token}`)).json).toEqual({ workspace: expect.any(String), role: "editor" });
     const o = await site(`/admin-api/invite/${token}/options`, { name: "Nev" });
@@ -324,8 +335,37 @@ describe("members", () => {
     expect(
       (await env.DB.prepare("SELECT action FROM audit WHERE action LIKE 'member_%' ORDER BY id").all()).results,
     ).toEqual([{ action: "member_role" }, { action: "member_role" }, { action: "member_remove" }]);
+    const audits = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit").first("n");
     expect((await ina("/admin-api/members/nobody", { role: "editor" })).status).toBe(404);
+    expect((await ina("/admin-api/members/nobody", { role: "admin" })).status).toBe(404);
+    expect((await ina("/admin-api/members/nobody/remove", {})).status).toBe(404);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM audit").first("n")).toBe(audits);
     expect((await ina("/admin-api/members/eda", { role: "owner" })).status).toBe(400);
+  });
+
+  it("keeps an admin when two admins demote or remove each other at once", async () => {
+    const admins = () =>
+      env.DB.prepare("SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = 'default' AND role = 'admin'").first(
+        "n",
+      );
+    await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'eda'").run();
+    // started together: a check made before the change would let both through
+    const demoted = await Promise.allSettled([
+      setRole(env.DB, "default", "ada", "editor", { instanceAdmin: false }),
+      setRole(env.DB, "default", "eda", "editor", { instanceAdmin: false }),
+    ]);
+    expect(demoted.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    const no = demoted.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect([no.reason instanceof MemberError, (no.reason as MemberError).status]).toEqual([true, 409]);
+    expect(await admins()).toBe(1);
+
+    await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE workspace_id = 'default'").run();
+    const removed = await Promise.allSettled([
+      removeMember(env.DB, "default", "ada", { instanceAdmin: false }, nowS()),
+      removeMember(env.DB, "default", "eda", { instanceAdmin: false }, nowS()),
+    ]);
+    expect(removed.map((r) => r.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(await admins()).toBe(1);
   });
 
   it("cuts a removed member off at once", async () => {
@@ -366,13 +406,26 @@ describe("members", () => {
     expect((await req("dashboard", `bongsu_admin=${dashToken}`, "/admin-api/state")).json).toMatchObject({
       role: "creator",
     });
-    // their CLI token there stops; the one for B still works
+    // their CLI token there is revoked (kept, marked) and stops; the one for B still works
     expect(await authenticate(env.DB, `Bearer ${cli}`, nowS())).toBeNull();
+    expect(
+      await env.DB.prepare("SELECT revoked_at FROM api_keys WHERE id = 't_eda'").first("revoked_at"),
+    ).toBeGreaterThan(0);
+    expect(await env.DB.prepare("SELECT revoked_at FROM api_keys WHERE id = 't_edaB'").first("revoked_at")).toBeNull();
     expect((await authenticate(env.DB, `Bearer ${cliB}`, nowS()))?.workspaceId).toBe("b");
     // their push device there gets nothing any more
     expect((await env.DB.prepare("SELECT workspace_id FROM push_subs WHERE user_id = 'eda'").all()).results).toEqual([
       { workspace_id: "b" },
     ]);
+
+    // invited back later, their token list there shows it revoked (and it stays so)
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'eda', 'editor', 9)",
+    ).run();
+    const back = await (await dash("eda", "default"))("/admin-api/tokens");
+    expect(back.json.tokens).toEqual([expect.objectContaining({ id: "t_eda", revoked_at: expect.any(Number) })]);
+    expect(await authenticate(env.DB, `Bearer ${cli}`, nowS())).toBeNull();
+    await env.DB.prepare("DELETE FROM memberships WHERE workspace_id = 'default' AND user_id = 'eda'").run();
 
     // removed from their only workspace: the dashboard says so
     await (await dash("bob"))("/admin-api/members/eda/remove", {});
@@ -404,6 +457,13 @@ describe("members", () => {
     expect(list.json.invites).toEqual([]);
     expect((await bob("/admin-api/members/eda/remove", {})).status).toBe(404);
     expect((await bob("/admin-api/members/ada", { role: "creator" })).status).toBe(404);
+    expect((await bob("/admin-api/members/eda", { role: "admin" })).status).toBe(404);
+    expect(await member("b", "eda")).toBeNull();
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'member_role' AND workspace_id = 'b'").first(
+        "n",
+      ),
+    ).toBe(0);
     expect((await bob(`/admin-api/invites/${id}/revoke`, {})).status).toBe(404);
     expect(await member("default", "eda")).toBe("editor");
     expect(await member("default", "ada")).toBe("admin");

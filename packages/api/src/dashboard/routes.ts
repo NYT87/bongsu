@@ -807,7 +807,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       fresh(c);
       const userId = c.req.param("userId") ?? "";
-      await removeMember(c.env.DB, ws(c), userId, { instanceAdmin: c.get("instanceAdmin") });
+      await removeMember(c.env.DB, ws(c), userId, { instanceAdmin: c.get("instanceAdmin") }, nowS());
       await audit(c, "member_remove", `user:${userId}`, {});
       return { userId, removed: true };
     }),
