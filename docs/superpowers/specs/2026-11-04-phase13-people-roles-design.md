@@ -14,7 +14,35 @@ workspace. Success: the instance admin creates a workspace and invites its admin
 creator; the creator signs up in the PWA, connects their own account there and approves their posts; nobody sees or
 changes another workspace, and only the instance admin changes what's instance-wide.
 
-## 1. Roles
+## 0. First run: no workspace, one instance admin
+
+A new instance has no workspace and no member, only the setup token.
+
+1. The deployer sets `SETUP_TOKEN` (a Worker secret, or `.env` on Docker), as today.
+2. `/dashboard` on an instance without users shows the setup form: the token, an email and a name, **Create
+   passkey**; then the recovery codes. That first user is the **instance admin** (`users.instance_admin`), with no
+   membership. The token is useless once a user exists, as today.
+3. Signed in without any workspace, the dashboard opens **Create your first workspace**: a name, a time zone and its
+   first admin, **me** preselected, or another email (who gets an invite, section 3).
+4. Being its admin, the instance admin works in it like any admin (accounts, invites); otherwise it waits on their
+   Workspaces page, and they open it from there.
+
+**What "no default workspace" changes:**
+
+- The baseline migration seeds a `default` workspace and an `owner` user. Migration 0018 deletes them when they hold
+  nothing (a fresh instance): no accounts, plan, drafts, connections or other members. The bootstrap user is a normal
+  user with an id of its own.
+- **The inbox** (`UPLOADS/inbox/<project>/` in every store) puts a draft in the workspace whose plan has that project;
+  a project no plan has yet goes to the workspace the store's **inbox feeds**, a setting of each store on the Media
+  page (instance admins). Without one, those drafts wait. (Phase 13 part 3 gives workspaces folders of their own.)
+- **The weekly store check** tells the instance admins (by email with a `Mailer`, and the audit log) instead of the
+  `default` workspace.
+- **Every fallback to `default` or `owner`** (about 40 places: the app's fallback caller, uploads, accounts,
+  connections, data, the tick, column defaults) is checked: code acting for a caller uses the caller's workspace;
+  nothing silently lands in a workspace no one chose. `DEFAULT_WORKSPACE` stays only where an existing instance's
+  data is read (the migration of old rows).
+
+
 
 | | instance admin | admin | editor | creator |
 |---|---|---|---|---|
@@ -87,6 +115,8 @@ default workspace by the migration.
 
 ## Data (one migration, 0018)
 
+- The seeded `default` workspace and `owner` user removed when empty (section 0).
+- `media_store.inbox_workspace` (text, NULL): the workspace a store's inbox feeds for projects no plan has.
 - `users.instance_admin` (bool, default 0); the bootstrap user set to 1.
 - `memberships.role` values `admin / editor / creator`, existing rows converted.
 - `workspaces.archived_at` (timestamp, NULL).
@@ -96,7 +126,9 @@ default workspace by the migration.
 
 ## Tests
 
-Roles: a matrix test per route group (instance, managing, content, approving) for each role, dashboard and PWA, and
+First run: an empty instance bootstraps an instance admin with no workspace, who creates the first one (as its
+admin, or inviting someone); the inbox's drafts go to the plan's workspace or the store's inbox workspace. Roles: a
+matrix test per route group (instance, managing, content, approving) for each role, dashboard and PWA, and
 creators refused in the dashboard. Invites: new and existing users, expiry, reuse, revoke, wrong workspace, the last
 admin. Pause: one workspace paused, the other publishes; resume only its own. Archive: the tick skips it, sign-in and
 keys refused. PWA connect: the flow from the app lands the accounts in the creator's workspace. `workspaces.test.ts`
@@ -104,7 +136,8 @@ gets the new routes.
 
 ## Order of work
 
-1. Migration 0018, roles and `ROLE_SCOPES`, the three dashboard guards, creators out of the dashboard.
+1. Migration 0018, roles and `ROLE_SCOPES`, the three dashboard guards, creators out of the dashboard; the first run
+   (bootstrap makes an instance admin, Create your first workspace) and the fallbacks to `default` checked.
 2. Pause and resume per workspace.
 3. Invites and the Members page.
 4. The Workspaces page, archive, the Instance group.
