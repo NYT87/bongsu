@@ -247,7 +247,8 @@ describe("0018_people", () => {
       INSERT INTO users (id, email, name, created_at) VALUES ('bea', 'bea@example.com', 'Bea', 1),
         ('cy', 'cy@example.com', 'Cy', 1);
       INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'approver', 1),
-        ('b', 'cy', 'viewer', 1), ('default', 'cy', 'owner', 1);`);
+        ('b', 'cy', 'viewer', 1), ('default', 'cy', 'owner', 1);
+      INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('drive', 1, '{}', 'ok', 1);`);
     apply(db);
     expect(db.prepare("SELECT role FROM memberships WHERE workspace_id = 'b' ORDER BY user_id").all()).toEqual([
       { role: "creator" },
@@ -262,6 +263,8 @@ describe("0018_people", () => {
       paused: '{"reason":"trip"}',
     });
     expect(db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key = 'paused'").get()).toEqual({ n: 0 });
+    // the kept `default` goes on getting the inbox's new projects
+    expect(db.prepare("SELECT inbox_workspace FROM media_store").all()).toEqual([{ inbox_workspace: "default" }]);
     expect(db.prepare("SELECT id, instance_admin FROM users ORDER BY id").all()).toEqual([
       { id: "bea", instance_admin: 0 },
       { id: "cy", instance_admin: 1 },
@@ -272,7 +275,12 @@ describe("0018_people", () => {
     ).toThrow(/CHECK/);
 
     const empty = fromMigrations("0018");
+    empty.exec(
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('drive', 1, '{}', 'ok', 1);",
+    );
     apply(empty);
+    // a fresh instance's store feeds no workspace until an instance admin picks one
+    expect(empty.prepare("SELECT inbox_workspace FROM media_store").all()).toEqual([{ inbox_workspace: null }]);
     expect(empty.prepare("SELECT COUNT(*) AS n FROM workspaces").get()).toEqual({ n: 0 });
     expect(empty.prepare("SELECT COUNT(*) AS n FROM users").get()).toEqual({ n: 0 });
     expect(empty.prepare("SELECT COUNT(*) AS n FROM workspace_settings").get()).toEqual({ n: 0 });

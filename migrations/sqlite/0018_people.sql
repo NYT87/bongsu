@@ -69,3 +69,4 @@ DELETE FROM users WHERE id = 'owner'
   AND NOT EXISTS (SELECT 1 FROM memberships WHERE user_id = 'owner' AND workspace_id <> 'default')
   AND NOT EXISTS (SELECT 1 FROM users WHERE id = 'owner' AND email IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM passkeys WHERE user_id = 'owner');
+UPDATE media_store SET inbox_workspace = 'default' WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = 'default');

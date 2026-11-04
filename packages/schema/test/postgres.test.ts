@@ -169,7 +169,8 @@ describe("0018_people", () => {
       INSERT INTO users (id, email, name, created_at) VALUES ('bea', 'bea@example.com', 'Bea', 1),
         ('cy', 'cy@example.com', 'Cy', 1);
       INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'approver', 1),
-        ('b', 'cy', 'viewer', 1), ('default', 'cy', 'owner', 1);`);
+        ('b', 'cy', 'viewer', 1), ('default', 'cy', 'owner', 1);
+      INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('drive', 1, '{}', 'ok', 1);`);
     const sql = readFileSync(join(SQL_DIR, "0018_people.sql"), "utf8");
     await pg.exec(sql);
     const roles = await pg.query("SELECT workspace_id, user_id, role FROM memberships ORDER BY workspace_id, user_id");
@@ -183,6 +184,7 @@ describe("0018_people", () => {
       { paused: '{"reason":"trip"}' },
     ]);
     expect((await pg.query("SELECT key FROM settings WHERE key = 'paused'")).rows).toEqual([]);
+    expect((await pg.query("SELECT inbox_workspace FROM media_store")).rows).toEqual([{ inbox_workspace: "default" }]);
     expect((await pg.query("SELECT id, instance_admin FROM users ORDER BY id")).rows).toEqual([
       { id: "bea", instance_admin: 0 },
       { id: "cy", instance_admin: 1 },
@@ -194,7 +196,11 @@ describe("0018_people", () => {
     await pg.close();
 
     const empty = await fresh("0018");
+    await empty.exec(
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('drive', 1, '{}', 'ok', 1);",
+    );
     await empty.exec(sql);
+    expect((await empty.query("SELECT inbox_workspace FROM media_store")).rows).toEqual([{ inbox_workspace: null }]);
     for (const t of ["workspaces", "users", "workspace_settings", "memberships"])
       expect((await empty.query(`SELECT COUNT(*)::int AS n FROM ${t}`)).rows, t).toEqual([{ n: 0 }]);
     await empty.close();

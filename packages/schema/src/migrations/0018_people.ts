@@ -59,6 +59,11 @@ const seed = [
   `DELETE FROM users WHERE id = 'owner'\n  AND ${seedEmpty};`,
 ].join("\n");
 
+// An instance that keeps `default` (it had data) keeps its inbox: every store's new projects go on feeding it, as they
+// did. Run after the seed's delete, so a fresh instance's stores feed nothing until an instance admin picks one.
+const inbox =
+  "UPDATE media_store SET inbox_workspace = 'default' WHERE EXISTS (SELECT 1 FROM workspaces WHERE id = 'default');";
+
 export const steps: Step[] = [
   {
     addColumn: {
@@ -132,4 +137,5 @@ export const steps: Step[] = [
   },
   { sql: { sqlite: pause, postgres: pause } },
   { sql: { sqlite: seed, postgres: seed } },
+  { sql: { sqlite: inbox, postgres: inbox } },
 ];

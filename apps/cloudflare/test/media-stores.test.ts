@@ -9,6 +9,7 @@ import { clearTokenCache } from "@bongsu/core/clients/google";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { scanInbox } from "@bongsu/core/inbox";
+import { type Mail, registerMailer } from "@bongsu/core/mail";
 import { mediaStores } from "@bongsu/core/media/index";
 import { CHECK_EVERY_S, checkStores } from "@bongsu/core/media/manage";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -315,6 +316,23 @@ describe("several stores side by side", () => {
         text: expect.stringMatching(/^drive: [\s\S]*\/dashboard\/media$/),
       }),
     ]);
+  });
+
+  it("writes no mail when no instance admin has an email, and still logs the notice", async () => {
+    // a mailer that sees every send (Resend's skips an empty list itself; another mailer may not)
+    const sent: Mail[] = [];
+    registerMailer("spy", () => ({ id: "spy", send: async (mail) => void sent.push(mail) }));
+    const m = await testEnv(env, { MAILER: "spy" } as Partial<Env>);
+    await env.DB.prepare("UPDATE users SET email = NULL WHERE instance_admin = 1").run();
+    w.googleRefuse = true;
+    clearTokenCache();
+    expect(await checkStores(m, { fetch: w.fetch, now: AT })).toEqual({ checked: [], broken: ["drive"] });
+    expect(sent).toEqual([]);
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM audit WHERE action = 'notify' AND target = 'media_stores' AND workspace_id IS NULL",
+      ).first("n"),
+    ).toBe(1);
   });
 
   it("isn't healthy without any store", async () => {

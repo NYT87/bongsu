@@ -39,18 +39,27 @@ const unix = (t?: string) => (t ? Math.floor(Date.parse(t) / 1000) : 0);
 const stem = (n: string) => n.replace(/\.[^.]+$/, "");
 
 /** The workspace a project's drafts go to: the one whose plan has it (the most items, if several do), else the one
- *  the store's inbox feeds; null when neither: the draft waits. */
+ *  the store's inbox feeds; null when neither: the draft waits. Nothing goes to an archived workspace (nobody works
+ *  in it): its projects, and a store feeding it, wait. */
 export async function inboxWorkspace(db: Db, store: string, project: string): Promise<string | null> {
   const planned = await db
     .prepare(
-      `SELECT workspace_id, COUNT(*) AS n FROM plan_items WHERE folder LIKE '%/' || ?1
-       GROUP BY workspace_id ORDER BY n DESC, workspace_id LIMIT 1`,
+      `SELECT p.workspace_id, MAX(w.archived_at) AS archived, COUNT(*) AS n FROM plan_items p
+         JOIN workspaces w ON w.id = p.workspace_id
+       WHERE p.folder LIKE '%/' || ?1
+       GROUP BY p.workspace_id
+       ORDER BY CASE WHEN MAX(w.archived_at) IS NULL THEN 0 ELSE 1 END, n DESC, p.workspace_id LIMIT 1`,
     )
     .bind(project)
-    .first<{ workspace_id: string }>();
-  if (planned) return planned.workspace_id;
+    .first<{ workspace_id: string; archived: number | null }>();
+  // a project only an archived workspace plans is that workspace's: it waits rather than go to another
+  if (planned) return planned.archived === null ? planned.workspace_id : null;
   const r = await db
-    .prepare("SELECT inbox_workspace FROM media_store WHERE kind = ?1")
+    .prepare(
+      `SELECT s.inbox_workspace FROM media_store s
+         JOIN workspaces w ON w.id = s.inbox_workspace AND w.archived_at IS NULL
+       WHERE s.kind = ?1`,
+    )
     .bind(store)
     .first<{ inbox_workspace: string | null }>();
   return r?.inbox_workspace ?? null;

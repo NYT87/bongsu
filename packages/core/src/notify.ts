@@ -103,6 +103,7 @@ export async function notifyInstanceAdmins(env: Env, fetcher: typeof fetch, note
     const mail = mailer(env, fetcher);
     if (mail.id === "none") return;
     const to = await instanceAdmins(env.DB);
+    if (!to.length) return; // nobody to write to: the audit row stands
     const link = note.mail ? `\n\n${env.PUBLIC_URL.replace(/\/$/, "")}${note.mail.page}` : "";
     await mail.send({ to, subject: note.mail?.subject ?? `Bongsu: ${note.title}`, text: `${note.text}${link}` });
   } catch (e) {
