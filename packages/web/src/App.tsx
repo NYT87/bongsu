@@ -542,6 +542,18 @@ export function App() {
         <p className="muted">{t("common.loading")}</p>
       </main>
     );
+  // an invite link, signed in or not: joining signs in as the person invited, in the workspace they join
+  const invite = /^#\/invite\/([A-Za-z0-9_-]+)/.exec(hash)?.[1];
+  if (invite)
+    return (
+      <InvitePage
+        token={invite}
+        onDone={() => {
+          location.hash = "#/";
+          refreshMe();
+        }}
+      />
+    );
   if (!me.signedIn) return <SignIn me={me} onDone={refreshMe} />;
   return <SignedIn me={me} hash={hash} onSignOut={refreshMe} />;
 }
@@ -781,6 +793,89 @@ function SignIn({ me, onDone }: { me: Me; onDone: () => void }) {
           {t("sign.create")}
         </button>
       </details>
+      {msg && (
+        <p className="error" role="alert">
+          {msg}
+        </p>
+      )}
+    </main>
+  );
+}
+
+/** Joining a workspace from an invite link: a name and a new passkey, or the passkey of the account the invite was
+ *  sent to. The page doesn't know (and the server doesn't say) whether that account exists: the person picks. */
+function InvitePage({ token, onDone }: { token: string; onDone: () => void }) {
+  const [invite, setInvite] = useState<{ workspace: string; role: string } | null>(null);
+  const [gone, setGone] = useState(false);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const path = `invite/${encodeURIComponent(token)}`;
+  useEffect(() => {
+    api<{ workspace: string; role: string }>(path)
+      .then(setInvite)
+      .catch(() => setGone(true));
+  }, [path]);
+  const join = async (mode: "new" | "existing") => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      type Ceremony = { options: never; challengeId: string };
+      const o = await api<{ register: Ceremony; signIn: Ceremony }>(`${path}/options`, { name });
+      const c = mode === "new" ? o.register : o.signIn;
+      const response =
+        mode === "new"
+          ? await startRegistration({ optionsJSON: c.options })
+          : await startAuthentication({ optionsJSON: c.options });
+      await api(`${path}/verify`, {
+        mode,
+        challengeId: c.challengeId,
+        response,
+        device: navigator.userAgent.includes("Android") ? "Android phone" : "device",
+      });
+      onDone();
+    } catch (e) {
+      setMsg((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="center">
+      <h1 className="brand-title">
+        {LOGO}
+        {BRAND.name}
+      </h1>
+      {gone ? (
+        <>
+          <h2>{t("invite.gone")}</h2>
+          <p className="muted">{t("invite.goneDetail")}</p>
+        </>
+      ) : !invite ? (
+        <p className="muted">{t("common.loading")}</p>
+      ) : (
+        <>
+          <h2>{t("invite.title", { workspace: invite.workspace })}</h2>
+          <p className="muted">{t("invite.asRole", { role: invite.role })}</p>
+          <h3>{t("invite.new")}</h3>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t("invite.name")}
+            aria-label={t("invite.name")}
+            autoComplete="name"
+          />
+          <p className="muted small">{t("invite.passkey")}</p>
+          <button type="button" className="primary" disabled={busy} onClick={() => join("new")}>
+            {busy ? t("invite.waiting") : t("invite.create")}
+          </button>
+          <h3>{t("invite.existing")}</h3>
+          <p className="muted small">{t("invite.existingDetail")}</p>
+          <button type="button" disabled={busy} onClick={() => join("existing")}>
+            {t("invite.signIn")}
+          </button>
+        </>
+      )}
       {msg && (
         <p className="error" role="alert">
           {msg}

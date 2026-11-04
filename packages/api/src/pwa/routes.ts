@@ -33,8 +33,17 @@ import { HTTPException } from "hono/http-exception";
 import { type Caller, type Scope, scopesOf } from "../agent/auth";
 import * as ops from "../agent/ops";
 import { resolveItem, type Snapshot, sameSnapshot, snapshot, writeApproval } from "./approve";
+import { AcceptError, inviteOptions, invitePreview, inviteVerify } from "./invite";
 import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
-import { createSession, endSession, readCookie, type Session, sessionCookie, validSession } from "./session";
+import {
+  createSession,
+  endSession,
+  readCookie,
+  type Session,
+  sessionCookie,
+  setSessionWorkspace,
+  validSession,
+} from "./session";
 import { draftFromUploads, startUpload, UploadError } from "./uploads";
 import {
   authenticationOptions,
@@ -259,6 +268,43 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     c.header("Set-Cookie", sessionCookie("x", 0));
     return c.json({ signedIn: false });
   });
+
+  // ---- accepting an invite (pwa/invite.ts), signed out: creators join here, admins and editors in the dashboard
+  const accepting = (fn: (c: C) => Promise<unknown>) => async (c: C) => {
+    try {
+      return c.json(await fn(c));
+    } catch (e) {
+      if (e instanceof AcceptError) return c.json(e.answer, e.status);
+      throw e;
+    }
+  };
+  app.get(
+    "/app-api/invite/:token",
+    accepting((c) => invitePreview(c.env, c.req.param("token") ?? "", nowS())),
+  );
+  app.post(
+    "/app-api/invite/:token/options",
+    accepting(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS())),
+  );
+  app.post(
+    "/app-api/invite/:token/verify",
+    accepting(async (c) => {
+      const j = await inviteVerify(c.env, verifiers, origin(c), c.req.param("token") ?? "", await body(c), nowS());
+      // signed in, working in the workspace just joined
+      const token = await createSession(c.env.DB, nowS(), { userId: j.userId });
+      await setSessionWorkspace(c.env.DB, token, j.workspaceId);
+      c.header("Set-Cookie", sessionCookie(token));
+      const caller = await callerFor(c, {
+        userId: j.userId,
+        app: "pwa",
+        verifiedAt: nowS(),
+        workspaceId: j.workspaceId,
+      });
+      if (caller) c.set("caller", caller);
+      await audit(c, "invite_accept", `user:${j.userId}`, { role: j.role, isNew: j.isNew }, j.userId);
+      return { signedIn: true, role: j.role };
+    }),
+  );
 
   // ---- everything else needs a session
   app.use("/app-api/*", async (c, next) => {

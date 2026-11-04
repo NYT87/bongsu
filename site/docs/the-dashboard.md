@@ -121,6 +121,18 @@ shown once; copy it then. A key can't approve or resume, whatever its scopes, an
 **Your CLI tokens** are for the `bongsu` command on your computer. A token acts as you, so keep it like a password:
 **Create a token**, name the computer and choose how many days it lasts, and **Revoke** it when the computer goes.
 
+## Members
+
+The workspace's people and their roles, for its admins. **Invite someone** takes an email and a role (admin, editor
+or creator) and makes a link that works once, for 7 days: copy it then, it isn't shown again. With email set up
+(`MAILER`, [Configuration](configuration.md)) it's also sent to them. Admins and editors join in the dashboard,
+creators in the app: someone new makes a passkey, someone with a Bongsu account signs in with theirs. Pending invites
+are listed with **Revoke**.
+
+Each member's role can be changed in place, and **Remove** takes them out of the workspace at once: signed out of
+it, their CLI tokens for it revoked, their devices no longer notified there. A workspace always keeps one admin: make
+someone else admin before the last one steps down. Each of these changes asks for your passkey.
+
 ## Audit
 
 Every change to the instance, newest first: when, who, what and the detail. **Load older** shows the next 50.

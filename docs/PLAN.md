@@ -779,7 +779,7 @@ Several separate sets of accounts in one deployment, each with its own people: m
 without a deployment per person. The data model is already there (Phase 3).
 
 - [ ] Dashboard: create, rename and archive workspaces; a workspace switcher.
-- [ ] **Members and invites:** invite by email: a one-time link always shown in the dashboard with Copy, sent by
+- [x] **Members and invites:** invite by email: a one-time link always shown in the dashboard with Copy, sent by
       the `Mailer` too when one is configured; the invitee signs up with email + passkey and only sees the
       workspaces they're in (#107).
 - [ ] **Roles** (table below) enforced in every route: dashboard, PWA, API, MCP. (Since the security review the app

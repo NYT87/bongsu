@@ -69,6 +69,7 @@ beforeEach(async () => {
       "DELETE FROM audit",
       "DELETE FROM settings WHERE key = 'bootstrap_done'",
       "DELETE FROM memberships",
+      "DELETE FROM invites",
       "DELETE FROM users",
       "DELETE FROM workspace_settings",
       "DELETE FROM workspaces",
@@ -121,7 +122,7 @@ describe("the first run", () => {
     ).toBeNull();
   });
 
-  it("refuses a workspace without a name or with an unknown zone, and an invite until invites exist", async () => {
+  it("refuses a workspace without a name, with an unknown zone or a first admin that's neither me nor an email", async () => {
     await bootstrap();
     const bad = [
       { name: " ", timezone: "Europe/Madrid", admin: "me" },
@@ -130,6 +131,26 @@ describe("the first run", () => {
     ];
     for (const b of bad) expect((await call("/admin-api/workspaces", b)).status, JSON.stringify(b)).toBe(400);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces").first("n")).toBe(0);
+  });
+
+  it("invites someone else as the new workspace's first admin, and opens it for the instance admin", async () => {
+    await bootstrap();
+    const made = await call("/admin-api/workspaces", {
+      name: "Demo Running",
+      timezone: "UTC",
+      admin: "Runner@Example.com",
+    });
+    expect(made.status).toBe(200);
+    const invite = made.json.invite as { url: string };
+    expect(invite.url).toMatch(/^https:\/\/bongsu\.test\/dashboard\/invite\/[A-Za-z0-9_-]{43}$/);
+    // nobody's a member until the invite is accepted; the instance admin works in it meanwhile, as its admin
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM memberships").first("n")).toBe(0);
+    expect(
+      await env.DB.prepare("SELECT workspace_id, email, role FROM invites").first<Record<string, unknown>>(),
+    ).toEqual({ workspace_id: made.json.id, email: "runner@example.com", role: "admin" });
+    expect((await call("/admin-api/state")).json).toMatchObject({ noWorkspace: false, role: "admin" });
+    const token = invite.url.split("/").pop();
+    expect((await call(`/admin-api/invite/${token}`)).json).toEqual({ workspace: "Demo Running", role: "admin" });
   });
 
   it("only an instance admin creates workspaces", async () => {

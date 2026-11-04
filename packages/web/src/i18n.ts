@@ -47,6 +47,21 @@ export const en = {
   "sign.deviceError":
     "This device couldn't create the passkey ({detail}: {message}). Your setup code still works: try again. Chrome with Google Password Manager as the passkey provider is the most reliable.",
 
+  // joining a workspace from an invite link (#/invite/<token>)
+  "invite.title": "Join {workspace}",
+  "invite.asRole": "You're invited as a {role}: the plan, the texts and approving.",
+  "invite.gone": "This invite doesn't work",
+  "invite.goneDetail":
+    "It was used already, revoked, or is older than 7 days. Ask the person who invited you for a new link.",
+  "invite.new": "New to Bongsu",
+  "invite.name": "Your name",
+  "invite.passkey": "Your passkey (this device's fingerprint, face or PIN) signs you in from now on; no password.",
+  "invite.create": "Create my passkey and join",
+  "invite.existing": "Already have a Bongsu account?",
+  "invite.existingDetail": "Sign in with its passkey: the account must have the email this invite was sent to.",
+  "invite.signIn": "Sign in with my passkey and join",
+  "invite.waiting": "Waiting for the passkey…",
+
   // empty lists and the no-account note
   "empty.scheduledBefore": "Nothing scheduled. Posts arrive from the inbox, from a draft, or from an agent: see",
   "empty.scheduledLink": "Drafts",

@@ -30,6 +30,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { LintRules } from "@bongsu/core/formats/caption-lint";
 import { isTimeZone, utcIso, zoneStamp } from "@bongsu/core/formats/time";
+import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
 import { offeredKinds, STORE_KINDS, type StoreKind, storeRows } from "@bongsu/core/media/index";
 import {
   finishDriveConnect,
@@ -51,10 +52,11 @@ import { platform, platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
-import { isInstanceAdmin } from "@bongsu/core/roles";
+import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
 import { callerZone, sessionWorkspace, setWorkspaceSettings, workspaceSettings } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
 import { scopesOf, withinAttempts } from "../agent/auth";
+import { AcceptError, inviteOptions, invitePreview, inviteVerify } from "../pwa/invite";
 import {
   createSession,
   endSession,
@@ -173,6 +175,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (e instanceof CryptoError) return c.json({ error: e.message }, 409);
       if (e instanceof NtfyError) return c.json({ error: e.message }, 400);
       if (e instanceof StoreError) return c.json({ error: e.message }, 400);
+      if (e instanceof MemberError) return c.json({ error: e.message }, e.status);
+      if (e instanceof AcceptError) return c.json(e.answer, e.status);
       throw e;
     }
   };
@@ -443,6 +447,29 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }
   });
 
+  // ---- accepting an invite (pwa/invite.ts), signed out: admins and editors join here, creators in the app
+  app.get(
+    "/admin-api/invite/:token",
+    wrap(async (c) => invitePreview(c.env, c.req.param("token") ?? "", nowS())),
+  );
+  app.post(
+    "/admin-api/invite/:token/options",
+    wrap(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS())),
+  );
+  app.post(
+    "/admin-api/invite/:token/verify",
+    wrap(async (c) => {
+      const j = await inviteVerify(c.env, verifiers, origin(c), c.req.param("token") ?? "", await body(c), nowS());
+      // a new person gets their recovery codes, as the first one did; either way they work in the workspace joined
+      const recoveryCodes = j.isNew ? await newRecoveryCodes(c, j.userId) : undefined;
+      const token = await createSession(c.env.DB, nowS(), { app: "dashboard", userId: j.userId });
+      await setSessionWorkspace(c.env.DB, token, j.workspaceId);
+      c.header("Set-Cookie", sessionCookie(token, undefined, "dashboard"));
+      await audit(c, "invite_accept", `user:${j.userId}`, { role: j.role, isNew: j.isNew }, j.userId, j.workspaceId);
+      return { signedIn: true, role: j.role, ...(recoveryCodes ? { recoveryCodes } : {}) };
+    }),
+  );
+
   // ---- everything else needs a dashboard session
   app.use("/admin-api/*", async (c, next) => {
     const token = readCookie(c.req.header("Cookie"), "dashboard");
@@ -689,6 +716,100 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (!r) throw new AdminError(404, "no active token of yours with that id");
       await audit(c, "token_revoke", id, { name: r.name });
       return { id, revoked: true };
+    }),
+  );
+
+  // ---- members and invites (MANAGING: the workspace's admins and the instance admins)
+  /** An invite's id in the lists: the start of its token's hash (the token itself is shown once, when made). */
+  const INVITE_ID = "substr(token_hash, 1, 16)";
+  app.get(
+    "/admin-api/members",
+    wrap(async (c) => {
+      const members = await c.env.DB.prepare(
+        `SELECT u.id, u.email, u.name, m.role FROM memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.workspace_id = ?1 ORDER BY m.role, u.email, u.id`,
+      )
+        .bind(ws(c))
+        .all<{ id: string; email: string | null; name: string | null; role: string }>();
+      const invites = await c.env.DB.prepare(
+        `SELECT ${INVITE_ID} AS id, email, role, expires_at FROM invites
+         WHERE workspace_id = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2 ORDER BY created_at`,
+      )
+        .bind(ws(c), nowS())
+        .all<{ id: string; email: string; role: string; expires_at: number }>();
+      return {
+        members: members.results.map((m) => ({ userId: m.id, email: m.email, name: m.name, role: m.role })),
+        invites: invites.results.map((i) => ({ id: i.id, email: i.email, role: i.role, expiresAt: i.expires_at })),
+      };
+    }),
+  );
+  /** A role from a request, or a 400. */
+  const roleOf = (v: unknown) => {
+    const r = String(v ?? "");
+    if (!isRole(r)) throw new AdminError(400, "role: admin, editor or creator");
+    return r;
+  };
+  app.post(
+    "/admin-api/invites",
+    wrap(async (c) => {
+      fresh(c);
+      const b = await body(c);
+      const email = String(b.email ?? "")
+        .trim()
+        .toLowerCase();
+      if (!EMAIL.test(email)) throw new AdminError(400, "enter an email address");
+      const role = roleOf(b.role);
+      // only this workspace's members are looked at: an admin learns nothing about other workspaces' people
+      const member = await c.env.DB.prepare(
+        "SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ?1 AND u.email = ?2",
+      )
+        .bind(ws(c), email)
+        .first();
+      if (member) throw new AdminError(409, "they're already a member: change their role instead");
+      const r = await createInvite(
+        c.env,
+        fetcher,
+        { workspaceId: ws(c), email, role, invitedBy: c.get("session").userId },
+        nowS(),
+      );
+      await audit(c, "invite_create", email, { role, mailed: r.mailed });
+      return r;
+    }),
+  );
+  app.post(
+    "/admin-api/invites/:id/revoke",
+    wrap(async (c) => {
+      fresh(c);
+      const r = await c.env.DB.prepare(
+        `UPDATE invites SET revoked_at = ?1 WHERE ${INVITE_ID} = ?2 AND workspace_id = ?3 AND used_at IS NULL
+           AND revoked_at IS NULL RETURNING email, role`,
+      )
+        .bind(nowS(), c.req.param("id") ?? "", ws(c))
+        .first<{ email: string; role: string }>();
+      if (!r) throw new AdminError(404, "no pending invite with that id");
+      await audit(c, "invite_revoke", r.email, { role: r.role });
+      return { revoked: true };
+    }),
+  );
+  app.post(
+    "/admin-api/members/:userId",
+    wrap(async (c) => {
+      fresh(c);
+      const userId = c.req.param("userId") ?? "";
+      const role = roleOf((await body(c)).role);
+      await setRole(c.env.DB, ws(c), userId, role, { instanceAdmin: c.get("instanceAdmin") });
+      await audit(c, "member_role", `user:${userId}`, { role });
+      return { userId, role };
+    }),
+  );
+  app.post(
+    "/admin-api/members/:userId/remove",
+    wrap(async (c) => {
+      fresh(c);
+      const userId = c.req.param("userId") ?? "";
+      await removeMember(c.env.DB, ws(c), userId, { instanceAdmin: c.get("instanceAdmin") });
+      await audit(c, "member_remove", `user:${userId}`, {});
+      return { userId, removed: true };
     }),
   );
 
@@ -1039,16 +1160,24 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const timezone = String(b.timezone ?? "");
       if (!name) throw new AdminError(400, "name the workspace");
       if (!isTimeZone(timezone)) throw new AdminError(400, "unknown time zone");
-      // an email will invite its first admin (createInvite, with the invites); until then, only "me"
-      if (b.admin !== "me") throw new AdminError(400, "the first admin: you, for now");
+      // its first admin: "me", or someone invited by email
+      const admin = String(b.admin ?? "")
+        .trim()
+        .toLowerCase();
+      if (admin !== "me" && !EMAIL.test(admin)) throw new AdminError(400, 'the first admin: "me" or an email');
       const me = c.get("session").userId;
       const id = await createWorkspace(c.env.DB, { name, timezone, createdBy: me }, nowS());
-      await addMember(c.env.DB, id, me, "admin", nowS());
-      // the creator works in it from the next request on
+      const invite =
+        admin === "me"
+          ? null
+          : await createInvite(c.env, fetcher, { workspaceId: id, email: admin, role: "admin", invitedBy: me }, nowS());
+      if (!invite) await addMember(c.env.DB, id, me, "admin", nowS());
+      // the creator works in it from the next request on (an instance admin acts in any workspace as its admin)
       await setSessionWorkspace(c.env.DB, c.get("token"), id);
       // the instance's row: the request may have no workspace, and the new one isn't where it was made
-      await audit(c, "workspace_create", id, { name, timezone, admin: "me" }, me, null);
-      return { id };
+      await audit(c, "workspace_create", id, { name, timezone, admin }, me, null);
+      if (invite) await audit(c, "invite_create", admin, { role: "admin", mailed: invite.mailed }, me, id);
+      return invite ? { id, invite } : { id };
     }),
   );
 

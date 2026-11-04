@@ -150,10 +150,10 @@ describe("the roles table", () => {
       expect((await call("/admin-api/members/x/role", { role: "admin" })).status, role).toBe(403);
       expect((await call("/admin-api/invites", { email: "a@example.com" })).status, role).toBe(403);
     }
-    // past the guard (the routes come with the Members page)
-    expect((await (await asRole("admin"))("/admin-api/invites", { email: "a@example.com" })).status).toBe(404);
+    // past the guard: the route's own check (a role is missing)
+    expect((await (await asRole("admin"))("/admin-api/invites", { email: "a@example.com" })).status).toBe(400);
     expect((await (await asInstanceAdmin("editor"))("/admin-api/invites", { email: "a@example.com" })).status).toBe(
-      404,
+      400,
     );
   });
 

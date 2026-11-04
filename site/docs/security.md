@@ -26,7 +26,10 @@ to dry run stops every outside write, also for a job already under way.
 A member's role (owner, admin, approver, editor, viewer) says what they can do: approving and resuming need `approve` /
 `resume`, changing the plan `plan` (`agent/auth.ts` `ROLE_SCOPES`), in the app as with a CLI token. In the dashboard,
 changing connections, accounts, OAuth apps, agent keys and settings takes an owner or admin; every member reads, and
-manages their own passkeys, devices and CLI tokens. Inviting and managing members is not available yet.
+manages their own passkeys, devices and CLI tokens. A workspace's admins invite people with a one-time link (7
+days; only its hash is kept), change roles and remove members; a removed member's sessions, CLI tokens and devices in
+that workspace go at once, and a workspace always keeps one admin. Accepting an invite never says whether its email
+already has an account.
 
 ## Agents
 

@@ -238,6 +238,10 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(keys.map((k) => k.id)).toEqual(["kb"]);
     const conns = (await as("bea", "dashboard", "/admin-api/connections")).json.connections as { id: string }[];
     expect(conns.map((c) => c.id)).toEqual(["c_b"]);
+    // its members and invites only (invites.test.ts tries the changes across workspaces)
+    const people = (await as("bea", "dashboard", "/admin-api/members")).json;
+    expect((people.members as { userId: string }[]).map((m) => m.userId)).toEqual(["bea"]);
+    expect(people.invites).toEqual([]);
     // the owner, in the default workspace, doesn't see B's
     const own = (await as("owner", "dashboard", "/admin-api/accounts")).json.accounts as { id: string }[];
     expect(own.map((a) => a.id)).not.toContain("b_shop");

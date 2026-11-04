@@ -1,5 +1,5 @@
 // The dashboard's sections (DESIGN.md, Layout). Each gets the instance state and `go` to move to another section.
-import { startRegistration } from "@simplewebauthn/browser";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import type { State } from "./App";
 import { api, manages, when, withFreshCheck } from "./api";
@@ -2072,6 +2072,240 @@ function CliTokens() {
   );
 }
 
+// ---- Members
+
+interface Member {
+  userId: string;
+  email: string | null;
+  name: string | null;
+  role: string;
+}
+interface Invite {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: number;
+}
+const ROLES = ["admin", "editor", "creator"] as const;
+const ROLE_HELP: Record<string, string> = {
+  admin: "Admin: everything in the workspace, including its people, connections and settings.",
+  editor: "Editor: the plan and the texts, in the dashboard and the app; can't approve.",
+  creator: "Creator: the plan, the texts and approving, in the Bongsu app.",
+};
+const roleName = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
+
+export function Members({ state }: Props) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{ members: Member[]; invites: Invite[] }>("members");
+  const [inviting, setInviting] = useState(false);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<string>("editor");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [made, setMade] = useState<{ url: string; email: string; mailed: boolean } | null>(null);
+  const { confirm, dialog } = useConfirm();
+  const invite = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await withFreshCheck(() => api<{ url: string; mailed: boolean }>("invites", { email, role }));
+      setMade({ ...r, email: email.trim().toLowerCase() });
+      setInviting(false);
+      setEmail("");
+      reload();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const changeRole = async (m: Member, next: string) => {
+    setErr(null);
+    try {
+      await withFreshCheck(() => api(`members/${encodeURIComponent(m.userId)}`, { role: next }));
+      toast({ ok: true, text: `${m.name ?? m.email ?? m.userId} is now ${next === "admin" ? "an" : "a"} ${next}.` });
+    } catch (e) {
+      setErr(errorText(e));
+    }
+    reload();
+  };
+  const me = state.user?.id;
+  return (
+    <Page
+      title="Members"
+      intro="The people who work in this workspace, and their roles. An invite is a link that works once, for 7 days."
+    >
+      {made && (
+        <Card>
+          <SecretOnce title={`Invite link for ${made.email}`} value={made.url} onDone={() => setMade(null)} />
+          <p className="muted small">
+            {made.mailed ? "It was emailed to them too." : "Send it to them yourself: email isn't set up here."}
+          </p>
+        </Card>
+      )}
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
+      <Card
+        title="People"
+        actions={
+          !inviting &&
+          !made && (
+            <button type="button" onClick={() => setInviting(true)}>
+              Invite someone
+            </button>
+          )
+        }
+      >
+        {inviting && (
+          <form onSubmit={invite} className="inset">
+            <Field label="Their email" help="The invite is for this email: it's how they sign in.">
+              {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
+            </Field>
+            <Field label="Role" help={ROLE_HELP[role]}>
+              {(p) => (
+                <select {...p} value={role} onChange={(e) => setRole(e.target.value)}>
+                  {ROLES.map((r) => (
+                    <option key={r} value={r}>
+                      {roleName(r)}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </Field>
+            <div className="actions">
+              <button type="button" onClick={() => setInviting(false)}>
+                Cancel
+              </button>
+              <button className="primary" type="submit" aria-disabled={busy}>
+                {busy ? "Making the link…" : "Make the invite link"}
+              </button>
+            </div>
+          </form>
+        )}
+        {!data ? (
+          <Loading error={error} retry={reload} />
+        ) : (
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th>Role</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.members.map((m) => (
+                  <tr key={m.userId}>
+                    <td>
+                      <div>
+                        {m.name ?? m.email ?? m.userId}
+                        {m.userId === me && <span className="muted"> (you)</span>}
+                      </div>
+                      {m.name && m.email && <div className="muted small">{m.email}</div>}
+                    </td>
+                    <td data-label="Role">
+                      <select
+                        aria-label={`Role of ${m.name ?? m.email ?? m.userId}`}
+                        value={m.role}
+                        onChange={(e) => changeRole(m, e.target.value)}
+                      >
+                        {ROLES.map((r) => (
+                          <option key={r} value={r}>
+                            {roleName(r)}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+                    <td className="right">
+                      <button
+                        type="button"
+                        className="link danger"
+                        onClick={() =>
+                          confirm({
+                            title: `Remove ${m.name ?? m.email ?? m.userId}?`,
+                            detail:
+                              "They leave this workspace at once: signed out of it, their CLI tokens for it revoked and their devices no longer notified. They can be invited again.",
+                            verb: "Remove",
+                            run: async () => {
+                              await withFreshCheck(() => api(`members/${encodeURIComponent(m.userId)}/remove`, {}));
+                              toast({ ok: true, text: `${m.name ?? m.email ?? m.userId} removed.` });
+                              reload();
+                            },
+                          })
+                        }
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+      {data && data.invites.length > 0 && (
+        <Card title="Pending invites">
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Email</th>
+                  <th>Role</th>
+                  <th>Expires</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.invites.map((i) => (
+                  <tr key={i.id}>
+                    <td>{i.email}</td>
+                    <td data-label="Role">{roleName(i.role)}</td>
+                    <td data-label="Expires" className="small">
+                      {when(i.expiresAt)}
+                    </td>
+                    <td className="right">
+                      <button
+                        type="button"
+                        className="link danger"
+                        onClick={() =>
+                          confirm({
+                            title: `Revoke the invite for ${i.email}?`,
+                            detail: "Its link stops working at once. You can invite them again.",
+                            verb: "Revoke",
+                            run: async () => {
+                              await withFreshCheck(() => api(`invites/${encodeURIComponent(i.id)}/revoke`, {}));
+                              toast({ ok: true, text: `Invite for ${i.email} revoked.` });
+                              reload();
+                            },
+                          })
+                        }
+                      >
+                        Revoke
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+      {dialog}
+    </Page>
+  );
+}
+
 // ---- Audit
 
 interface Entry {
@@ -2554,6 +2788,7 @@ export function FirstWorkspace({
   const [tz, setTz] = useState(here);
   const [adminIsMe, setAdminIsMe] = useState(true);
   const [email, setEmail] = useState("");
+  const [link, setLink] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
@@ -2578,6 +2813,20 @@ export function FirstWorkspace({
         </Card>
       </main>
     );
+  if (link)
+    return (
+      <main className="centered">
+        <Brand />
+        <Card>
+          <h1>Send them the invite</h1>
+          <p className="muted">
+            The workspace is ready. Its first admin joins with this link (it works once, for 7 days); meanwhile you can
+            set it up yourself.
+          </p>
+          <SecretOnce title={`Invite link for ${email.trim().toLowerCase()}`} value={link} onDone={onDone} />
+        </Card>
+      </main>
+    );
   const create = async (e: FormEvent) => {
     e.preventDefault();
     if (busy) return; // one workspace per click
@@ -2585,10 +2834,16 @@ export function FirstWorkspace({
     setErr(null);
     try {
       // making someone an admin asks for a fresh passkey check
-      await withFreshCheck(() =>
-        api("workspaces", { name, timezone: tz, admin: adminIsMe ? "me" : email.trim().toLowerCase() }),
+      const r = await withFreshCheck(() =>
+        api<{ invite?: { url: string } }>("workspaces", {
+          name,
+          timezone: tz,
+          admin: adminIsMe ? "me" : email.trim().toLowerCase(),
+        }),
       );
-      onDone();
+      // their link, to copy, before going on
+      if (r.invite) setLink(r.invite.url);
+      else onDone();
     } catch (e) {
       setErr(errorText(e));
     } finally {
@@ -2648,6 +2903,122 @@ export function FirstWorkspace({
             </button>
           </div>
         </form>
+      </Card>
+    </main>
+  );
+}
+
+// ---- Accepting an invite (/dashboard/invite/<token>), signed out
+
+/** Joining a workspace from an invite link: a name and a new passkey, or the passkey of the account the invite was
+ *  sent to. The page doesn't know (and the server doesn't say) whether that account exists: the person picks. */
+export function AcceptInvite({ token, onDone }: { token: string; onDone: () => void }) {
+  const [invite, setInvite] = useState<{ workspace: string; role: string } | null>(null);
+  const [gone, setGone] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const path = `invite/${encodeURIComponent(token)}`;
+  useEffect(() => {
+    document.title = "Join a workspace · Bongsu dashboard";
+    api<{ workspace: string; role: string }>(path)
+      .then(setInvite)
+      .catch((e) => setGone(errorText(e)));
+  }, [path]);
+  const join = async (mode: "new" | "existing") => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      type Ceremony = { options: never; challengeId: string };
+      const o = await api<{ register: Ceremony; signIn: Ceremony }>(`${path}/options`, { name });
+      const c = mode === "new" ? o.register : o.signIn;
+      const response =
+        mode === "new"
+          ? await startRegistration({ optionsJSON: c.options })
+          : await startAuthentication({ optionsJSON: c.options });
+      const r = await api<{ recoveryCodes?: string[] }>(`${path}/verify`, {
+        mode,
+        challengeId: c.challengeId,
+        response,
+        device: navigator.userAgent.includes("Mac") ? "Mac" : "this computer",
+      });
+      if (r.recoveryCodes) setCodes(r.recoveryCodes);
+      else onDone();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (codes)
+    return (
+      <main className="centered">
+        <Brand />
+        <Card>
+          <h1>You're in</h1>
+          <p className="muted">
+            If you ever lose every passkey, one of these codes signs you in (each works once). Keep them somewhere safe,
+            away from this computer.
+          </p>
+          <SecretOnce title="Recovery codes" lines={codes} onDone={onDone} />
+        </Card>
+      </main>
+    );
+  return (
+    <main className="centered">
+      <Brand />
+      <Card>
+        {gone ? (
+          <>
+            <h1>This invite doesn't work</h1>
+            <p className="muted">
+              It was used already, revoked, or is older than 7 days. Ask the person who invited you for a new link.
+            </p>
+          </>
+        ) : !invite ? (
+          <Loading />
+        ) : (
+          <>
+            <h1>Join {invite.workspace}</h1>
+            <p className="muted">
+              You're invited as {invite.role === "admin" ? "an" : "a"} {invite.role}. {ROLE_HELP[invite.role]}
+            </p>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                join("new");
+              }}
+            >
+              <h2>New to Bongsu</h2>
+              <Field label="Your name">
+                {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} autoComplete="name" />}
+              </Field>
+              <p className="help">
+                Your passkey (this device's fingerprint, face or PIN) signs you in from now on, with the email the
+                invite was sent to; no password.
+              </p>
+              <div className="actions stacked">
+                <button className="primary" type="submit" aria-disabled={busy}>
+                  {busy ? "Waiting for the passkey…" : "Create my passkey and join"}
+                </button>
+              </div>
+            </form>
+            <h2>Already have a Bongsu account?</h2>
+            <p className="muted">Sign in with its passkey: the account must have the email this invite was sent to.</p>
+            <div className="actions stacked">
+              <button type="button" onClick={() => join("existing")} aria-disabled={busy}>
+                Sign in with my passkey and join
+              </button>
+            </div>
+            {err && (
+              <p className="error" role="alert">
+                {err}
+              </p>
+            )}
+          </>
+        )}
       </Card>
     </main>
   );

@@ -5,6 +5,7 @@ import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { APP_ONLY, api, manages } from "./api";
 import { Guide, GuideLink } from "./docs";
 import {
+  AcceptInvite,
   Accounts,
   Audit,
   Connections,
@@ -13,6 +14,7 @@ import {
   GetStarted,
   Keys,
   Media,
+  Members,
   OAuthApps,
   Overview,
   Settings,
@@ -42,6 +44,7 @@ const SECTIONS = [
   ["videos", "Videos", Videos],
   ["devices", "Devices & passkeys", Devices],
   ["keys", "Keys & tokens", Keys],
+  ["members", "Members", Members],
   ["audit", "Audit", Audit],
   ["settings", "Settings", Settings],
 ] as const;
@@ -50,8 +53,8 @@ const INSTANCE = [
   ["media", "Media", Media],
   ["apps", "OAuth apps", OAuthApps],
 ] as const;
-/** What an editor doesn't see (the server refuses them too): the workspace's connections and settings. */
-const ADMINS_ONLY: readonly string[] = ["connections", "settings"];
+/** What an editor doesn't see (the server refuses them too): the workspace's connections, members and settings. */
+const ADMINS_ONLY: readonly string[] = ["connections", "members", "settings"];
 /** Pages reached from other pages, not the sidebar. */
 const HIDDEN = [["start", "Get started", GetStarted]] as const;
 
@@ -103,6 +106,18 @@ export function App() {
 
   // The guides read the same signed in or not (the first visit's setup token points at one).
   if (section === "docs") return <Guide name={location.pathname.split("/")[3] || "README"} />;
+  // An invite link, signed in or not: joining signs in as the person invited, in the workspace they join.
+  if (section === "invite")
+    return (
+      <AcceptInvite
+        token={location.pathname.split("/")[3] ?? ""}
+        onDone={() => {
+          history.replaceState(null, "", "/dashboard/");
+          setSection("");
+          load();
+        }}
+      />
+    );
   if (!state)
     return (
       <main className="centered">
