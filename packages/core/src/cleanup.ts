@@ -21,15 +21,17 @@ export async function cleanMedia(
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const store = mediaStore(env, deps.fetch);
   const out = { moved: 0, refused: [] as string[] };
+  /** The refusals per workspace: each workspace's devices hear of their own. */
+  const refusedIn = new Map<string, string[]>();
   let budget = FILES_PER_RUN;
 
   // Posted over a day ago and not handled yet: the files from its approval (or, without one, its media path).
   const due = await env.DB.prepare(
-    `SELECT p.item_key FROM posted p WHERE COALESCE(p.published_at, p.at) <= ?1
+    `SELECT p.item_key, p.workspace_id FROM posted p WHERE COALESCE(p.published_at, p.at) <= ?1
        AND NOT EXISTS (SELECT 1 FROM media_cleanup d WHERE d.item_key = p.item_key) ORDER BY COALESCE(p.published_at, p.at) LIMIT 4`,
   )
     .bind(nowS - MOVE_AFTER_S)
-    .all<{ item_key: string }>();
+    .all<{ item_key: string; workspace_id: string }>();
   if (due.results.length) {
     const approvals = await latestApprovals(
       env.DB,
@@ -42,7 +44,7 @@ export async function cleanMedia(
       )
         .bind(store.id, id, item, movedAt, refused)
         .run();
-    for (const { item_key } of due.results) {
+    for (const { item_key, workspace_id } of due.results) {
       let ids = (approvals.get(item_key)?.media ?? []).filter((m) => inStore(store, m)).map((m) => m.id);
       if (!ids.length) {
         const i = await getItem(env.DB, item_key);
@@ -78,6 +80,7 @@ export async function cleanMedia(
               if (!(err instanceof MediaRefused)) throw err;
               refused = err.message;
               out.refused.push(`${item_key}: ${refused}`);
+              refusedIn.set(workspace_id, [...(refusedIn.get(workspace_id) ?? []), `${item_key}: ${refused}`]);
             }
         }
         await mark(id, item_key, moved, refused);
@@ -85,8 +88,7 @@ export async function cleanMedia(
     }
   }
 
-  if (out.refused.length) {
-    await notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env).send(cleanupRefused(out.refused));
-  }
+  const note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env);
+  for (const [ws, refused] of refusedIn) await note.send(cleanupRefused(refused), ws);
   return out;
 }

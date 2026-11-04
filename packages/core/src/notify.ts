@@ -1,5 +1,7 @@
 // Notifications: always the audit log and the Worker log; also NOTIFY_URL when set (an ntfy.sh topic URL: the title
-// goes in the Title header, the text in the body), and Web Push to the owner's installed app.
+// goes in the Title header, the text in the body; the instance operator's own topic), and Web Push to the installed
+// app of the members of the workspace the notification is about: every message names its workspace, and nothing of
+// one workspace reaches another's devices.
 import type { Db } from "./db";
 import type { Env } from "./env";
 import { sendPush } from "./push";
@@ -11,8 +13,8 @@ export interface Action {
   url: string;
 }
 export interface Notifier {
-  /** Sends one message built in texts/notifications.ts. */
-  send(note: Note): Promise<void>;
+  /** Sends one message built in texts/notifications.ts, about one workspace (its devices get the push). */
+  send(note: Note, workspaceId: string): Promise<void>;
 }
 
 /** Where a notification opens, and its buttons (Android shows two at most): the target's own page, plus `extra`. */
@@ -36,11 +38,13 @@ export function actionsFor(target: string | undefined, extra: Action[] = []): { 
 export function notifier(db: Db, fetcher: typeof fetch, url: string | undefined, nowS: number, env?: Env): Notifier {
   const abs = (u: string) => (u.startsWith("/") ? `${(env?.PUBLIC_URL ?? "").replace(/\/$/, "")}${u}` : u);
   return {
-    async send({ title, text, target, actions: extra }) {
+    async send({ title, text, target, actions: extra }, workspaceId) {
       console.log(`notify: ${title}: ${text}`);
       await db
-        .prepare("INSERT INTO audit (at, actor, action, target, detail) VALUES (?1, 'cron', 'notify', ?2, ?3)")
-        .bind(nowS, target ?? null, JSON.stringify({ title, text }))
+        .prepare(
+          "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, ?4)",
+        )
+        .bind(nowS, target ?? null, JSON.stringify({ title, text }), workspaceId)
         .run();
       const a = actionsFor(target, extra);
       if (url) {
@@ -71,6 +75,7 @@ export function notifier(db: Db, fetcher: typeof fetch, url: string | undefined,
             actions: a.actions.map((x, i) => ({ action: `a${i}`, title: x.label, url: x.url })),
           },
           nowS,
+          { workspaceId },
         );
       }
     },

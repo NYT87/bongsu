@@ -79,6 +79,7 @@ export async function dailyDigest(
     const { title, text } = await buildDigest(env, deps.fetch, deps.now, ws);
     await notifier(env.DB, deps.fetch, env.NOTIFY_URL, Math.floor(deps.now.getTime() / 1000), env).send(
       digestNote(title, text),
+      workspace_id,
     );
     outcomes.push("sent");
   }

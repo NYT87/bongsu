@@ -109,7 +109,8 @@ export async function postResults(env: Env, deps: { fetch: typeof fetch; now: Da
     .bind(nowS - GIVE_UP_S, nowS - AFTER_S, PER_RUN)
     .all<Due>();
   if (!due.results.length) return { fetched: [] };
-  const lines: string[] = [];
+  /** Per workspace: its lines and items (one message each, to that workspace's devices). */
+  const byWs = new Map<string, { lines: string[]; keys: string[] }>();
   const fetched: string[] = [];
   for (const d of due.results) {
     const acc = accounts.get(d.account);
@@ -153,15 +154,16 @@ export async function postResults(env: Env, deps: { fetch: typeof fetch; now: Da
     const grew =
       (v.follows != null ? ` · +${v.follows} followers` : "") +
       (v.profile_visits != null ? ` · ${v.profile_visits} profile visits` : "");
-    lines.push(
+    const mine = byWs.get(acc.workspaceId) ?? { lines: [], keys: [] };
+    byWs.set(acc.workspaceId, mine);
+    mine.keys.push(d.item_key);
+    mine.lines.push(
       `${trial ? "Trial: " : ""}${d.title || nice(d.name ?? d.item_key)} @${d.account}: ${v.views ?? "?"} views${vs}, ${v.likes ?? 0} likes, ${v.comments ?? 0} comments, ${v.saves ?? 0} saves${grew}`,
     );
     fetched.push(d.item_key);
   }
-  if (lines.length) {
-    await notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env).send(
-      resultsNote(lines, fetched.length === 1 ? `results:${fetched[0]}` : undefined),
-    );
-  }
+  const note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env);
+  for (const [ws, { lines, keys }] of byWs)
+    await note.send(resultsNote(lines, keys.length === 1 ? `results:${keys[0]}` : undefined), ws);
   return { fetched };
 }

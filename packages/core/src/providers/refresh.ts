@@ -96,7 +96,10 @@ export async function refreshConnections(
   if (problems.length) {
     const say = (list: typeof problems) =>
       `${list.map((p) => p.text).join("\n")}\nPosting may stop for it: reconnect it in the dashboard (Connections).`;
-    await notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env).send(connectionProblem(say(problems)));
+    // each workspace hears of its own connections
+    const note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env);
+    for (const ws of new Set(problems.map((p) => p.workspaceId)))
+      await note.send(connectionProblem(say(problems.filter((p) => p.workspaceId === ws))), ws);
     // Email, per workspace, to its owners and admins. A mail failure is logged; the notice above already went out.
     try {
       const mail = mailer(env, deps.fetch);

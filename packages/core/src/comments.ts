@@ -53,7 +53,7 @@ export async function pollComments(
 
   const yt = new Map<string, { pr: Provider; me: string | null }>();
   const accounts = new Map((await listAccounts(env.DB, { all: true })).map((a) => [a.id, a]));
-  const fresh: { who: string; text: string; item: string | null }[] = [];
+  const fresh: { who: string; text: string; item: string | null; workspaceId: string }[] = [];
   for (const p of polls.results) {
     let found: Found[] = [];
     try {
@@ -106,14 +106,22 @@ export async function pollComments(
         )
         .first();
       if (r && !c.own)
-        fresh.push({ who: `${p.platform === "yt" ? "" : "@"}${c.author}`, text: c.text, item: p.item_key });
+        fresh.push({
+          who: `${p.platform === "yt" ? "" : "@"}${c.author}`,
+          text: c.text,
+          item: p.item_key,
+          workspaceId: p.workspace_id,
+        });
     }
     await env.DB.prepare("UPDATE comment_polls SET checked_at = ?1 WHERE media_id = ?2").bind(nowS, p.media_id).run();
   }
-  if (fresh.length) {
-    const lines = fresh.slice(0, 4).map((f) => `${f.who}: ${f.text.replace(/\s+/g, " ").slice(0, 90)}`);
-    if (fresh.length > 4) lines.push(`…and ${fresh.length - 4} more`);
-    await notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env).send(newComments(lines, fresh.length));
+  // one message per workspace: its members see only its comments
+  const note = notifier(env.DB, deps.fetch, env.NOTIFY_URL, nowS, env);
+  for (const ws of new Set(fresh.map((f) => f.workspaceId))) {
+    const mine = fresh.filter((f) => f.workspaceId === ws);
+    const lines = mine.slice(0, 4).map((f) => `${f.who}: ${f.text.replace(/\s+/g, " ").slice(0, 90)}`);
+    if (mine.length > 4) lines.push(`…and ${mine.length - 4} more`);
+    await note.send(newComments(lines, mine.length), ws);
   }
   return { checked: polls.results.length, fresh: fresh.length };
 }

@@ -335,13 +335,21 @@ describe("pause, resume and push", () => {
       (
         await post("/app-api/push/subscribe", {
           endpoint: "https://fcm.googleapis.com/fcm/send/abc",
-          keys: { p256dh: "p", auth: "a" },
+          keys: {
+            p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1XbjhazAkj7I99e8QcYP7DkM",
+            auth: "tBHItJI5svbpez7KI4CCXg",
+          },
           device: "Pixel",
         })
       ).status,
     ).toBe(200);
     expect(
-      (await post("/app-api/push/subscribe", { endpoint: "http://insecure", keys: { p256dh: "p", auth: "a" } })).status,
+      (
+        await post("/app-api/push/subscribe", {
+          endpoint: "http://insecure",
+          keys: { p256dh: "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4", auth: "tBHItJI5svbpez7KI4CCXg" },
+        })
+      ).status,
     ).toBe(400);
     expect((await env.DB.prepare("SELECT device FROM push_subs").all()).results).toEqual([{ device: "Pixel" }]);
   });
