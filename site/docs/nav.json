@@ -4,5 +4,8 @@
   { "section": "Connect your accounts", "pages": ["instagram-graph", "instagram-composio", "youtube", "drive", "s3"] },
   { "section": "Use Bongsu", "pages": ["the-app", "captions-and-checks", "the-dashboard"] },
   { "section": "Agents", "pages": ["connect-claude", "what-agents-can-do", "api-reference", "cli"] },
-  { "section": "Reference", "pages": ["configuration", "security", "platform-terms", "updating", "backups", "faq"] }
+  {
+    "section": "Reference",
+    "pages": ["configuration", "security", "platform-terms", "updating", "backups", "changelog", "faq"]
+  }
 ]
