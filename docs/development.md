@@ -57,9 +57,10 @@ database or a real account.
 scripts/dev-seed.sh --tz Asia/Seoul     # any IANA zone; default UTC
 ```
 
-It applies the migrations to the local D1 (`apps/cloudflare/.wrangler/`), adds two Instagram demo accounts
-(`demo_travel`, `demo_running`) with fake ids, sets the workspace's time zone, and prints an **agent key** and a
-one-time **setup code** for the app's first passkey (valid 15 minutes). The first run also writes
+It applies the migrations to the local D1 (`apps/cloudflare/.wrangler/`), creates a `default` workspace and its owner
+(`owner@example.com`, an instance admin with the `admin` role; a fresh database has neither), adds two Instagram demo
+accounts (`demo_travel`, `demo_running`) with fake ids, sets the workspace's time zone, and prints an **agent key** and
+a one-time **setup code** for the owner's first passkey (valid 15 minutes). The first run also writes
 `apps/cloudflare/.dev.vars` (git-ignored): `PUBLIC_URL=http://localhost:8787`, `RP_ID=localhost` (passkeys are tied to
 the hostname) and `DRY_RUN=1`. Run it again whenever you like: the demo rows are replaced, the previous dev key is
 revoked and a new key and code are printed.
