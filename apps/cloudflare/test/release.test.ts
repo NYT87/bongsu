@@ -9,7 +9,7 @@ import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneToUnix } from "@bongsu/core/formats/time";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, testEnv, World } from "./world";
+import { clearPlan, joinDefault, testEnv, UNBOOTSTRAP, World } from "./world";
 
 let w: World;
 let yt: YouTube;
@@ -350,6 +350,7 @@ describe("the dashboard", () => {
     })) as unknown as Verifiers["authentication"],
   };
   let e: Env;
+  let me = "";
   const jar: Record<string, string> = {};
   const call = async (path: string, body?: unknown) => {
     const cookie = Object.entries(jar)
@@ -374,18 +375,7 @@ describe("the dashboard", () => {
 
   beforeEach(async () => {
     for (const k of Object.keys(jar)) delete jar[k];
-    await env.DB.batch(
-      [
-        "DELETE FROM passkeys",
-        "DELETE FROM sessions",
-        "DELETE FROM challenges",
-        "DELETE FROM recovery_codes",
-        "DELETE FROM audit",
-        "DELETE FROM settings WHERE key = 'bootstrap_done'",
-        "DELETE FROM users WHERE id != 'owner'",
-        "UPDATE users SET email = NULL, name = 'Owner' WHERE id = 'owner'",
-      ].map((s) => env.DB.prepare(s)),
-    );
+    await env.DB.batch(UNBOOTSTRAP.map((s) => env.DB.prepare(s)));
     e = await testEnv(env, {
       SETUP_TOKEN: "setup-token-123",
       PUBLIC_URL: "https://bongsu.test",
@@ -402,6 +392,7 @@ describe("the dashboard", () => {
       device: "laptop",
     });
     expect(b.status).toBe(200);
+    me = await joinDefault(); // the bootstrap makes an instance admin in no workspace
   });
 
   it("lists each channel's uploads in the user's zone", async () => {
@@ -462,13 +453,13 @@ describe("the dashboard", () => {
     expect((await call("/admin-api/videos/v-pub/release", move)).status).toBe(409);
     expect((await call("/admin-api/videos/v-none/release", move)).status).toBe(404);
     // an editor too (not an instance admin meanwhile, whose rights are an admin's whatever the role)
-    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = 'owner'").run();
-    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = ?1").bind(me).run();
+    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = ?1").bind(me).run();
     try {
       expect((await call("/admin-api/videos/v-sched/release", { date: "2099-11-07", time: "19:00" })).status).toBe(200);
     } finally {
-      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
-      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = 'owner'").run();
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(me).run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(me).run();
     }
   });
 });

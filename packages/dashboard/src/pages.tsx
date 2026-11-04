@@ -4,7 +4,7 @@ import { type FormEvent, type ReactNode, useEffect, useState } from "react";
 import type { State } from "./App";
 import { api, manages, when, withFreshCheck } from "./api";
 import { GuideLink } from "./docs";
-import { Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
+import { Brand, Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
 
 interface Props {
   state: State;
@@ -2503,5 +2503,123 @@ export function Settings(_: Props) {
         </>
       )}
     </Page>
+  );
+}
+
+// ---- No workspace yet
+
+/** Signed in, in no workspace. An instance admin creates the first one (the first run: a name, a time zone and its
+ *  first admin, them or someone invited by email); anyone else waits for an invite. In place of the sidebar. */
+export function FirstWorkspace({
+  state,
+  onDone,
+  onSignOut,
+}: {
+  state: State;
+  onDone: () => void;
+  onSignOut: () => void;
+}) {
+  const zones = Intl.supportedValuesOf?.("timeZone") ?? [];
+  const here = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const [name, setName] = useState("");
+  const [tz, setTz] = useState(here);
+  const [adminIsMe, setAdminIsMe] = useState(true);
+  const [email, setEmail] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    document.title = "Your first workspace · Bongsu dashboard";
+  }, []);
+  const signOut = async () => {
+    await api("signout", {});
+    onSignOut();
+  };
+  if (!state.instanceAdmin)
+    return (
+      <main className="centered">
+        <Brand />
+        <Card>
+          <h1>You're not in a workspace yet</h1>
+          <p className="muted">An admin of a workspace invites you to it: ask them for an invite link.</p>
+          <div className="actions stacked">
+            <button type="button" className="link" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
+        </Card>
+      </main>
+    );
+  const create = async (e: FormEvent) => {
+    e.preventDefault();
+    if (busy) return; // one workspace per click
+    setBusy(true);
+    setErr(null);
+    try {
+      // making someone an admin asks for a fresh passkey check
+      await withFreshCheck(() =>
+        api("workspaces", { name, timezone: tz, admin: adminIsMe ? "me" : email.trim().toLowerCase() }),
+      );
+      onDone();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="centered">
+      <Brand />
+      <Card>
+        <h1>Create your first workspace</h1>
+        <p className="muted">
+          A workspace holds the accounts, the plan and the people who work on them. You can make more later.
+        </p>
+        <form onSubmit={create}>
+          <Field label="Name" help="Who or what it's for: a brand, a client, a team.">
+            {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />}
+          </Field>
+          <Field label="Time zone" help="How the plan's times are shown and entered. Each person can pick their own.">
+            {(p) => (
+              <select {...p} value={tz} onChange={(e) => setTz(e.target.value)}>
+                {(zones.includes(tz) ? zones : [tz, ...zones]).map((z) => (
+                  <option key={z}>{z}</option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <fieldset>
+            <legend>Its first admin</legend>
+            <label className="check">
+              <input type="radio" name="admin" checked={adminIsMe} onChange={() => setAdminIsMe(true)} />
+              <span>Me</span>
+            </label>
+            <label className="check">
+              <input type="radio" name="admin" checked={!adminIsMe} onChange={() => setAdminIsMe(false)} />
+              <span>
+                Someone else <span className="muted">who gets an invite link</span>
+              </span>
+            </label>
+          </fieldset>
+          {!adminIsMe && (
+            <Field label="Their email">
+              {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
+            </Field>
+          )}
+          {err && (
+            <p className="error" role="alert">
+              {err}
+            </p>
+          )}
+          <div className="actions stacked">
+            <button className="primary" type="submit" aria-disabled={busy}>
+              {busy ? "Creating…" : "Create the workspace"}
+            </button>
+            <button type="button" className="link" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
+        </form>
+      </Card>
+    </main>
   );
 }

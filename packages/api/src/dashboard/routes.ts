@@ -46,6 +46,7 @@ import {
   waitingApprovalsIn,
 } from "@bongsu/core/media/manage";
 import { NtfyError, postNtfy, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
+import { addMember, createUser, createWorkspace, newUserId } from "@bongsu/core/people";
 import { platform, platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
@@ -62,6 +63,7 @@ import {
   readCookie,
   type Session,
   sessionCookie,
+  setSessionWorkspace,
   validSession,
 } from "../pwa/session";
 import {
@@ -134,7 +136,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   };
   /** The signed-in user's workspace (set with the session; the default one before sign-in). */
   const ws = (c: C) => c.get("workspace") ?? DEFAULT_WORKSPACE;
-  const audit = (c: C, action: string, target: string | null, detail: unknown, userId?: string, workspaceId?: string) =>
+  /** `workspaceId` null: an instance-level row (the bootstrap, a new workspace), in no workspace. */
+  const audit = (
+    c: C,
+    action: string,
+    target: string | null,
+    detail: unknown,
+    userId?: string,
+    workspaceId?: string | null,
+  ) =>
     c.env.DB.prepare(
       "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )
@@ -145,7 +155,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         target,
         JSON.stringify(detail),
         userId ?? c.get("session")?.userId ?? null,
-        workspaceId ?? ws(c),
+        workspaceId === undefined ? ws(c) : workspaceId,
       )
       .run();
   const wrap = (fn: (c: C) => Promise<unknown>) => async (c: C) => {
@@ -214,6 +224,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         user,
         instanceAdmin: !!s && (where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId))),
         role: where?.role ?? null,
+        // signed in, but in no workspace yet: the first run's (or a removed member's) "create one" / "ask for one"
+        noWorkspace: !!s && !where,
         dryRun: c.env.DRY_RUN !== "0",
         publicUrl: origin(c),
       };
@@ -237,13 +249,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           .trim()
           .slice(0, 80) || null;
       if (!EMAIL.test(email)) throw new AdminError(400, "enter an email address");
-      // the first person is the owner (the user the PWA already knows as "owner")
+      // the first person is an instance admin, made when their passkey is (verify): the id is handed out now, since
+      // the passkey names its user
+      const id = newUserId();
       return registrationOptions(
         c.env.DB,
         c.env.RP_ID,
         nowS(),
-        { bootstrap: true, email, name },
-        { id: "owner", email, name },
+        { bootstrap: true, userId: id, email, name },
+        { id, email, name },
       );
     }),
   );
@@ -252,7 +266,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/bootstrap/verify",
     wrap(async (c) => {
       const b = await body(c);
-      let claimed: { email?: string; name?: string | null } = {};
+      let claimed: { userId?: string; email?: string; name?: string | null } = {};
       const ok = await verifyRegistration(
         c.env.DB,
         verifiers,
@@ -263,26 +277,31 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         String(b.device ?? "laptop").slice(0, 60),
         nowS(),
         async (data) => {
-          const d = data as { bootstrap?: boolean; email?: string; name?: string | null } | null;
-          if (!d?.bootstrap) return false;
+          const d = data as { bootstrap?: boolean; userId?: string; email?: string; name?: string | null } | null;
+          if (!d?.bootstrap || !d.userId || !d.email) return false;
           // only once, even if two tabs race: the first to set the flag wins
           const won = await c.env.DB.prepare(
             "INSERT INTO settings (key, value, updated_at) VALUES ('bootstrap_done', ?1, ?2) ON CONFLICT (key) DO NOTHING RETURNING key",
           )
             .bind(JSON.stringify({ email: d.email }), nowS())
             .first();
+          if (!won) return false;
+          // before the passkey, which names them; in no workspace: they create the first one (POST /admin-api/workspaces)
+          await createUser(
+            c.env.DB,
+            { id: d.userId, email: d.email, name: d.name ?? null, instanceAdmin: true },
+            nowS(),
+          );
           claimed = d;
-          return !!won;
+          return true;
         },
-        "owner",
       );
-      if (!ok) throw new AdminError(400, "the passkey couldn't be created, or the instance was set up meanwhile");
-      await c.env.DB.prepare("UPDATE users SET email = ?1, name = COALESCE(?2, name) WHERE id = 'owner'")
-        .bind(claimed.email ?? null, claimed.name ?? null)
-        .run();
-      const recoveryCodes = await newRecoveryCodes(c, "owner");
-      await signIn(c, "owner");
-      await audit(c, "bootstrap", "user:owner", { email: claimed.email }, "owner");
+      if (!ok || !claimed.userId)
+        throw new AdminError(400, "the passkey couldn't be created, or the instance was set up meanwhile");
+      const id = claimed.userId;
+      const recoveryCodes = await newRecoveryCodes(c, id);
+      await signIn(c, id);
+      await audit(c, "bootstrap", `user:${id}`, { email: claimed.email }, id, null);
       return { signedIn: true, recoveryCodes };
     }),
   );
@@ -998,6 +1017,32 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         // the OAuth apps already set: their providers' Connect buttons work
         appsReady: (await c.env.DB.prepare("SELECT id FROM oauth_apps").all<{ id: string }>()).results.map((r) => r.id),
       };
+    }),
+  );
+
+  // ---- workspaces (instance admins: INSTANCE)
+  // A new workspace and its first admin: "me" (the instance admin, who then works in it), or an email to invite.
+  app.post(
+    "/admin-api/workspaces",
+    wrap(async (c) => {
+      fresh(c);
+      const b = await body(c);
+      const name = String(b.name ?? "")
+        .trim()
+        .slice(0, 80);
+      const timezone = String(b.timezone ?? "");
+      if (!name) throw new AdminError(400, "name the workspace");
+      if (!isTimeZone(timezone)) throw new AdminError(400, "unknown time zone");
+      // an email will invite its first admin (createInvite, with the invites); until then, only "me"
+      if (b.admin !== "me") throw new AdminError(400, "the first admin: you, for now");
+      const me = c.get("session").userId;
+      const id = await createWorkspace(c.env.DB, { name, timezone, createdBy: me }, nowS());
+      await addMember(c.env.DB, id, me, "admin", nowS());
+      // the creator works in it from the next request on
+      await setSessionWorkspace(c.env.DB, c.get("token"), id);
+      // the instance's row: the request may have no workspace, and the new one isn't where it was made
+      await audit(c, "workspace_create", id, { name, timezone, admin: "me" }, me, null);
+      return { id };
     }),
   );
 

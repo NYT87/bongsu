@@ -652,6 +652,34 @@ export const Q = "channels/vlogs/INSTAGRAM";
 export const MD5 = "0123456789abcdef0123456789abcdef";
 export const PLAN_TABLES = ["plan_items", "approvals", "posted", "shorts_comments", "shorts_commented", "settings"];
 
+/** The dashboard's bootstrap makes an instance admin in no workspace (the first run, first-run.test.ts): the tests'
+ *  bootstrapped user also works in `default`, as its admin. Their id. */
+export async function joinDefault(email = "owner@example.com"): Promise<string> {
+  const id = await env.DB.prepare("SELECT id FROM users WHERE email = ?1").bind(email).first<string>("id");
+  if (!id) throw new Error(`no user ${email}`);
+  await env.DB.prepare(
+    "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', ?1, 'admin', 0) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'admin'",
+  )
+    .bind(id)
+    .run();
+  return id;
+}
+
+/** What a test's bootstrap leaves behind for the next: the users it made (not the seeded owner) and their sign-ins. */
+export const UNBOOTSTRAP = [
+  "DELETE FROM passkeys",
+  "DELETE FROM sessions",
+  "DELETE FROM challenges",
+  "DELETE FROM setup_codes",
+  "DELETE FROM recovery_codes",
+  "DELETE FROM api_keys",
+  "DELETE FROM audit",
+  "DELETE FROM settings WHERE key = 'bootstrap_done'",
+  "DELETE FROM memberships WHERE user_id != 'owner'",
+  "DELETE FROM users WHERE id != 'owner'",
+  "UPDATE users SET email = NULL, name = 'Owner' WHERE id = 'owner'",
+];
+
 export async function clearPlan() {
   await env.DB.batch(PLAN_TABLES.map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
 }

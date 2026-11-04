@@ -12,7 +12,7 @@ import { scanInbox } from "@bongsu/core/inbox";
 import { mediaStores } from "@bongsu/core/media/index";
 import { CHECK_EVERY_S, checkStores } from "@bongsu/core/media/manage";
 import { beforeEach, describe, expect, it } from "vitest";
-import { seedS3Store, TEST_S3_KEYS, TEST_S3_SETTINGS, testEnv, World } from "./world";
+import { joinDefault, seedS3Store, TEST_S3_KEYS, TEST_S3_SETTINGS, testEnv, UNBOOTSTRAP, World } from "./world";
 
 const fake: Verifiers = {
   registration: (async (o: { response: { id: string } }) => ({
@@ -57,18 +57,13 @@ beforeEach(async () => {
   w = new World();
   await env.DB.batch(
     [
-      "DELETE FROM passkeys",
-      "DELETE FROM sessions",
-      "DELETE FROM challenges",
-      "DELETE FROM recovery_codes",
-      "DELETE FROM audit",
+      ...UNBOOTSTRAP,
       "DELETE FROM oauth_apps",
       "DELETE FROM oauth_states",
       "DELETE FROM approvals",
       "DELETE FROM drafts",
       "DELETE FROM inbox_seen",
       "DELETE FROM settings",
-      "UPDATE users SET email = NULL WHERE id = 'owner'",
     ].map((s) => env.DB.prepare(s)),
   );
   e = await testEnv(env, {
@@ -78,6 +73,7 @@ beforeEach(async () => {
   } as Partial<Env>);
   const o = await call("/admin-api/bootstrap/options", { token: "setup-token-123", email: "owner@example.com" });
   await call("/admin-api/bootstrap/verify", { challengeId: o.json.challengeId, response: { id: "laptop-key" } });
+  await joinDefault(); // the bootstrap makes an instance admin in no workspace
 });
 
 describe("the dashboard's Media page", () => {

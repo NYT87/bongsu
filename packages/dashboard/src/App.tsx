@@ -9,6 +9,7 @@ import {
   Audit,
   Connections,
   Devices,
+  FirstWorkspace,
   GetStarted,
   Keys,
   Media,
@@ -28,6 +29,8 @@ export interface State {
   instanceAdmin: boolean;
   /** The role in the workspace: admin, editor or creator (who uses the app instead). */
   role: string | null;
+  /** Signed in, in no workspace: the first run's "create one" (an instance admin), or waiting for an invite. */
+  noWorkspace: boolean;
   dryRun: boolean;
   publicUrl: string;
 }
@@ -62,6 +65,11 @@ export function App() {
   const [state, setState] = useState<State | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [section, setSection] = useState(sectionOf);
+  // the first page once in a workspace: Get started
+  const toStart = () => {
+    history.replaceState(null, "", "/dashboard/start");
+    setSection("start");
+  };
   // a 403 with `app: true` (api.ts): this person is a creator, who works in the app
   const [appOnly, setAppOnly] = useState(false);
   useEffect(() => {
@@ -107,14 +115,24 @@ export function App() {
       <Bootstrap
         state={state}
         onDone={() => {
-          // the new owner lands on Get started
-          history.replaceState(null, "", "/dashboard/start");
-          setSection("start");
+          // the instance admin creates the first workspace (state.noWorkspace), then lands on Get started
+          toStart();
           load();
         }}
       />
     );
   if (!state.signedIn) return <SignIn onDone={load} />;
+  if (state.noWorkspace)
+    return (
+      <FirstWorkspace
+        state={state}
+        onDone={() => {
+          toStart();
+          load();
+        }}
+        onSignOut={load}
+      />
+    );
   if (appOnly || (state.role === "creator" && !state.instanceAdmin))
     return (
       <AppOnly
@@ -321,8 +339,8 @@ function Bootstrap({ state, onDone }: { state: State; onDone: () => void }) {
       <Card>
         <h1>Set up Bongsu</h1>
         <p className="muted">
-          You're the first one here: create the owner. Your passkey (this device's fingerprint, face or PIN) signs you
-          in from now on; no password.
+          You're the first one here: you'll run this instance and create its workspaces. Your passkey (this device's
+          fingerprint, face or PIN) signs you in from now on; no password.
         </p>
         {!state.setupTokenSet && (
           <p className="error" role="alert">

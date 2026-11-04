@@ -118,7 +118,16 @@ describe("Bongsu on Postgres (PGlite)", () => {
       response: { id: "laptop" },
     });
     expect(v.status).toBe(200);
-    expect((await call("/admin-api/state")).json).toMatchObject({ signedIn: true, bootstrapNeeded: false });
+    expect((await call("/admin-api/state")).json).toMatchObject({
+      signedIn: true,
+      bootstrapNeeded: false,
+      instanceAdmin: true,
+      noWorkspace: true,
+    });
+    // the first run: the instance admin creates the first workspace, and works in it
+    const made = await call("/admin-api/workspaces", { name: "Demo Travel", timezone: "Asia/Seoul", admin: "me" });
+    expect(made.status).toBe(200);
+    expect((await call("/admin-api/state")).json).toMatchObject({ noWorkspace: false, role: "admin" });
     const overview = await call("/admin-api/overview");
     expect(overview.json).toMatchObject({ accounts: 0, keys: 0, passkeys: 1 });
     await call("/admin-api/settings", { timezone: "Asia/Seoul", digestHour: 7 });

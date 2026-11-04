@@ -8,7 +8,7 @@ import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, testEnv, World } from "./world";
+import { clearPlan, joinDefault, testEnv, UNBOOTSTRAP, World } from "./world";
 
 // A stand-in authenticator: the credential id is whatever the "browser" says (response.id).
 const fake: Verifiers = {
@@ -26,6 +26,8 @@ const fake: Verifiers = {
 
 let e: Env;
 let w: World;
+/** The bootstrapped user's id (an instance admin, also the default workspace's admin here). */
+let me = "";
 const jar: Record<string, string> = {};
 async function call(path: string, body?: unknown, which: "admin" | "pwa" = "admin") {
   const routes = which === "admin" ? adminRoutes(w.fetch, fake) : appRoutes(w.fetch, fake);
@@ -57,11 +59,14 @@ const signOut = () => {
 async function bootstrap(email = "owner@example.com") {
   const o = await call("/admin-api/bootstrap/options", { token: "setup-token-123", email, name: "Owner" });
   expect(o.status).toBe(200);
-  return call("/admin-api/bootstrap/verify", {
+  const r = await call("/admin-api/bootstrap/verify", {
     challengeId: o.json.challengeId,
     response: { id: "laptop-key" },
     device: "laptop",
   });
+  // the bootstrap makes an instance admin in no workspace (first-run.test.ts); here they work in the default one
+  if (r.status === 200) me = await joinDefault(email);
+  return r;
 }
 async function signIn(email: string, credential: string) {
   const o = await call("/admin-api/signin/options", { email });
@@ -71,21 +76,7 @@ async function signIn(email: string, credential: string) {
 beforeEach(async () => {
   signOut();
   w = new World();
-  await env.DB.batch(
-    [
-      "DELETE FROM passkeys",
-      "DELETE FROM sessions",
-      "DELETE FROM challenges",
-      "DELETE FROM setup_codes",
-      "DELETE FROM recovery_codes",
-      "DELETE FROM api_keys",
-      "DELETE FROM audit",
-      "DELETE FROM rate_limits",
-      "DELETE FROM settings WHERE key = 'bootstrap_done'",
-      "DELETE FROM users WHERE id != 'owner'",
-      "UPDATE users SET email = NULL, name = 'Owner' WHERE id = 'owner'",
-    ].map((s) => env.DB.prepare(s)),
-  );
+  await env.DB.batch([...UNBOOTSTRAP, "DELETE FROM rate_limits"].map((s) => env.DB.prepare(s)));
   e = await testEnv(env, {
     SETUP_TOKEN: "setup-token-123",
     PUBLIC_URL: "https://bongsu.test",
@@ -110,9 +101,10 @@ describe("bootstrap", () => {
     expect((await call("/admin-api/state")).json).toMatchObject({
       bootstrapNeeded: false,
       signedIn: true,
-      user: { id: "owner", email: "owner@example.com", name: "Owner" },
+      user: { id: me, email: "owner@example.com", name: "Owner" },
     });
-    expect(await env.DB.prepare("SELECT user_id FROM passkeys WHERE id = 'laptop-key'").first("user_id")).toBe("owner");
+    expect(me).toMatch(/^u_[0-9a-f]{16}$/);
+    expect(await env.DB.prepare("SELECT user_id FROM passkeys WHERE id = 'laptop-key'").first("user_id")).toBe(me);
     // used up: a second attempt is refused, even with the right token
     signOut();
     expect(
@@ -165,9 +157,9 @@ describe("sign-in", () => {
     const sixth = await tryCode("Owner@Example.com ", codes[0]);
     expect(sixth.status).toBe(429);
     expect(sixth.json.error).toMatch(/too many tries/);
-    const left = await env.DB.prepare(
-      "SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = 'owner' AND used_at IS NULL",
-    ).first<{ n: number }>();
+    const left = await env.DB.prepare("SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ?1 AND used_at IS NULL")
+      .bind(me)
+      .first<{ n: number }>();
     expect(left?.n).toBe(10);
     // an unknown email is limited the same way, so the answer says nothing about which emails exist
     for (let i = 0; i < 5; i++) expect((await tryCode("nobody@example.com", codes[1])).status).toBe(401);
@@ -219,8 +211,10 @@ describe("signed in", () => {
     await call("/admin-api/settings", { timezone: "Asia/Seoul", digestHour: 8 });
     // the device: a session in the app, as adding a device makes
     await env.DB.prepare(
-      "INSERT INTO sessions (token_hash, created_at, expires_at, user_id, app, verified_at) VALUES ('t-phone', 0, 9999999999, 'owner', 'pwa', 0)",
-    ).run();
+      "INSERT INTO sessions (token_hash, created_at, expires_at, user_id, app, verified_at) VALUES ('t-phone', 0, 9999999999, ?1, 'pwa', 0)",
+    )
+      .bind(me)
+      .run();
     await env.DB.prepare(
       "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('s3', 1, '{}', 'ok', 0)",
     ).run();
@@ -291,16 +285,16 @@ describe("signed in", () => {
     // it acts as its person, with the owner's rights (approve and resume included)
     const now = Math.floor(Date.now() / 1000);
     const caller = await authenticate(env.DB, `Bearer ${token}`, now);
-    expect(caller).toMatchObject({ userId: "owner", workspaceId: "default" });
+    expect(caller).toMatchObject({ userId: me, workspaceId: "default" });
     expect(caller?.scopes).toContain("approve");
     const v1 = (t: string) =>
       exports.default.fetch("https://scheduler.test/v1/status", { headers: { Authorization: `Bearer ${t}` } });
     expect((await v1(token)).status).toBe(200);
     // a smaller role, smaller rights: an editor's token edits but never approves, pauses or resumes; a creator's
     // approves. An instance admin's is an admin's whatever the role, so the owner stops being one meanwhile.
-    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = 'owner'").run();
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = ?1").bind(me).run();
     try {
-      await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
+      await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = ?1").bind(me).run();
       expect((await authenticate(env.DB, `Bearer ${token}`, now))?.scopes).toEqual([
         "read",
         "draft",
@@ -308,16 +302,14 @@ describe("signed in", () => {
         "reschedule",
         "metrics",
       ]);
-      await env.DB.prepare("UPDATE memberships SET role = 'creator' WHERE user_id = 'owner'").run();
+      await env.DB.prepare("UPDATE memberships SET role = 'creator' WHERE user_id = ?1").bind(me).run();
       expect((await authenticate(env.DB, `Bearer ${token}`, now))?.scopes).toEqual(listed.json.rights);
       // no membership, no access
-      await env.DB.prepare("DELETE FROM memberships WHERE user_id = 'owner'").run();
+      await env.DB.prepare("DELETE FROM memberships WHERE user_id = ?1").bind(me).run();
       expect(await authenticate(env.DB, `Bearer ${token}`, now)).toBeNull();
     } finally {
-      await env.DB.prepare(
-        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', 0) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'admin'",
-      ).run();
-      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = 'owner'").run();
+      await joinDefault();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(me).run();
     }
     // expired
     expect(await authenticate(env.DB, `Bearer ${token}`, now + 31 * 86400)).toBeNull();
@@ -351,7 +343,7 @@ describe("signed in", () => {
       (k) => k.name === "laptop agent",
     );
     expect(listed).toEqual([
-      expect.objectContaining({ name: "laptop agent", scopes: ["read", "plan"], created_by: "owner" }),
+      expect.objectContaining({ name: "laptop agent", scopes: ["read", "plan"], created_by: me }),
     ]);
     expect(JSON.stringify(listed)).not.toContain(key); // never shown again
     const status = await exports.default.fetch("https://scheduler.test/v1/status", {
@@ -380,7 +372,7 @@ describe("signed in", () => {
     );
     expect(v.status).toBe(200);
     expect(jar.bongsu_session).toBeTruthy(); // signed in to the PWA
-    expect(await env.DB.prepare("SELECT user_id FROM passkeys WHERE id = 'phone-key'").first("user_id")).toBe("owner");
+    expect(await env.DB.prepare("SELECT user_id FROM passkeys WHERE id = 'phone-key'").first("user_id")).toBe(me);
     expect((await call(`/admin-api/devices/${p.json.id}`)).json).toEqual({ used: true, expired: false });
     const keys = (await call("/admin-api/passkeys")).json.passkeys as { name: string }[];
     expect(keys.map((k) => k.name)).toEqual(["laptop", "Phone"]);
@@ -430,7 +422,7 @@ describe("signed in", () => {
     expect(conns.kinds.map((k) => k.provider)).toEqual(expect.arrayContaining(["instagram", "composio", "youtube"]));
     const audit = (await call("/admin-api/audit")).json.entries as { action: string; actor: string }[];
     expect(audit.map((x) => x.action)).toEqual(expect.arrayContaining(["bootstrap", "account_update", "settings"]));
-    expect(audit[0].actor).toBe("user:owner");
+    expect(audit[0].actor).toBe(`user:${me}`);
   });
 
   it("caption rules per account: the defaults shown, an override stored, bad values refused, editors read-only", async () => {
@@ -469,14 +461,14 @@ describe("signed in", () => {
     const audit = (await call("/admin-api/audit")).json.entries as { action: string; target: string }[];
     expect(audit.find((x) => x.action === "account_update")?.target).toBe("demo_travel");
     // an editor reads them; changing them is an admin's (and an instance admin's: the owner stops being one meanwhile)
-    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = 'owner'").run();
-    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id = ?1").bind(me).run();
+    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = ?1").bind(me).run();
     try {
       expect((await call("/admin-api/accounts/demo_travel", { captionRules: { hashtagMax: 3 } })).status).toBe(403);
       expect((await call("/admin-api/accounts")).status).toBe(200);
     } finally {
-      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
-      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = 'owner'").run();
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(me).run();
+      await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(me).run();
     }
   });
 

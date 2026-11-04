@@ -989,7 +989,8 @@ button.link.inline {
     width: 44px;
     min-height: 44px;
   }
-  .check input[type="checkbox"] {
+  .check input[type="checkbox"],
+  .check input[type="radio"] {
     width: 22px;
     height: 22px;
   }

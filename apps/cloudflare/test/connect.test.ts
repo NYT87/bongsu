@@ -6,7 +6,7 @@ import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { connectionSecret, listAccounts } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
 import { beforeEach, describe, expect, it } from "vitest";
-import { testEnv, World } from "./world";
+import { joinDefault, testEnv, UNBOOTSTRAP, World } from "./world";
 
 const fake: Verifiers = {
   registration: (async (o: { response: { id: string } }) => ({
@@ -24,6 +24,8 @@ const fake: Verifiers = {
 let e: Env;
 let w: World;
 let cookie = "";
+/** The bootstrapped user (an instance admin, the default workspace's admin here). */
+let me = "";
 async function call(path: string, body?: unknown, withCookie = true) {
   const r = await adminRoutes(w.fetch, fake).request(
     `https://bongsu.test${path}`,
@@ -57,15 +59,9 @@ beforeEach(async () => {
   w = new World();
   await env.DB.batch(
     [
-      "DELETE FROM passkeys",
-      "DELETE FROM sessions",
-      "DELETE FROM challenges",
-      "DELETE FROM recovery_codes",
-      "DELETE FROM audit",
+      ...UNBOOTSTRAP,
       "DELETE FROM oauth_apps",
       "DELETE FROM oauth_states",
-      "DELETE FROM settings WHERE key = 'bootstrap_done'",
-      "UPDATE users SET email = NULL WHERE id = 'owner'",
       // what earlier tests connected (testEnv seeds the demo accounts and connections again)
       "DELETE FROM accounts WHERE id NOT IN ('demo_travel', 'demo_running', 'demo_cycling', 'main', 'vlogs')",
       "UPDATE accounts SET connection_id = NULL",
@@ -80,6 +76,7 @@ beforeEach(async () => {
   } as Partial<Env>);
   const o = await call("/admin-api/bootstrap/options", { token: "setup-token-123", email: "owner@example.com" });
   await call("/admin-api/bootstrap/verify", { challengeId: o.json.challengeId, response: { id: "laptop-key" } });
+  me = await joinDefault(); // the bootstrap makes an instance admin in no workspace
 });
 
 describe("OAuth apps", () => {
@@ -159,7 +156,7 @@ describe("Connect Instagram (Instagram Login)", () => {
     expect(c?.expires_at).toBeGreaterThan(Date.now() / 1000 + 59 * 86400);
     expect(c?.status).toBe("ok");
     const audit = await env.DB.prepare("SELECT actor, action FROM audit WHERE action = 'connect'").first();
-    expect(audit).toEqual({ actor: "user:owner", action: "connect" });
+    expect(audit).toEqual({ actor: `user:${me}`, action: "connect" });
 
     // the state works once
     const again = await callback("instagram", { code: "ig-code", state });
