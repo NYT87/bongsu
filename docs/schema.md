@@ -101,7 +101,7 @@ Who did what, when: approvals, connections, keys, settings, notifications.
 |---|---|---|---|---|
 | `id` | serial | no |  | primary key |
 | `at` | timestamp | no | now |  |
-| `actor` | text | no |  | 'cron', 'owner', or an api key id |
+| `actor` | text | no |  | 'cron', 'user:<id>' (a person) or 'key:<id>' (an agent key) |
 | `action` | text | no |  |  |
 | `target` | text | yes |  |  |
 | `detail` | json | yes |  | JSON |

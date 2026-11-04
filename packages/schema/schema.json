@@ -233,7 +233,7 @@
         "actor": {
           "type": "text",
           "notNull": true,
-          "description": "'cron', 'owner', or an api key id"
+          "description": "'cron', 'user:<id>' (a person) or 'key:<id>' (an agent key)"
         },
         "action": {
           "type": "text",
