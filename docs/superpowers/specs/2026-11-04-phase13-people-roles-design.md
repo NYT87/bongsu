@@ -97,7 +97,8 @@ default workspace by the migration.
 - **List** every workspace: name, members, accounts, created, archived.
 - **Create:** a name and the first admin's email, which sends that admin an invite. The new workspace gets its
   settings row (time zone from the instance admin's, digest 08:00, English).
-- **Rename**, **add an admin** (an invite) to any workspace.
+- **Rename**, **add an admin** (an invite) to any workspace. A workspace's own admins can also rename it, from the
+  dashboard's **Settings** (beside its time zone and digest); a name is required when it's created and can't be emptied.
 - **Archive / restore:** `workspaces.archived_at`. An archived workspace publishes nothing (the tick skips it, as if
   paused), its members can't open it (sign-in into it refused), agent keys stop working; its data stays. Deleting
   is left out of this phase.

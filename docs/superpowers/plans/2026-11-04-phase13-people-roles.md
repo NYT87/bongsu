@@ -161,7 +161,7 @@
 - Test: `apps/cloudflare/test/workspaces-admin.test.ts` (new)
 
 **Interfaces:**
-- Produces: routes (INSTANCE guard): `GET /admin-api/workspaces` → `{ workspaces: { id, name, members, accounts, createdAt, archivedAt }[] }`; `POST /admin-api/workspaces/:id { name }`; `POST /admin-api/workspaces/:id/admins { email }` → `{ url }`; `POST /admin-api/workspaces/:id/archive`, `/restore`; `POST /admin-api/workspaces/:id/open` (sets the session's workspace, `setSessionWorkspace`); `POST /admin-api/instance-admins { userId, on: boolean }` (never removes the last one).
+- Produces: `POST /admin-api/settings` also takes `{ name }` (MANAGING: the workspace's admins or an instance admin; a non-empty name, at most 80 characters; audited in that workspace), and the dashboard's Settings shows the name field. Routes (INSTANCE guard): `GET /admin-api/workspaces` → `{ workspaces: { id, name, members, accounts, createdAt, archivedAt }[] }`; `POST /admin-api/workspaces/:id { name }`; `POST /admin-api/workspaces/:id/admins { email }` → `{ url }`; `POST /admin-api/workspaces/:id/archive`, `/restore`; `POST /admin-api/workspaces/:id/open` (sets the session's workspace, `setSessionWorkspace`); `POST /admin-api/instance-admins { userId, on: boolean }` (never removes the last one).
 
 - [ ] **Step 1: Failing test** `it("archives a workspace: nothing publishes, its keys and members are refused, restoring brings it back")` with an approved Reel due in `b`, a `b` agent key and a `b` member; and `it("opens any workspace for an instance admin who isn't a member, acting as its admin")`.
 - [ ] **Step 2: Run** — Expected: FAIL.
