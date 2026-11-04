@@ -139,7 +139,7 @@ describe("the roles table", () => {
     const ina = await asInstanceAdmin();
     expect((await ina("/admin-api/media-stores")).status).toBe(200);
     expect((await ina("/admin-api/oauth-apps")).status).toBe(200);
-    expect((await ina("/admin-api/workspaces")).status).toBe(404); // past the guard; the page comes later
+    expect((await ina("/admin-api/workspaces")).status).toBe(200);
     expect((await ina("/admin-api/state")).json).toMatchObject({ signedIn: true, instanceAdmin: true });
     expect((await (await asRole("admin"))("/admin-api/state")).json).toMatchObject({ instanceAdmin: false });
   });

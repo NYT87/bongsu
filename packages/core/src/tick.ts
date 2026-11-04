@@ -1,10 +1,10 @@
 // The scheduler's tick, run by the cron every 5 minutes.
 //
-//   lock → held workspaces (paused) → discover due items → advance active jobs one step each → Shorts comments
+//   lock → held workspaces (paused, archived) → discover due items → advance active jobs one step each → Shorts comments
 //   → prune audit
 //
-// A held workspace's accounts aren't discovered, its jobs aren't advanced and its Shorts comments wait; the other
-// workspaces go on as usual.
+// A held workspace's (paused or archived) accounts aren't discovered, its jobs aren't advanced and its Shorts comments
+// wait; the other workspaces go on as usual.
 //
 // Everything it reads is in D1 (src/data.ts): the plan, approvals, posted log, Shorts comments and the texts
 // (captions, comments, alt texts; a repo item's are copied there by an importer); the media is in the media store. Nothing
@@ -21,6 +21,7 @@ import {
   contentPaths,
   dueItems,
   getItem,
+  type Held,
   heldWorkspaces,
   isPosted,
   itemDue,
@@ -143,7 +144,7 @@ class Ctx {
   /** The instance's media stores, read at the start of the run (tick). */
   stores!: MediaStores;
   /** The workspaces this run leaves alone (data.ts heldWorkspaces), read once at its start. */
-  held = new Set<string>();
+  held = new Map<string, Held>();
   note: Notifier;
   dry: boolean;
   nowS: number;
@@ -227,7 +228,9 @@ export async function tick(
     const c = new Ctx(env, deps);
     c.stores = await mediaStores(env, deps.fetch);
     c.held = await heldWorkspaces(env.DB);
-    for (const ws of c.held) await audit(env.DB, nowS, "paused", `workspace:${ws}`, { part }, ws);
+    // a paused workspace hears why it waits; an archived one is simply left alone
+    for (const [ws, why] of c.held)
+      if (why === "paused") await audit(env.DB, nowS, "paused", `workspace:${ws}`, { part }, ws);
     if (part === "shorts") {
       await shortsComments(c);
       await env.DB.prepare("DELETE FROM audit WHERE at < ?1")
@@ -243,10 +246,13 @@ export async function tick(
       `SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1
          AND workspace_id NOT IN ${jsonList(env.DB, 3)} ORDER BY due_at LIMIT ?2`,
     )
-      .bind(nowS, jobsPerTick(env), JSON.stringify([...c.held]))
+      .bind(nowS, jobsPerTick(env), JSON.stringify([...c.held.keys()]))
       .all<JobRow>();
     for (const job of active.results) await advance(c, job);
-    return { status: "ok", detail: { part, advanced: active.results.length, held: [...c.held], dry_run: c.dry } };
+    return {
+      status: "ok",
+      detail: { part, advanced: active.results.length, held: [...c.held.keys()], dry_run: c.dry },
+    };
   } finally {
     await release(env.DB, lock, holder);
   }

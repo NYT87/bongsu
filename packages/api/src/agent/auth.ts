@@ -34,6 +34,8 @@ export interface Caller {
 
 export const RATE_PER_MIN = 60;
 
+/** The caller a bearer token stands for, or null: unknown, revoked, expired, a person no longer in its workspace, or
+ *  a workspace that's archived (its keys stop working until it's restored). */
 export async function authenticate(db: Db, header: string | null | undefined, nowS: number): Promise<Caller | null> {
   const m = /^Bearer\s+(bongsu_[A-Za-z0-9_-]{20,})$/.exec(header ?? "");
   if (!m) return null;
@@ -41,9 +43,10 @@ export async function authenticate(db: Db, header: string | null | undefined, no
     .prepare(
       `SELECT k.id, k.name, k.scopes, k.last_used_at, k.workspace_id, k.user_id, k.expires_at, m.role,
          u.instance_admin
-       FROM api_keys k LEFT JOIN memberships m ON m.user_id = k.user_id AND m.workspace_id = k.workspace_id
+       FROM api_keys k JOIN workspaces w ON w.id = k.workspace_id
+         LEFT JOIN memberships m ON m.user_id = k.user_id AND m.workspace_id = k.workspace_id
          LEFT JOIN users u ON u.id = k.user_id
-       WHERE k.key_hash = ?1 AND k.revoked_at IS NULL`,
+       WHERE k.key_hash = ?1 AND k.revoked_at IS NULL AND w.archived_at IS NULL`,
     )
     .bind(await sha256Hex(m[1]))
     .first<{

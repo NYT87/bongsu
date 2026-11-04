@@ -47,7 +47,19 @@ import {
   waitingApprovalsIn,
 } from "@bongsu/core/media/manage";
 import { NtfyError, postNtfy, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
-import { addMember, createUser, createWorkspace, newUserId } from "@bongsu/core/people";
+import {
+  addMember,
+  archiveWorkspace,
+  createUser,
+  createWorkspace,
+  InstanceAdminError,
+  NAME_MAX,
+  newUserId,
+  renameWorkspace,
+  restoreWorkspace,
+  setInstanceAdmin,
+  workspaceName,
+} from "@bongsu/core/people";
 import { platform, platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
@@ -176,6 +188,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (e instanceof NtfyError) return c.json({ error: e.message }, 400);
       if (e instanceof StoreError) return c.json({ error: e.message }, 400);
       if (e instanceof MemberError) return c.json({ error: e.message }, e.status);
+      if (e instanceof InstanceAdminError) return c.json({ error: e.message }, e.status);
       if (e instanceof AcceptError) return c.json(e.answer, e.status);
       throw e;
     }
@@ -1180,6 +1193,132 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return invite ? { id, invite } : { id };
     }),
   );
+  app.get(
+    "/admin-api/workspaces",
+    wrap(async (c) => {
+      const r = await c.env.DB.prepare(
+        `SELECT w.id, w.name, w.created_at, w.archived_at,
+           (SELECT COUNT(*) FROM memberships m WHERE m.workspace_id = w.id) AS members,
+           (SELECT COUNT(*) FROM accounts a WHERE a.workspace_id = w.id) AS accounts
+         FROM workspaces w ORDER BY w.name, w.id`,
+      ).all<{
+        id: string;
+        name: string;
+        created_at: number;
+        archived_at: number | null;
+        members: number;
+        accounts: number;
+      }>();
+      return {
+        workspaces: r.results.map((w) => ({
+          id: w.id,
+          name: w.name,
+          // a count is a BIGINT on Postgres: a number here
+          members: Number(w.members),
+          accounts: Number(w.accounts),
+          createdAt: w.created_at,
+          archivedAt: w.archived_at,
+        })),
+      };
+    }),
+  );
+  /** A workspace's name from a request, or a 400. */
+  const nameOf = (v: unknown) => {
+    const name = workspaceName(v);
+    if (!name) throw new AdminError(400, `name the workspace (at most ${NAME_MAX} characters)`);
+    return name;
+  };
+  app.post(
+    "/admin-api/workspaces/:id",
+    wrap(async (c) => {
+      const id = c.req.param("id") ?? "";
+      const name = nameOf((await body(c)).name);
+      if (!(await renameWorkspace(c.env.DB, id, name))) throw new AdminError(404, "no such workspace");
+      // in the workspace's own audit, where its admins see who renamed it
+      await audit(c, "workspace_rename", id, { name }, undefined, id);
+      return { id, name };
+    }),
+  );
+  // Another admin for a workspace: an invite, its link to copy (and emailed when a mailer is set).
+  app.post(
+    "/admin-api/workspaces/:id/admins",
+    wrap(async (c) => {
+      fresh(c);
+      const id = c.req.param("id") ?? "";
+      const email = String((await body(c)).email ?? "")
+        .trim()
+        .toLowerCase();
+      if (!EMAIL.test(email)) throw new AdminError(400, "enter an email address");
+      const w = await c.env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = ?1")
+        .bind(id)
+        .first<{ archived_at: number | null }>();
+      if (!w) throw new AdminError(404, "no such workspace");
+      if (w.archived_at !== null) throw new AdminError(409, "restore the workspace first");
+      const member = await c.env.DB.prepare(
+        "SELECT 1 FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.workspace_id = ?1 AND u.email = ?2",
+      )
+        .bind(id, email)
+        .first();
+      if (member) throw new AdminError(409, "they're already a member: open the workspace and change their role");
+      const r = await createInvite(
+        c.env,
+        fetcher,
+        { workspaceId: id, email, role: "admin", invitedBy: c.get("session").userId },
+        nowS(),
+      );
+      await audit(c, "invite_create", email, { role: "admin", mailed: r.mailed }, undefined, id);
+      return { url: r.url };
+    }),
+  );
+  app.post(
+    "/admin-api/workspaces/:id/archive",
+    wrap(async (c) => {
+      fresh(c);
+      const id = c.req.param("id") ?? "";
+      if (!(await archiveWorkspace(c.env.DB, id, nowS())))
+        throw new AdminError(409, "no such workspace, or it's archived already");
+      await audit(c, "workspace_archive", id, {}, undefined, id);
+      return { archived: true };
+    }),
+  );
+  app.post(
+    "/admin-api/workspaces/:id/restore",
+    wrap(async (c) => {
+      fresh(c);
+      const id = c.req.param("id") ?? "";
+      if (!(await restoreWorkspace(c.env.DB, id))) throw new AdminError(409, "no such workspace, or it isn't archived");
+      await audit(c, "workspace_restore", id, {}, undefined, id);
+      return { restored: true };
+    }),
+  );
+  // Work in a workspace (the switcher's field, sessions.workspace_id): an instance admin acts there as its admin.
+  app.post(
+    "/admin-api/workspaces/:id/open",
+    wrap(async (c) => {
+      const id = c.req.param("id") ?? "";
+      const w = await c.env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = ?1")
+        .bind(id)
+        .first<{ archived_at: number | null }>();
+      if (!w) throw new AdminError(404, "no such workspace");
+      if (w.archived_at !== null) throw new AdminError(409, "restore the workspace first");
+      await setSessionWorkspace(c.env.DB, c.get("token"), id);
+      // its admins see that an instance admin came in
+      await audit(c, "workspace_open", id, {}, undefined, id);
+      return { id };
+    }),
+  );
+  app.post(
+    "/admin-api/instance-admins",
+    wrap(async (c) => {
+      fresh(c);
+      const b = await body(c);
+      const userId = String(b.userId ?? "");
+      if (typeof b.on !== "boolean") throw new AdminError(400, "on: true or false");
+      await setInstanceAdmin(c.env.DB, userId, b.on);
+      await audit(c, b.on ? "instance_admin_add" : "instance_admin_remove", `user:${userId}`, {}, undefined, null);
+      return { userId, instanceAdmin: b.on };
+    }),
+  );
 
   // ---- OAuth apps (bring your own) and connecting
   app.get(
@@ -1367,7 +1506,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const w = await workspaceSettings(c.env.DB, ws(c));
       // the topic's host only: whoever knows the whole URL can read the topic
       const topic = await workspaceNtfy(c.env, ws(c)).catch(() => null);
+      const name = await c.env.DB.prepare("SELECT name FROM workspaces WHERE id = ?1")
+        .bind(ws(c))
+        .first<{ name: string }>();
       return {
+        name: name?.name ?? "",
         timezone: w.timezone,
         digestHour: w.digestHour,
         dryRun: c.env.DRY_RUN !== "0",
@@ -1386,8 +1529,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (tz !== undefined && !isTimeZone(tz)) throw new AdminError(400, "unknown time zone");
       if (hour !== undefined && !(Number.isInteger(hour) && hour >= 0 && hour <= 23))
         throw new AdminError(400, "digest hour: 0 to 23");
+      // the workspace's admins rename it here (the instance admins on the Workspaces page too); it keeps a name
+      const name = b.name === undefined ? undefined : nameOf(b.name);
       await setWorkspaceSettings(c.env.DB, ws(c), { timezone: tz, digestHour: hour }, nowS());
-      await audit(c, "settings", null, { timezone: tz, digestHour: hour });
+      if (name !== undefined) await renameWorkspace(c.env.DB, ws(c), name);
+      await audit(c, "settings", null, { name, timezone: tz, digestHour: hour });
       return { saved: true };
     }),
   );

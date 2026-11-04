@@ -54,14 +54,16 @@ export async function buildDigest(
   return { title, text: parts.join("\n\n") };
 }
 
-/** Sends each workspace's digest once per day (in its time zone), from its digest hour on. */
+/** Sends each workspace's digest once per day (in its time zone), from its digest hour on. An archived workspace
+ *  gets none. */
 export async function dailyDigest(
   env: Env,
   deps: { fetch: typeof fetch; now: Date },
 ): Promise<"sent" | "not yet" | "already sent"> {
-  const ids = await env.DB.prepare("SELECT workspace_id FROM workspace_settings ORDER BY workspace_id").all<{
-    workspace_id: string;
-  }>();
+  const ids = await env.DB.prepare(
+    `SELECT s.workspace_id FROM workspace_settings s JOIN workspaces w ON w.id = s.workspace_id
+     WHERE w.archived_at IS NULL ORDER BY s.workspace_id`,
+  ).all<{ workspace_id: string }>();
   const outcomes: string[] = [];
   for (const { workspace_id } of ids.results) {
     const ws = await workspaceSettings(env.DB, workspace_id);

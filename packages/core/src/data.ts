@@ -597,10 +597,17 @@ export async function clearPaused(db: Db, workspaceId: string): Promise<boolean>
     .first());
 }
 
-/** The workspaces the scheduler leaves alone this run: the paused ones. Read once per run (tick). */
-export async function heldWorkspaces(db: Db): Promise<Set<string>> {
+/** Why the scheduler leaves a workspace alone this run: it's paused (and says so in its audit), or archived. */
+export type Held = "paused" | "archived";
+
+/** The workspaces the scheduler leaves alone this run: the paused ones and the archived ones. Read once per run
+ *  (tick). */
+export async function heldWorkspaces(db: Db): Promise<Map<string, Held>> {
   const r = await db
-    .prepare("SELECT workspace_id FROM workspace_settings WHERE paused IS NOT NULL")
-    .all<{ workspace_id: string }>();
-  return new Set(r.results.map((x) => x.workspace_id));
+    .prepare(
+      `SELECT w.id, w.archived_at FROM workspaces w LEFT JOIN workspace_settings s ON s.workspace_id = w.id
+       WHERE w.archived_at IS NOT NULL OR s.paused IS NOT NULL`,
+    )
+    .all<{ id: string; archived_at: number | null }>();
+  return new Map(r.results.map((x) => [x.id, x.archived_at === null ? "paused" : "archived"]));
 }

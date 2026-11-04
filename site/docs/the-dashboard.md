@@ -137,9 +137,22 @@ someone else admin before the last one steps down. Each of these changes asks fo
 
 Every change to the instance, newest first: when, who, what and the detail. **Load older** shows the next 50.
 
+## Workspaces
+
+Instance admins see an **Instance** group under the sidebar's sections: **Workspaces**, **Media** and **OAuth apps**.
+**Workspaces** lists every workspace with its **Members**, **Accounts**, when it was **Created** and its **Status**.
+**Create a workspace** takes a name, a time zone and its first admin: you, or someone invited by email (copy their
+link). **Open** works in that workspace, as its admin, until you open another. **Rename** changes its name (its own
+admins can also rename it in **Settings**), and **Add an admin** makes an invite link for a new admin.
+
+**Archive** stops a workspace completely: nothing in it publishes, its agent keys and CLI tokens stop working, its
+members can't open it and it gets no daily digest. Its plan, texts, accounts and people stay, and **Restore** brings it
+back as it was (posts that came due meanwhile go out only within the catch-up window). Archiving, restoring and adding
+an admin ask for your passkey again.
+
 ## Settings
 
-**Workspace** holds the **Time zone**, the default for everyone (each person can choose their own in the app), and the
+**Workspace** holds its **Name** (it can't be emptied), the **Time zone**, the default for everyone (each person can choose their own in the app), and the
 **Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the workspace's notifications to an
 [ntfy](https://ntfy.sh) topic too, on ntfy.sh or your own server: paste the topic's `https://` address (a protected
 topic's token as `?auth=…`), **Save**, then **Send a test**. Anyone who knows a topic's address can read it, so pick a

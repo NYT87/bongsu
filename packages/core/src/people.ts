@@ -56,3 +56,63 @@ export async function addMember(db: Db, workspaceId: string, userId: string, rol
     .bind(workspaceId, userId, role, nowS)
     .run();
 }
+
+/** The longest a workspace's name may be. */
+export const NAME_MAX = 80;
+
+/** A workspace's name from a request, trimmed: null when it's empty or longer than NAME_MAX. */
+export function workspaceName(v: unknown): string | null {
+  const name = String(v ?? "").trim();
+  return name && name.length <= NAME_MAX ? name : null;
+}
+
+/** Renames a workspace (archived or not); false when there's none with that id. */
+export async function renameWorkspace(db: Db, workspaceId: string, name: string): Promise<boolean> {
+  return !!(await db
+    .prepare("UPDATE workspaces SET name = ?2 WHERE id = ?1 RETURNING id")
+    .bind(workspaceId, name)
+    .first());
+}
+
+/** Archives a workspace: the tick skips it (data.ts heldWorkspaces), its members can't open it (sessionWorkspace),
+ *  its agent keys and CLI tokens stop working (agent/auth.ts); its data stays. False when it's missing or archived. */
+export async function archiveWorkspace(db: Db, workspaceId: string, nowS: number): Promise<boolean> {
+  return !!(await db
+    .prepare("UPDATE workspaces SET archived_at = ?2 WHERE id = ?1 AND archived_at IS NULL RETURNING id")
+    .bind(workspaceId, nowS)
+    .first());
+}
+
+/** Brings an archived workspace back as it was. False when it's missing or not archived. */
+export async function restoreWorkspace(db: Db, workspaceId: string): Promise<boolean> {
+  return !!(await db
+    .prepare("UPDATE workspaces SET archived_at = NULL WHERE id = ?1 AND archived_at IS NOT NULL RETURNING id")
+    .bind(workspaceId)
+    .first());
+}
+
+export class InstanceAdminError extends Error {
+  constructor(
+    public status: 404 | 409,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Makes a user an instance admin, or not. The last one stays: the condition is in the statement itself, so two
+ *  instance admins unmaking each other at once can't both pass a check made before. */
+export async function setInstanceAdmin(db: Db, userId: string, on: boolean): Promise<void> {
+  const r = await db
+    .prepare(
+      `UPDATE users SET instance_admin = ?2 WHERE id = ?1
+         AND (?2 = 1 OR EXISTS (SELECT 1 FROM users o WHERE o.instance_admin = 1 AND o.id <> ?1)) RETURNING id`,
+    )
+    // a flag kept as 0/1 (SMALLINT on Postgres)
+    .bind(userId, on ? 1 : 0)
+    .first();
+  if (r) return;
+  const known = await db.prepare("SELECT 1 FROM users WHERE id = ?1").bind(userId).first();
+  if (!known) throw new InstanceAdminError(404, "no such user");
+  throw new InstanceAdminError(409, "the instance keeps one instance admin: make someone else one first");
+}

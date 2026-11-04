@@ -19,6 +19,7 @@ import {
   Overview,
   Settings,
   Videos,
+  Workspaces,
 } from "./pages";
 import { Brand, Card, Field, Loading, SecretOnce, Toasts } from "./ui";
 
@@ -27,7 +28,7 @@ export interface State {
   setupTokenSet: boolean;
   signedIn: boolean;
   user: { id: string; email: string | null; name: string | null } | null;
-  /** Instance admins also see the Instance group (Media, OAuth apps). */
+  /** Instance admins also see the Instance group (Workspaces, Media, OAuth apps). */
   instanceAdmin: boolean;
   /** The role in the workspace: admin, editor or creator (who uses the app instead). */
   role: string | null;
@@ -50,6 +51,7 @@ const SECTIONS = [
 ] as const;
 /** What's instance-wide: the sidebar's Instance group, an instance admin's only. */
 const INSTANCE = [
+  ["workspaces", "Workspaces", Workspaces],
   ["media", "Media", Media],
   ["apps", "OAuth apps", OAuthApps],
 ] as const;
