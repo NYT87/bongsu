@@ -1,10 +1,11 @@
 // Media cleanup, in the inbox's cron run: a day after an item is posted its media moves from UPLOADS/<project>/... to
-// UPLOADS/_posted/ in the media store. Move only: nothing is trashed or deleted here; the owner empties _posted/ by hand.
-// The ids don't change, so approvals and links stay valid. If the store refuses a move, that's recorded once, notified,
-// never retried.
+// UPLOADS/_posted/ in the store it's in. Move only: nothing is trashed or deleted here; the owner empties _posted/ by
+// hand. Some stores give a moved file a new id (S3), which is fine: nothing reads an id after this. If a store refuses
+// a move, that's recorded once, notified, never retried.
 import { contentPaths, getItem, latestApprovals } from "./data";
 import type { Env } from "./env";
-import { inStore, mediaStore } from "./media/index";
+import { mediaStores } from "./media/index";
+import type { MediaStore } from "./media/store";
 import { MediaRefused } from "./media/store";
 import { notifier } from "./notify";
 import { cleanupRefused } from "./texts/notifications";
@@ -19,7 +20,7 @@ export async function cleanMedia(
   deps: { fetch: typeof fetch; now: Date },
 ): Promise<{ moved: number; refused: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
-  const store = mediaStore(env, deps.fetch);
+  const stores = await mediaStores(env, deps.fetch);
   const out = { moved: 0, refused: [] as string[] };
   /** The refusals per workspace: each workspace's devices hear of their own. */
   const refusedIn = new Map<string, string[]>();
@@ -37,29 +38,39 @@ export async function cleanMedia(
       env.DB,
       due.results.map((r) => r.item_key),
     );
-    let target: string | null = null;
-    const mark = (id: string, item: string, movedAt: number | null, refused: string | null) =>
+    /** _posted/ in each store, created once per run. */
+    const targets = new Map<string, string>();
+    const mark = (store: string, id: string, item: string, movedAt: number | null, refused: string | null) =>
       env.DB.prepare(
         "INSERT INTO media_cleanup (store, media_id, item_key, moved_at, refused) VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT DO NOTHING",
       )
-        .bind(store.id, id, item, movedAt, refused)
+        .bind(store, id, item, movedAt, refused)
         .run();
     for (const { item_key, workspace_id } of due.results) {
-      let ids = (approvals.get(item_key)?.media ?? []).filter((m) => inStore(store, m)).map((m) => m.id);
-      if (!ids.length) {
+      // the approved files, in their store (an item's files are all in one: a draft's or an upload's)
+      const refs = approvals.get(item_key)?.media ?? [];
+      let store: MediaStore | null = null;
+      let ids: string[] = [];
+      if (refs.length) {
+        store = stores.for(refs[0]);
+        const kind = refs[0].store;
+        ids = store ? refs.filter((m) => m.store === kind).map((m) => m.id) : [];
+      } else {
+        // no approval: the item's media path, in the default store
+        store = stores.default;
         const i = await getItem(env.DB, item_key);
-        const node = i && contentPaths(i).single ? await store.resolve(contentPaths(i).media) : null;
+        const node = store && i && contentPaths(i).single ? await store.resolve(contentPaths(i).media) : null;
         ids = node ? [node.id] : [];
       }
-      if (item_key.startsWith("post:") && ids.length) {
+      if (!store || !ids.length) {
+        // nothing in a store for it: mark it handled
+        await mark(store?.id ?? "none", `none:${item_key}`, item_key, null, "not in a media store");
+        continue;
+      }
+      if (item_key.startsWith("post:")) {
         // a post moves as its folder (posts/<post>/), names and all
         const parent = (await store.stat(ids[0]))?.parent;
         if (parent) ids = [parent];
-      }
-      if (!ids.length) {
-        // nothing in the store for it: mark it handled
-        await mark(`none:${item_key}`, item_key, null, "not in the media store");
-        continue;
       }
       if (budget < ids.length) break; // an item's files move in the same run (a handled item isn't picked again)
       budget -= ids.length;
@@ -69,7 +80,11 @@ export async function cleanMedia(
           refused: string | null = null;
         if (!e) refused = "gone from the media store";
         else {
-          target ??= await store.ensureFolder(POSTED);
+          let target = targets.get(store.id);
+          if (!target) {
+            target = await store.ensureFolder(POSTED);
+            targets.set(store.id, target);
+          }
           if (e.parent === target) moved = nowS;
           else
             try {
@@ -83,7 +98,7 @@ export async function cleanMedia(
               refusedIn.set(workspace_id, [...(refusedIn.get(workspace_id) ?? []), `${item_key}: ${refused}`]);
             }
         }
-        await mark(id, item_key, moved, refused);
+        await mark(store.id, id, item_key, moved, refused);
       }
     }
   }

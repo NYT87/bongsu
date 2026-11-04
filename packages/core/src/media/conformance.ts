@@ -106,14 +106,17 @@ export function mediaStoreCases(setup: StoreSetup): { name: string; run: () => P
       },
     },
     {
+      // A store may give a moved file a new id (S3: the id is its key); nothing reads an id after the cleanup's move.
       name: "move takes a folder with its contents",
       run: async () => {
-        const { store, ids } = await fresh();
+        const { store } = await fresh();
         const dir = await store.resolve("UPLOADS/inbox/trip/post1");
         check(dir, "post folder");
         await store.move(dir.id, "UPLOADS/_posted");
         const moved = await store.resolve("UPLOADS/_posted/post1/01.jpg");
-        check(moved?.id === ids["UPLOADS/inbox/trip/post1/01.jpg"], "same file, new place");
+        check(moved, "the file in the moved folder");
+        check((await (await store.stream(moved.id)).text()) === "jpeg-bytes", "same content");
+        check((await store.resolve("UPLOADS/inbox/trip/post1")) === null, "gone from the old place");
       },
     },
   ];

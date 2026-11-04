@@ -35,10 +35,12 @@ const WEB = vars.WEB_DIR ?? "../../packages/web/dist";
 const PORT = Number(vars.PORT ?? 8787);
 const HOST = vars.HOST ?? "0.0.0.0";
 
-registerStore("local", (env) => {
-  if (!env.MEDIA_DIR) throw new ConfigError("MEDIA_STORE=local needs MEDIA_DIR");
-  return new LocalStore(env.MEDIA_DIR);
-});
+// The server's own disk, offered as the "local" media store when MEDIA_DIR names a directory (/media in Docker); the
+// dashboard picks it like any other store.
+if (vars.MEDIA_DIR) {
+  const dir = vars.MEDIA_DIR;
+  registerStore("local", () => new LocalStore(dir));
+}
 registerMailer("smtp", smtpMailer);
 
 /** Fetch called unbound, as on Workers (clients call `this.fetcher(…)`). */

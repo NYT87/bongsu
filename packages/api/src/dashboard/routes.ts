@@ -31,6 +31,20 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { LintRules } from "@bongsu/core/formats/caption-lint";
 import { isTimeZone, utcIso, zoneStamp } from "@bongsu/core/formats/time";
+import { offeredKinds, STORE_KINDS, type StoreKind, storeRows } from "@bongsu/core/media/index";
+import {
+  finishDriveConnect,
+  removeStore,
+  StoreError,
+  s3Credentials,
+  s3Settings,
+  savedCredentials,
+  saveStore,
+  setDefaultStore,
+  startDriveConnect,
+  testStore,
+  waitingApprovalsIn,
+} from "@bongsu/core/media/manage";
 import { NtfyError, postNtfy, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
 import { platform, platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
@@ -62,9 +76,9 @@ type C = Context<{
   Bindings: Env;
   Variables: { session: Session; token: string; workspace: string; role: string };
 }>;
-/** Changes to the instance (connections, accounts, OAuth apps, agent keys, settings): an owner's or admin's. Reading,
+/** Changes to the instance (connections, accounts, OAuth apps, agent keys, settings, media stores): an owner's or admin's. Reading,
  *  and the person's own passkeys, devices and CLI tokens, are every member's. */
-const MANAGING = /^\/admin-api\/(keys|accounts|videos|connections|oauth-apps|settings|connect\/)/;
+const MANAGING = /^\/admin-api\/(keys|accounts|videos|connections|oauth-apps|settings|connect\/|media-stores)/;
 
 /** How recent the last passkey check must be for changes to who can do what. */
 export const FRESH_S = 10 * 60;
@@ -133,6 +147,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (e instanceof ConnectError) return c.json({ error: e.message }, 400);
       if (e instanceof CryptoError) return c.json({ error: e.message }, 409);
       if (e instanceof NtfyError) return c.json({ error: e.message }, 400);
+      if (e instanceof StoreError) return c.json({ error: e.message }, 400);
       throw e;
     }
   };
@@ -366,6 +381,30 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }
   });
 
+  // Google's way back from Connect Google Drive (the media store): like the providers' callback above, the state says
+  // who started it.
+  app.get("/admin-api/media-stores/drive/callback", async (c) => {
+    const back = (q: Record<string, string>) =>
+      c.redirect(`${origin(c)}/dashboard/media?${new URLSearchParams(q)}`, 302);
+    try {
+      const r = await finishDriveConnect(
+        c.env,
+        fetcher,
+        {
+          code: c.req.query("code"),
+          state: c.req.query("state"),
+          error: c.req.query("error"),
+          errorDescription: c.req.query("error_description"),
+        },
+        nowS(),
+      );
+      await audit(c, "media_store_save", "drive", { connected: true }, r.userId, DEFAULT_WORKSPACE);
+      return back({ connected: "drive" });
+    } catch (e) {
+      return back({ error: (e as Error).message.slice(0, 300) });
+    }
+  });
+
   // ---- everything else needs a dashboard session
   app.use("/admin-api/*", async (c, next) => {
     const token = readCookie(c.req.header("Cookie"), "dashboard");
@@ -453,6 +492,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
             )) > 0,
           // a Composio connection needs no app of the owner's
           oauthApp: connections > 0 || (await count("SELECT COUNT(*) AS n FROM oauth_apps")) > 0,
+          mediaStore: (await count("SELECT COUNT(*) AS n FROM media_store")) > 0,
           connection: connections > 0,
           device:
             (await count(
@@ -1006,6 +1046,92 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const r = await removeConnection(c.env, fetcher, id, ws(c));
       await audit(c, "connection_remove", id, r);
       return { removed: true, revoked: r.revoked };
+    }),
+  );
+
+  // ---- media stores: where the media live (core/media/manage.ts). Secrets never go back to the browser.
+  const storeKind = (c: C): StoreKind => {
+    const k = c.req.param("kind") ?? "";
+    if (!(STORE_KINDS as readonly string[]).includes(k)) throw new AdminError(404, `no store kind ${k}`);
+    return k as StoreKind;
+  };
+  app.get(
+    "/admin-api/media-stores",
+    wrap(async (c) => ({
+      stores: await Promise.all(
+        (await storeRows(c.env.DB)).map(async (r) => ({
+          kind: r.kind,
+          default: r.isDefault,
+          settings: r.settings,
+          hasCredentials: !!r.credentials,
+          status: r.status,
+          lastError: r.lastError,
+          lastCheckedAt: r.lastCheckedAt ? utcIso(r.lastCheckedAt) : null,
+          // what removing it would void
+          waitingApprovals: await waitingApprovalsIn(c.env, r.kind),
+        })),
+      ),
+      offered: offeredKinds(),
+      googleApp: !!(await c.env.DB.prepare("SELECT 1 FROM oauth_apps WHERE id = 'google'").first()),
+      encryptionKeySet: !!c.env.ENCRYPTION_KEY,
+    })),
+  );
+  /** The settings and credentials a form sends: S3's from its fields, the saved keys when both are left empty. */
+  const storeInput = async (c: C, kind: StoreKind, b: Record<string, unknown>) => {
+    if (kind === "s3")
+      return { settings: { ...s3Settings(b) }, credentials: s3Credentials(b) ?? (await savedCredentials(c.env, "s3")) };
+    if (kind === "local") return { settings: {}, credentials: null };
+    throw new AdminError(400, "Google Drive is connected with its button, not a form");
+  };
+  app.post(
+    "/admin-api/media-stores/:kind/test",
+    wrap(async (c) => {
+      const kind = storeKind(c);
+      if (kind === "drive") {
+        const creds = await savedCredentials(c.env, "drive");
+        if (!creds) throw new AdminError(400, "connect Google Drive first");
+        return testStore(c.env, fetcher, "drive", {}, creds);
+      }
+      const { settings, credentials } = await storeInput(c, kind, await body(c));
+      return testStore(c.env, fetcher, kind, settings, credentials);
+    }),
+  );
+  app.post(
+    "/admin-api/media-stores/:kind",
+    wrap(async (c) => {
+      fresh(c);
+      const kind = storeKind(c);
+      const { settings, credentials } = await storeInput(c, kind, await body(c));
+      await saveStore(c.env, fetcher, kind, settings, credentials, c.get("session").userId, nowS());
+      await audit(c, "media_store_save", kind, kind === "s3" ? { ...settings } : {});
+      return { saved: true };
+    }),
+  );
+  app.post(
+    "/admin-api/media-stores/drive/start",
+    wrap(async (c) => {
+      fresh(c);
+      return { url: await startDriveConnect(c.env, c.get("session").userId, nowS()) };
+    }),
+  );
+  app.post(
+    "/admin-api/media-stores/:kind/default",
+    wrap(async (c) => {
+      const kind = storeKind(c);
+      await setDefaultStore(c.env, kind, nowS());
+      await audit(c, "media_store_default", kind, {});
+      return { default: kind };
+    }),
+  );
+  app.post(
+    "/admin-api/media-stores/:kind/remove",
+    wrap(async (c) => {
+      fresh(c);
+      const kind = storeKind(c);
+      const voided = await waitingApprovalsIn(c.env, kind);
+      await removeStore(c.env, kind, nowS());
+      await audit(c, "media_store_remove", kind, { voidedApprovals: voided });
+      return { removed: true, voidedApprovals: voided };
     }),
   );
 

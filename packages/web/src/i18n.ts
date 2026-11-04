@@ -96,6 +96,11 @@ export const en = {
   "settings.thisDevice": "This device",
   "settings.signOut": "Sign out",
   "settings.version": "Version",
+  "settings.media": "Media stores",
+  "settings.mediaNone": "None yet: set one up in the dashboard (Media) before approving anything with media.",
+  "settings.mediaDefault": "default",
+  "settings.mediaBroken": "needs attention",
+  "settings.mediaNote": "Where the Reels and photos are read from. They're set up in the dashboard (Media).",
   "settings.zone": "Time zone",
   "settings.zoneShown": "Times are shown and entered in",
   "settings.zoneWorkspace": "(the workspace's)",
@@ -250,8 +255,8 @@ export const en = {
   "item.videoN": "{label} video {n}",
   "item.imageN": "Image {n}",
   "item.mediaPosted":
-    "The media isn't shown here after publishing (it moves to Drive's _posted folder): open it on Instagram.",
-  "item.mediaMissing": "No media on Drive yet: it can't be approved until the file is there.",
+    "The media isn't shown here after publishing (it moves to the store's _posted folder): open it on Instagram.",
+  "item.mediaMissing": "No media in the store yet: it can't be approved until the file is there.",
   "item.failed": "Failed.",
   "item.failedWith": "Failed: {error}.",
   "item.failedAgain": "Approve it again to start over.",
@@ -400,7 +405,7 @@ export const en = {
   "common.timeIn": "Time ({zone})",
   "schedule.itemKey": "(item key: {key})",
 
-  // uploading a new draft's files to Drive
+  // uploading a new draft's files to a media store
   "upload.unreadable":
     "this device couldn't read {file} ({error}): pick it again from the file browser (Videos or DCIM/Camera)",
   "upload.failed": "upload of {file} failed ({status})",
@@ -414,11 +419,12 @@ export const en = {
   "draft.photo": "Photo",
   "draft.size": "{mb} MB: {files}",
   "draft.altHint": "(one line per image)",
-  "draft.uploading": "Uploading to Drive… {percent}%",
+  "draft.uploading": "Uploading… {percent}%",
+  "draft.store": "Upload to",
   "draft.uploadingShort": "Uploading…",
   "draft.upload": "Upload and create draft",
   "draft.uploadNote":
-    'The files go straight from this device to Drive ("Bongsu app uploads"); the texts can still be edited when scheduling.',
+    'The files go straight from this device to the media store ("Bongsu app uploads"); the texts can still be edited when scheduling.',
 
   // the Drafts page
   "drafts.refused": "Draft refused.",
@@ -426,12 +432,15 @@ export const en = {
   "drafts.shortsComment": "Shorts comment",
   "drafts.new": "New draft",
   "drafts.about": "About drafts",
-  "drafts.aboutBefore": "Files dropped in Drive's",
+  "drafts.aboutBefore": "Files dropped in a media store's",
   "drafts.aboutAfter": "and proposals from agents. Schedule one, then approve it on its page.",
   "drafts.video": "Video: {name}",
   "drafts.selfComment": "Self-comment: {text}",
   "drafts.secondComment": "Second comment: {text}",
-  "drafts.driveInbox": "Drive inbox",
+  "drafts.driveInbox": "Inbox",
+  "store.drive": "Google Drive",
+  "store.s3": "Bucket (S3)",
+  "store.local": "This server",
   "drafts.refuse": "Refuse",
   "drafts.refuseConfirm": "Refuse this draft?",
   "drafts.refuseDetail": "It can't be brought back.",

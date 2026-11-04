@@ -35,7 +35,7 @@ import { type Approval, type MediaRef, sha256Hex } from "./formats/approved";
 import { altLines, captionText, comment2Text, commentText } from "./formats/texts";
 import { acquire, release } from "./lock";
 import { mediaUrl } from "./media";
-import { inStore, mediaStore } from "./media/index";
+import { type MediaStores, mediaStores } from "./media/index";
 import { isVideo, type MediaStore } from "./media/store";
 import { audit, type Notifier, notifier } from "./notify";
 import { platform } from "./platforms/index";
@@ -136,7 +136,8 @@ interface JobRow {
 }
 
 class Ctx {
-  store: MediaStore;
+  /** The instance's media stores, read at the start of the run (tick). */
+  stores!: MediaStores;
   note: Notifier;
   dry: boolean;
   nowS: number;
@@ -146,7 +147,6 @@ class Ctx {
     public env: Env,
     public deps: Deps,
   ) {
-    this.store = mediaStore(env, deps.fetch);
     this.nowS = Math.floor(deps.now.getTime() / 1000);
     this.dry = env.DRY_RUN !== "0";
     this.note = notifier(env, deps.fetch, this.nowS);
@@ -219,6 +219,7 @@ export async function tick(
   if (!(await acquire(env.DB, lock, holder, nowS, 240))) return { status: "locked" };
   try {
     const c = new Ctx(env, deps);
+    c.stores = await mediaStores(env, deps.fetch);
     if (await pausedState(env.DB)) {
       await audit(env.DB, nowS, "paused", "settings:paused", {});
       return { status: "paused" };
@@ -507,14 +508,15 @@ async function verify(
   if ((comment2 ? await sha256Hex(comment2) : null) !== (ap.comment2Sha256 ?? null))
     return { problem: "the second comment changed after approval", caption, comment, alts: [] };
   for (const m of ap.media) {
-    if (!inStore(c.store, m))
+    const store = c.stores.for(m);
+    if (!store)
       return {
-        problem: `approved on the ${m.store} store, now ${c.store.id}: approve again`,
+        problem: `approved on the ${m.store} store, which isn't set up any more: approve again`,
         caption,
         comment,
         alts: [],
       };
-    const meta = await c.store.stat(m.id);
+    const meta = await store.stat(m.id);
     if (!meta) return { problem: `media file ${m.id} is gone`, caption, comment, alts: [] };
     if (meta.checksum !== m.checksum)
       return { problem: `media file ${m.id} changed after approval`, caption, comment, alts: [] };
@@ -523,7 +525,9 @@ async function verify(
 }
 
 async function link(c: Ctx, m: MediaRef, video: boolean) {
-  return mediaUrl(c.store, {
+  const store = c.stores.for(m);
+  if (!store) throw new Error(`the ${m.store} media store isn't set up`);
+  return mediaUrl(store, {
     base: c.env.PUBLIC_URL,
     secret: c.env.MEDIA_SIGNING_KEY,
     id: m.id,
@@ -532,7 +536,7 @@ async function link(c: Ctx, m: MediaRef, video: boolean) {
     ttlS: LINK_TTL_S,
   });
 }
-const isVideoRef = async (c: Ctx, m: MediaRef) => isVideo((await c.store.stat(m.id)) ?? { mime: "" });
+const isVideoRef = async (c: Ctx, m: MediaRef) => isVideo((await c.stores.for(m)?.stat(m.id)) ?? { mime: "" });
 
 async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   if (p.trial) return stepTrialPending(c, job, p);

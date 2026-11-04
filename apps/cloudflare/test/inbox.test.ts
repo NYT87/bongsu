@@ -84,7 +84,7 @@ describe("the Drive inbox", () => {
   it("does nothing without an inbox folder", async () => {
     expect(await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW })).toMatchObject({
       drafted: [],
-      note: "no UPLOADS/inbox folder",
+      note: "no UPLOADS/inbox folder in any media store",
     });
   });
 });

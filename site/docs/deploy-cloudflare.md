@@ -1,7 +1,7 @@
 # Deploy on Cloudflare
 
-What you need: a Cloudflare account (the free plan is enough), Node 22 with pnpm (`corepack enable`), a Google Cloud
-service account that can read your Drive media folder ([drive.md](drive.md)), a way to reach each Instagram account (a
+What you need: a Cloudflare account (the free plan is enough), Node 22 with pnpm (`corepack enable`), a place for the
+media (Google Drive, [drive.md](drive.md), or an S3-compatible bucket such as R2, [s3.md](s3.md)), a way to reach each Instagram account (a
 Meta app and a token per account, [instagram-graph.md](instagram-graph.md), or Composio,
 [instagram-composio.md](instagram-composio.md)), and for Shorts comments a YouTube OAuth client
 ([youtube.md](youtube.md)).

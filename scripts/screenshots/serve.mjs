@@ -33,7 +33,6 @@ export async function serve({ dbPath, mediaDir }) {
     env: {
       ...baseEnv(),
       DATABASE_PATH: dbPath,
-      MEDIA_STORE: "local",
       MEDIA_DIR: mediaDir,
       MIGRATIONS_DIR: join(root, "migrations"),
       WEB_DIR: web,

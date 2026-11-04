@@ -19,15 +19,13 @@ export interface Env {
 
   /** Composio consumer key (ck_…), used on the consumer MCP endpoint; only for accounts connected through Composio. */
   COMPOSIO_CONSUMER_KEY?: string;
-  /** The media store: "drive" (the default), or "local" on Node (a directory: MEDIA_DIR). */
-  MEDIA_STORE?: string;
+  /** Node only: the directory this server offers as the "local" media store (the stores themselves are set up in the
+   *  dashboard, media_store). */
   MEDIA_DIR?: string;
-  /** Google service account JSON (bongsu-drive-reader), reads UPLOADS/ on Drive. */
-  DRIVE_SA_JSON: string;
   /** HMAC key for the signed media links Instagram fetches. */
   MEDIA_SIGNING_KEY: string;
-  /** Encrypts the credentials stored in the database (connections.credentials, core/crypto.ts). Optional until a
-   *  connection stores credentials there; connections can also name an environment variable instead. */
+  /** Encrypts the credentials stored in the database (connections, OAuth apps, media stores; core/crypto.ts).
+   *  Optional until something stores credentials there. */
   ENCRYPTION_KEY?: string;
   /** Asked once by the dashboard to create its first user (site/docs/deploy-cloudflare.md); useless after that. */
   SETUP_TOKEN?: string;
@@ -41,8 +39,6 @@ export interface Env {
   SMTP_PORT?: string;
   SMTP_USER?: string;
   SMTP_PASS?: string;
-  /** The owner's Google OAuth, scope drive.file. Optional. */
-  DRIVE_OWNER_OAUTH?: string;
   /** Publishing jobs advanced per tick (constants.ts JOBS_PER_TICK): unset, 4 on Cloudflare and 20 on Node. */
   JOBS_PER_TICK?: string;
 }

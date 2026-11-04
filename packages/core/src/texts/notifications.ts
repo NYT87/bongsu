@@ -110,6 +110,10 @@ export const results = (lines: string[], target: string | undefined): Note => ({
 });
 export const connectionProblem = (text: string): Note => ({ title: "A connection needs attention", text });
 export const connectionMailSubject = "Bongsu: a connection needs attention";
+export const mediaStoreProblem = (text: string): Note => ({
+  title: "A media store needs attention",
+  text: `${text}\nIts files can't be read until it's fixed: check it in the dashboard (Media).`,
+});
 export const releaseMoved = (title: string, from: string, to: string, by: string): Note => ({
   title: `Release moved: ${title}`,
   text: `from ${from} to ${to}, by ${by}`,

@@ -12,7 +12,6 @@ export default defineConfig(async () => {
           bindings: {
             TEST_MIGRATIONS: migrations,
             COMPOSIO_CONSUMER_KEY: "test",
-            DRIVE_SA_JSON: "{}",
             MEDIA_SIGNING_KEY: "test",
             YT_MAIN_OAUTH: "{}",
             YT_VLOGS_OAUTH: "{}",

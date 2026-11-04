@@ -6,7 +6,18 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { tick } from "@bongsu/core/tick";
 import { beforeEach, describe, expect, it } from "vitest";
-import { approve, clearPlan, copyText, igHappyPath, MD5, planItem, seedReel, testEnv, World } from "./world";
+import {
+  approve,
+  clearPlan,
+  copyText,
+  igHappyPath,
+  MD5,
+  planItem,
+  seedMediaStore,
+  seedReel,
+  testEnv,
+  World,
+} from "./world";
 
 // Stand-ins for a real authenticator: the routes' own logic (codes, challenges, snapshots, sessions) is what's tested.
 const fake: Verifiers = {
@@ -539,7 +550,7 @@ describe("a draft becomes a scheduled item (texts in D1)", () => {
     for (const m of [31, 36, 41, 46]) await tick(e, { fetch: w.fetch, now: new Date(Date.UTC(2026, 9, 20, 10, m)) });
     const created = w.calls.find((c) => c.slug === "INSTAGRAM_POST_IG_USER_MEDIA")!;
     expect(created.args).toMatchObject({ caption: "Lisbon turbines!", media_type: "REELS" });
-    expect(String(created.args.video_url)).toContain(`/m/${vid}.mp4`);
+    expect(String(created.args.video_url)).toContain(`/m/drive/${vid}.mp4`);
     expect(await env.DB.prepare("SELECT source FROM posted WHERE item_key = ?1").bind(key).first("source")).toBe(
       "scheduler",
     );
@@ -547,34 +558,27 @@ describe("a draft becomes a scheduled item (texts in D1)", () => {
 });
 
 describe("uploads from the app", () => {
-  const OWNER = JSON.stringify({
-    client_id: "c",
-    client_secret: "s",
-    refresh_token: "r-owner",
-    token_uri: "https://oauth2.googleapis.com/token",
-  });
-
-  it("opens resumable sessions in the app's own shared folder, then makes a draft of the uploaded files", async () => {
+  it("opens resumable sessions in the app's own Drive folder, then makes a draft of the uploaded files", async () => {
     await signUp();
-    await env.DB.prepare("DELETE FROM settings WHERE key = 'app_upload_folder'").run();
-    expect((await post("/app-api/uploads/start", { name: "a.mp4", mimeType: "video/mp4", size: 10 })).status).toBe(503); // not set up
-    e = { ...e, DRIVE_OWNER_OAUTH: OWNER };
-    expect(await (await call("/app-api/uploads/enabled")).json()).toEqual({ enabled: true });
+    await env.DB.prepare("DELETE FROM media_store").run();
+    expect((await post("/app-api/uploads/start", { name: "a.mp4", mimeType: "video/mp4", size: 10 })).status).toBe(503); // no store
+    expect(await (await call("/app-api/uploads/enabled")).json()).toEqual({ enabled: false, stores: [] });
+    await seedMediaStore();
+    expect(await (await call("/app-api/uploads/enabled")).json()).toEqual({ enabled: true, stores: ["drive"] });
     expect((await post("/app-api/uploads/start", { name: "a.txt", mimeType: "text/plain", size: 10 })).status).toBe(
       400,
     );
     const s = (await (
       await post("/app-api/uploads/start", { name: "short3_x.mp4", mimeType: "video/mp4", size: 1234 })
-    ).json()) as { uploadUrl: string };
+    ).json()) as { uploadUrl: string; chunked: boolean; store: string };
     expect(s.uploadUrl).toMatch(/^https:\/\/www\.googleapis\.com\/upload\/drive\/v3\/files\?upload_id=/);
+    expect(s).toMatchObject({ chunked: true, store: "drive", id: null });
     await post("/app-api/uploads/start", { name: "b.jpg", mimeType: "image/jpeg", size: 99 });
     const folder = w.uploads[0].parents[0];
     expect(w.drive.get(folder)!.name).toBe("Bongsu app uploads");
     expect(w.uploads.map((u) => u.parents[0])).toEqual([folder, folder]); // created once
     expect(w.uploads[0]).toMatchObject({ origin: "https://bongsu.test", type: "video/mp4" });
-    expect(w.shares).toEqual([
-      { file: folder, type: "user", role: "writer", emailAddress: expect.stringContaining("@") },
-    ]);
+    expect(w.shares).toEqual([]); // the owner's own grant reads it: nothing to share
 
     // The browser sent the bytes to Google: the file is in the folder.
     const vid = w.drivePut("Bongsu app uploads/short3_x.mp4", { md5: MD5, mimeType: "video/mp4" });

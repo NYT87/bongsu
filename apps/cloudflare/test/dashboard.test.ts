@@ -205,16 +205,32 @@ describe("signed in", () => {
         "DELETE FROM connections",
         "DELETE FROM oauth_apps",
         "DELETE FROM push_subs",
+        "DELETE FROM media_store",
       ].map((s) => env.DB.prepare(s)),
     );
     const setup = async () => (await call("/admin-api/overview")).json.setup;
-    expect(await setup()).toEqual({ timezone: false, oauthApp: false, connection: false, device: false });
+    expect(await setup()).toEqual({
+      timezone: false,
+      oauthApp: false,
+      mediaStore: false,
+      connection: false,
+      device: false,
+    });
     await call("/admin-api/settings", { timezone: "Asia/Seoul", digestHour: 8 });
     // the device: a session in the app, as adding a device makes
     await env.DB.prepare(
       "INSERT INTO sessions (token_hash, created_at, expires_at, user_id, app, verified_at) VALUES ('t-phone', 0, 9999999999, 'owner', 'pwa', 0)",
     ).run();
-    expect(await setup()).toEqual({ timezone: true, oauthApp: false, connection: false, device: true });
+    await env.DB.prepare(
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('s3', 1, '{}', 'ok', 0)",
+    ).run();
+    expect(await setup()).toEqual({
+      timezone: true,
+      oauthApp: false,
+      mediaStore: true,
+      connection: false,
+      device: true,
+    });
   });
 
   it("Waiting for approval counts what the app's Needs you lists: not approved, or approved for another time", async () => {

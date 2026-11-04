@@ -1,11 +1,10 @@
 // Uploads from the app: a new draft made on the Drafts page, its media sent from the browser straight to the media
-// store (createUpload: for Drive, a resumable session opened as the owner), so big Reels never pass through the Worker.
-// Files land in the app's own folder, APP_FOLDER (for Drive, the only place drive.file lets it write, shared with the
-// service account, which reads them for the previews and the signed links Instagram fetches).
+// store the owner picks (createUpload: a Drive resumable session, an S3 presigned PUT), so big Reels never pass through
+// the Worker. Files land in the app's own folder in that store, APP_FOLDER.
 
 import { DEFAULT_WORKSPACE, instagramAccounts } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
-import { mediaStore } from "@bongsu/core/media/index";
+import { type MediaStores, mediaStores } from "@bongsu/core/media/index";
 import { isMedia, isVideo } from "@bongsu/core/media/store";
 
 export const APP_FOLDER = "Bongsu app uploads";
@@ -20,22 +19,43 @@ export class UploadError extends Error {
   }
 }
 
-/** Where the browser sends one file; it PUTs the bytes to `uploadUrl` (in chunks, for Drive). */
+/** The store an upload goes to: the one asked for, else the default (when it takes uploads). */
+function uploadStore(stores: MediaStores, asked: unknown) {
+  const store = typeof asked === "string" && asked ? stores.get(asked) : stores.default;
+  if (!store?.createUpload)
+    throw new UploadError(503, "uploads aren't set up for this media store: add one in the dashboard (Media)");
+  return store;
+}
+
+/** Where the browser sends one file: a PUT of the bytes to `uploadUrl`, in pieces when `chunked` (Drive); `id` is the
+ *  new file's when the store knows it already (S3), else the last answer names it. */
 export async function startUpload(
   env: Env,
   fetcher: typeof fetch,
   b: Record<string, unknown>,
-): Promise<{ uploadUrl: string; method: string; headers: Record<string, string> }> {
+): Promise<{
+  uploadUrl: string;
+  method: string;
+  headers: Record<string, string>;
+  chunked: boolean;
+  id: string | null;
+  store: string;
+}> {
   const name = String(b.name ?? "").slice(0, 200),
     mime = String(b.mimeType ?? ""),
     size = Number(b.size);
   if (!name || !isMedia({ mime })) throw new UploadError(400, "only images and videos");
   if (!Number.isFinite(size) || size <= 0 || size > 1024 ** 3) throw new UploadError(400, "size: up to 1 GB");
-  const store = mediaStore(env, fetcher);
-  if (!store.createUpload)
-    throw new UploadError(503, "uploads aren't set up for this media store (site/docs/drive.md)");
-  const t = await store.createUpload(name, APP_FOLDER, mime, env.PUBLIC_URL.replace(/\/$/, ""));
-  return { uploadUrl: t.url, method: t.method, headers: t.headers };
+  const store = uploadStore(await mediaStores(env, fetcher), b.store);
+  const t = await store.createUpload!(name, APP_FOLDER, mime, env.PUBLIC_URL.replace(/\/$/, ""));
+  return {
+    uploadUrl: t.url,
+    method: t.method,
+    headers: t.headers,
+    chunked: t.chunked,
+    id: t.id ?? null,
+    store: store.id,
+  };
 }
 
 /** A draft from uploaded files (in slide order) and its texts; it opens on the Drafts page, ready to schedule. */
@@ -52,7 +72,7 @@ export async function draftFromUploads(
     name = String(b.name ?? "").trim();
   if (!NAME.test(project) || !NAME.test(name))
     throw new UploadError(400, "project and name: letters, digits, _ . - only");
-  const store = mediaStore(env, fetcher);
+  const store = uploadStore(await mediaStores(env, fetcher), b.store);
   const folder = await store.resolve(APP_FOLDER);
   const files: { store: string; id: string; name: string; mime: string; checksum: string }[] = [];
   for (const id of ids) {

@@ -1,7 +1,7 @@
 # Phase 12: media stores, set up from the dashboard
 
-Issues: #15 (r2), #16 (s3), #17 (setup docs, the store's status), #32 (Connect Google Drive). Status: sections 1 and 2
-approved in chat (2026-11-03); sections 3 and 4 proposed, waiting for review.
+Issues: #15 (r2), #16 (s3), #17 (setup docs, the store's status), #32 (Connect Google Drive). Status: approved in chat
+(2026-11-03), section 1 revised the same day for several stores side by side.
 
 ## Intent
 
@@ -20,31 +20,42 @@ owner's OAuth (section 3).
 The Node runtime registers `local` with that directory (`/media` in Docker), and the dashboard can only pick it. The
 dashboard never takes a server path (an admin could otherwise point Bongsu at `/etc`).
 
-**A new instance-wide table, `media_store`** (migration 0016, written once in `packages/schema`), one row:
+**Several stores side by side, one per kind.** Every reference already names its store (`{store, id, checksum}` in
+approvals, drafts and plan items), so each file is read from the store it names, and the owner can keep Drive for
+what they drop in by hand and a bucket for uploads, or move from one to the other gradually.
+
+**A new instance-wide table, `media_store`** (migration 0017, written once in `packages/schema`), one row per kind:
 
 | Column | |
 |---|---|
-| `id` | `"instance"`: one row per instance |
-| `kind` | `drive`, `s3` or `local` |
+| `kind` | `drive`, `s3` or `local`: the key, and what references record as `store` |
+| `is_default` | the store used where nothing names one: plan items that only give a media path, drafts from the agent API, the upload page's preselection |
 | `settings` | JSON, nothing secret: S3 endpoint, region, bucket, prefix, path style; Drive's root folder name |
 | `credentials` | encrypted with `ENCRYPTION_KEY`: the S3 key pair, or the Drive OAuth grant |
 | `status` | `ok` / `broken` |
 | `last_error`, `last_checked_at` | the last **Test**, keep-alive or failed use |
 | `updated_at`, `updated_by` | |
 
-Like `oauth_apps` it has no `workspace_id`: one store per instance (PLAN 2.4); stores per workspace or account stay out.
+Stores belong to the instance, so no `workspace_id` (like `oauth_apps`); stores per workspace or account stay out, and
+so does a second bucket of the same kind.
 
-**Finding the store:** `mediaStore(env, fetcher)` becomes `async` and returns `MediaStore | null`: the row, built with
-its decrypted credentials; for `local`, the store the runtime registered; `null` when there is no row. Requests read
-it once each; the tick builds its store at the start of a run instead of in `Ctx`'s constructor.
+**Finding a store:** the single `mediaStore(env)` gives way to `await mediaStores(env, fetcher)`: every configured
+store, built once per request or cron run, with `storeFor(ref)` (the store a reference names, or null) and
+`default` (or null). For `local`, the store the runtime registered. A reference to a store that isn't configured
+counts as missing, as one to another store does today.
+
+**Where each is used:** publishing and previews read each file from its own store; the inbox scans `UPLOADS/inbox/`
+in every store (drafts record their store); the cleanup moves each file in its own store; uploads go to the store the
+owner picks among those with `createUpload` (the default preselected). The `/m/` links name the store as well:
+`/m/<store>/<id>.<ext>`, with the store inside what the signature covers (Drive and `local` need them; S3 presigns).
 
 **With no store:** the inbox and the cleanup skip; uploads answer 503; an item with media can't be approved (the
-approval page says to set up a media store); `/health` reports `media_store: "missing"` and is not ok; Get started
-shows the step as the next one.
+approval page says to set up a media store); `/health` reports `media_stores: []` and is not ok; Get started shows the
+step as the next one.
 
-**Changing it:** owners and admins (the `MANAGING` guard, `/admin-api/media-store`), with a fresh passkey (`FRESH_S`)
-when the kind changes, because references to another store count as missing: the dashboard says how many waiting
-approvals that voids. New credentials for the same kind keep the approvals.
+**Changing them:** owners and admins (the `MANAGING` guard, `/admin-api/media-stores`). Adding a store or changing the
+default is harmless. Removing one makes its files missing: the dashboard says how many waiting approvals that voids
+and asks for a fresh passkey (`FRESH_S`). New credentials for the same store keep the approvals.
 
 ## 2. The `s3` store (approved)
 
@@ -82,7 +93,7 @@ rule on the bucket allowing `PUT` from the instance's origin (the guide gives it
 serves objects from a map); unit tests for the presigned URLs (expiry, signed headers); the same suite against a real
 MinIO when `S3_TEST_ENDPOINT` is set, skipped in CI.
 
-## 3. Connect Google Drive (#32, proposed)
+## 3. Connect Google Drive (#32)
 
 - The `drive` store works with one OAuth grant of the owner's, made with the **Google app already used for YouTube**
   (`oauth_apps` id `google`), scope `https://www.googleapis.com/auth/drive`. The full scope is what lets it see the
@@ -96,16 +107,18 @@ MinIO when `S3_TEST_ENDPOINT` is set, skipped in CI.
   step. The weekly keep-alive the YouTube connection has also checks this grant and sets `status` to `broken` when
   Google refuses it (a revoked grant, or an app still in testing, whose tokens expire after 7 days).
 
-## 4. Dashboard, app, health and docs (#17, proposed)
+## 4. Dashboard, app, health and docs (#17)
 
-- **Dashboard → Media** (a new page beside Connections): the current store and its status; **Choose a store**:
-  Google Drive (**Connect Google Drive**), S3-compatible (a form with the presets), This server's disk (only when the
-  runtime offers `local`). **Test** runs `resolve` and `ensureFolder("UPLOADS/inbox")` with the entered settings
+- **Dashboard → Media** (a new page beside Connections): the configured stores, each with its status, **Test**,
+  **Make default** and **Remove**; **Add a store**: Google Drive (**Connect Google Drive**), S3-compatible (a form with
+  the presets), This server's disk (only when the runtime offers `local`). **Test** runs `resolve` and `ensureFolder("UPLOADS/inbox")` with the entered settings
   before saving (a write check too) and stores the result. Secrets are never sent back to the browser.
-- **Get started** gets a fifth step, "Media store", read from the row (`setup.mediaStore`).
-- **The app's Settings** shows the store (kind, bucket or folder) and its status, read-only, with a link to the
+- **Get started** gets a fifth step, "Media store", done once any store is set up (`setup.mediaStore`).
+- **The upload page** lets the owner pick the store (only when more than one takes uploads), the default preselected;
+  an S3 store gets the file in one PUT (`UploadTarget.chunked` false, its `id` known in advance), Drive in chunks.
+- **The app's Settings** lists the stores (kind, bucket or folder, status, the default), read-only, with a link to the
   dashboard for owners and admins.
-- `/health`: `media_store` (`missing`, `ok`, `broken`), and `ENCRYPTION_KEY` is needed when the row has credentials.
+- `/health`: `media_stores` (each kind and its status), and `ENCRYPTION_KEY` is needed when a row has credentials.
 - **Docs:** `site/docs/s3.md` (new: presets, keys with the least rights, the CORS rule per service),
   `site/docs/drive.md` (rewritten for Connect Google Drive), `configuration.md`, `self-hosting.md`, `faq.md`,
   `backups.md`, `.env.example`, `docker-compose.yml`, `docs/media-stores.md`, `docs/schema.md` (generated), PLAN.md.
@@ -113,8 +126,8 @@ MinIO when `S3_TEST_ENDPOINT` is set, skipped in CI.
 
 ## Order of work
 
-1. Schema: `media_store` (0016), generated SQL and docs.
-2. `mediaStore()` async, from the row; `local` from the runtime; the env variables removed; the callers, the tick and
+1. Schema: `media_store` (0017), generated SQL and docs.
+2. `mediaStores()` from the rows, `storeFor(ref)`, store-aware `/m/` links; `local` from the runtime; the env variables removed; the callers, the tick and
    the tests (the fake world and the Node tests write a row).
 3. The `s3` store, the fake S3, conformance and presign tests; the conformance case on moved ids.
 4. Drive on OAuth: the connect flow, the store, the keep-alive (after section 3 is approved).

@@ -3275,8 +3275,55 @@ function uploadFile(url: string, file: File, onProgress: (sent: number) => void)
   })();
 }
 
-/** A new draft from this device: pick the media (slide order = the order picked), the project and the texts. */
-function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel: () => void }) {
+/** Sends one file to a presigned PUT (an S3 bucket) in one request: the store named the file before, so there's no
+ *  answer to read. Retried on a network error or a 5xx; XHR, for progress. */
+function putFile(url: string, headers: Record<string, string>, file: File, onProgress: (sent: number) => void) {
+  const once = () =>
+    new Promise<XMLHttpRequest>((resolve, reject) => {
+      const x = new XMLHttpRequest();
+      x.open("PUT", url);
+      for (const [k, v] of Object.entries(headers)) x.setRequestHeader(k, v);
+      x.upload.onprogress = (e) => onProgress(e.loaded);
+      x.onload = () => resolve(x);
+      x.onerror = () => reject(new Error("network"));
+      x.send(file);
+    });
+  return (async () => {
+    for (let tries = 0; ; tries++) {
+      let x: XMLHttpRequest | null = null;
+      try {
+        x = await once();
+      } catch {
+        x = null;
+      }
+      if (x && x.status >= 200 && x.status < 300) return;
+      if (x && x.status < 500)
+        throw new Error(
+          t("upload.failed", { file: file.name, status: `${x.status}: ${x.responseText.slice(0, 120)}` }),
+        );
+      if (tries >= 3)
+        throw new Error(
+          x
+            ? t("upload.failed", { file: file.name, status: x.status })
+            : t("upload.network", { file: file.name, percent: 0 }),
+        );
+      await new Promise((r) => setTimeout(r, 2000 * (tries + 1)));
+    }
+  })();
+}
+
+/** A new draft from this device: pick the media (slide order = the order picked), the store (when several take
+ *  uploads), the project and the texts. */
+function NewDraft({
+  stores,
+  onDone,
+  onCancel,
+}: {
+  stores: string[];
+  onDone: (id: string) => void;
+  onCancel: () => void;
+}) {
+  const [store, setStore] = useState(stores[0] ?? "");
   const groups = useLoad<{ groups: { channel: string; group: string }[] }>("queue/groups?days=120");
   const [files, setFiles] = useState<File[]>([]);
   const [project, setProject] = useState(remembered("draft.project"));
@@ -3304,16 +3351,22 @@ function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel
       const ids: string[] = [];
       let done = 0;
       for (const f of files) {
-        const { uploadUrl } = await api<{ uploadUrl: string }>("uploads/start", {
-          name: f.name,
-          mimeType: f.type,
-          size: f.size,
-        });
-        ids.push((await uploadFile(uploadUrl, f, (n) => setSent(done + n))).id);
+        const up = await api<{
+          uploadUrl: string;
+          headers: Record<string, string>;
+          chunked: boolean;
+          id: string | null;
+        }>("uploads/start", { name: f.name, mimeType: f.type, size: f.size, store });
+        const progress = (n: number) => setSent(done + n);
+        if (up.chunked) ids.push((await uploadFile(up.uploadUrl, f, progress)).id);
+        else {
+          await putFile(up.uploadUrl, up.headers, f, progress);
+          ids.push(up.id ?? "");
+        }
         done += f.size;
       }
       remember("draft.project", project);
-      const r = await api<{ id: string }>("drafts/new", { files: ids, project, name, ...texts });
+      const r = await api<{ id: string }>("drafts/new", { files: ids, project, name, store, ...texts });
       onDone(r.id);
     } catch (e) {
       setErr((e as Error).message);
@@ -3332,6 +3385,18 @@ function NewDraft({ onDone, onCancel }: { onDone: (id: string) => void; onCancel
         </label>
       </div>
       <p className="muted small">{t("draft.pickHelp")}</p>
+      {stores.length > 1 && (
+        <label>
+          {t("draft.store")}
+          <select value={store} onChange={(e) => setStore(e.target.value)} disabled={busy}>
+            {stores.map((s) => (
+              <option key={s} value={s}>
+                {s === "drive" || s === "s3" || s === "local" ? t(`store.${s}`) : s}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       {files.length > 0 && (
         <p className="muted small">
           {files.length > 1
@@ -3479,7 +3544,7 @@ function DraftsPage() {
   const {
     drafts: { data, error, reload, stale, at },
   } = useShared();
-  const uploads = useLoad<{ enabled: boolean }>("uploads/enabled");
+  const uploads = useLoad<{ enabled: boolean; stores: string[] }>("uploads/enabled");
   const noAccounts = useNoAccounts();
   const [open, setOpen] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -3533,6 +3598,7 @@ function DraftsPage() {
       )}
       {adding && (
         <NewDraft
+          stores={uploads.data?.stores ?? []}
           onCancel={() => setAdding(false)}
           onDone={(id) => {
             setAdding(false);
@@ -3885,6 +3951,35 @@ function VersionInfo() {
   );
 }
 
+/** Where the media are read from: the stores set up in the dashboard, read-only here. */
+function MediaStoresCard() {
+  const { data } = useLoad<{ stores: { kind: string; default: boolean; status: string; where: string | null }[] }>(
+    "media-stores",
+  );
+  if (!data) return null;
+  const name = (k: string) => (k === "drive" || k === "s3" || k === "local" ? t(`store.${k}`) : k);
+  return (
+    <div className="card">
+      <h2>{t("settings.media")}</h2>
+      {data.stores.length === 0 ? (
+        <p className="small warn">{t("settings.mediaNone")}</p>
+      ) : (
+        <ul className="small">
+          {data.stores.map((s) => (
+            <li key={s.kind}>
+              {name(s.kind)}
+              {s.where && <code> {s.where}</code>}
+              {s.default && <span className="muted"> ({t("settings.mediaDefault")})</span>}
+              {s.status !== "ok" && <span className="warn"> · {t("settings.mediaBroken")}</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="muted small">{t("settings.mediaNote")}</p>
+    </div>
+  );
+}
+
 /** The zone the app shows and takes times in: the user's own or the workspace's. Plans are stored in UTC, so changing
  *  it moves nothing; the app reloads to show every time in the new zone. */
 function TimeZoneCard({ me }: { me: Me }) {
@@ -4064,6 +4159,7 @@ function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
         {note("push")}
       </div>
       <TimeZoneCard me={me} />
+      <MediaStoresCard />
       <VersionInfo />
       <div className="card">
         <h2>{t("settings.thisDevice")}</h2>

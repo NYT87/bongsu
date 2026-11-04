@@ -12,7 +12,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneDate, zoneStamp } from "@bongsu/core/formats/time";
 import { mediaUrl } from "@bongsu/core/media";
-import { inStore, mediaStore } from "@bongsu/core/media/index";
+import { mediaStores, storeRows } from "@bongsu/core/media/index";
 import { isVideo, type MediaStore } from "@bongsu/core/media/store";
 import { platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
@@ -300,7 +300,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     "/app-api/drafts",
     wrap(async (c) => {
       const r = await ops.listDrafts(opctx(c), { status: c.req.query("status") });
-      const store = mediaStore(c.env, fetcher);
+      const stores = await mediaStores(c.env, fetcher);
       return {
         accounts: (await instagramAccounts(c.env.DB, me(c).workspaceId)).map((a) => a.id),
         drafts: await Promise.all(
@@ -310,9 +310,10 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
             return {
               ...d,
               previews: await Promise.all(
-                files
-                  .filter((f) => inStore(store, f))
-                  .map(async (f) => ({ name: f.name, mime: f.mime, url: await preview(c, store, f) })),
+                files.flatMap((f) => {
+                  const store = stores.for(f);
+                  return store ? [preview(c, store, f).then((url) => ({ name: f.name, mime: f.mime, url }))] : [];
+                }),
               ),
             };
           }),
@@ -396,7 +397,23 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       .run();
     return c.json({ ok: true });
   });
-  app.get("/app-api/uploads/enabled", (c) => c.json({ enabled: !!mediaStore(c.env, fetcher).createUpload }));
+  // The media stores, for Settings (read-only: they're set up in the dashboard; no settings or secrets here).
+  app.get("/app-api/media-stores", async (c) =>
+    c.json({
+      stores: (await storeRows(c.env.DB)).map((r) => ({
+        kind: r.kind,
+        default: r.isDefault,
+        status: r.status,
+        where: r.kind === "s3" ? String(r.settings.bucket ?? "") : null,
+      })),
+    }),
+  );
+  // The stores the app can upload to (the default first): the upload page offers a choice when there are several.
+  app.get("/app-api/uploads/enabled", async (c) => {
+    const stores = await mediaStores(c.env, fetcher);
+    const up = stores.uploadable.sort((a, b) => Number(b === stores.default) - Number(a === stores.default));
+    return c.json({ enabled: up.length > 0, stores: up.map((s) => s.id) });
+  });
   app.post(
     "/app-api/item/texts",
     owned(async (c) => {
@@ -436,8 +453,13 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     const tz = await zone(c);
     const r = await resolveItem(c.env, fetcher, c.req.query("key") ?? "", tz, me(c).workspaceId);
     if (!r) return c.json({ error: "this item isn't in the plan any more" }, 404);
-    const store = mediaStore(c.env, fetcher);
-    const media = await Promise.all(r.media.map(async (m) => ({ ...m, url: await preview(c, store, m) })));
+    const stores = await mediaStores(c.env, fetcher);
+    const media = await Promise.all(
+      r.media.map(async (m) => {
+        const store = stores.for(m);
+        return { ...m, url: store ? await preview(c, store, m) : null };
+      }),
+    );
     const p = r.posted ? await getPosted(c.env.DB, r.key) : null;
     const published = p ? { at: zoneStamp(p.published_at, tz), permalink: p.permalink } : null;
     // What the page shows: approve/options gets it back and refuses if the item changed since (nothing approved unseen).

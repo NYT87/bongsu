@@ -106,7 +106,7 @@ describe("Stories", () => {
       .filter((c) => c.slug === "INSTAGRAM_POST_IG_USER_MEDIA")
       .find((c) => c.args.media_type === "STORIES")!;
     expect(story.args).toMatchObject({ media_type: "STORIES" });
-    expect(String(story.args.image_url)).toContain(`/m/${img}.jpg`);
+    expect(String(story.args.image_url)).toContain(`/m/drive/${img}.jpg`);
     expect(story.args.caption).toBeUndefined();
     expect(await env.DB.prepare("SELECT source FROM posted WHERE item_key = ?1").bind(key).first("source")).toBe(
       "scheduler",

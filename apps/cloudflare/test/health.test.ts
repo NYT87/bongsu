@@ -4,7 +4,11 @@ import { upsertConnection } from "@bongsu/core/accounts";
 import { describe, expect, it } from "vitest";
 
 describe("/health", () => {
-  it("reports the migrated tables, the dry-run setting and no missing secrets", async () => {
+  it("reports the migrated tables, the dry-run setting, no missing secrets and the media stores", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    await env.DB.prepare(
+      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('s3', 1, '{}', 'ok', 0)",
+    ).run();
     const res = await exports.default.fetch("https://scheduler.test/health");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
@@ -12,7 +16,22 @@ describe("/health", () => {
       dry_run: env.DRY_RUN !== "0", // whatever wrangler.toml says (live since 2026-10-18)
       tables: ["api_keys", "audit", "drafts", "jobs", "locks", "push_subs"],
       missing_secrets: [],
+      media_stores: [{ kind: "s3", status: "ok", default: true }],
     });
+  });
+
+  it("needs ENCRYPTION_KEY once a media store keeps credentials", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    await env.DB.prepare(
+      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', 1, '{}', 'x', 'ok', 0)",
+    ).run();
+    const r = await createApp(fetch).request(
+      "https://scheduler.test/health",
+      {},
+      { ...env, ENCRYPTION_KEY: undefined },
+    );
+    expect(((await r.json()) as { missing_secrets: string[] }).missing_secrets).toContain("ENCRYPTION_KEY");
+    await env.DB.prepare("DELETE FROM media_store").run();
   });
 
   it("asks for a connection kind's secret only when such a connection exists", async () => {

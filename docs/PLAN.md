@@ -178,16 +178,15 @@ interface MediaStore {
   session, S3/R2 presigned PUT); otherwise the app hides the upload button.
 - **Move semantics:** stores without a native move (S3, R2) copy then remove the original; it is still a move, and no
   file leaves the store.
-- **One store per instance** to start (`MEDIA_STORE=drive|r2|s3|local` plus its credentials); per-account stores only
-  if someone needs them.
+- **Several stores per instance, one of each kind** (Phase 12), set up in the dashboard and kept in `media_store`;
+  every reference names its store, one store is the default. Per-account stores only if someone needs them.
 
 **Stores, in order:**
 
 | Store | When | Notes |
 |---|---|---|
-| `drive` | Phase 4 | today's code behind the interface; service account reads, owner OAuth (`drive.file`) uploads |
-| `r2` | after v1 (Phase 12) | a Worker binding on Cloudflare: no subrequest cost, presigned URLs, no Google setup at all; through the S3 API on Node |
-| `s3` | after v1 (Phase 12) | any S3-compatible service (AWS, Backblaze B2, MinIO), signed with `aws4fetch` (web-standard, runs on both runtimes) |
+| `drive` | Phase 4; Phase 12 | the owner's OAuth grant (Connect Google Drive, scope `drive`) for reads, moves and uploads |
+| `s3` | Phase 12 | any S3-compatible service (AWS, Cloudflare R2, Backblaze B2, MinIO), signed with `aws4fetch` (web-standard, runs on both runtimes); presigned GETs and PUTs. R2 goes through its S3 API: its Worker binding can't presign |
 | `local` | with the Node runtime (Phase 5) | a directory on the server's disk; `/m/` serves it |
 | Dropbox, OneDrive… | community | the same interface; the conformance tests define what "works" means |
 
@@ -761,11 +760,18 @@ of the project (2.6).
 
 ---
 
-### Phase 12: More media stores (after v1, 1 session each)
+### Phase 12: More media stores (after v1, 1 session each) — done 2026-11-03 (branch `feat/phase-12-media-stores`)
 
-- [ ] `r2` store (Worker binding on Cloudflare, S3 API on Node), with presigned uploads and presigned Instagram fetches.
-- [ ] `s3` store (S3-compatible, `aws4fetch`).
-- [ ] Setup docs for each, and the app's store status in Settings.
+Design: `docs/superpowers/specs/2026-11-03-phase12-media-stores-design.md`.
+
+- [x] R2 through the `s3` store's S3 API, with presigned uploads and presigned Instagram fetches. The Worker binding
+      was dropped: it can't presign, and a listing is one request per 1,000 keys, so subrequests don't call for it.
+- [x] `s3` store (S3-compatible, `aws4fetch`): AWS S3, R2, B2, MinIO; conformance against a fake and a real server.
+- [x] The stores set up in the dashboard (Media) and kept in `media_store`, several side by side with a default; the
+      environment variables (`MEDIA_STORE`, `DRIVE_SA_JSON`, `DRIVE_OWNER_OAUTH`) and the Drive service account gone.
+- [x] Connect Google Drive with the owner's Google app (scope `drive`), and the store's step in Get started.
+- [x] Setup docs for each (`drive.md`, `s3.md`), the stores' status in the app's Settings and `/health`, a weekly
+      check of each store.
 
 ### Phase 13: Workspaces and members (after v1, 2–3 sessions)
 

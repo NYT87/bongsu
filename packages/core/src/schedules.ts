@@ -9,6 +9,7 @@ import { dailyDigest } from "./digest";
 import type { Env } from "./env";
 import { scanInbox } from "./inbox";
 import { acquire, release } from "./lock";
+import { checkStores } from "./media/manage";
 import { sampleMetrics } from "./metrics";
 import { refreshConnections } from "./providers/refresh";
 import { postResults } from "./results";
@@ -20,7 +21,7 @@ export const SCHEDULES = [CRON_INSTAGRAM, CRON_SHORTS, CRON_INBOX] as const;
 export async function runSchedule(env: Env, fetcher: typeof fetch, cron: string, at: Date): Promise<void> {
   const deps = { fetch: fetcher, now: at };
   if (cron === CRON_INBOX) {
-    // The Drive inbox (drafts only: nothing is published), moving posted media aside, the daily digest, the 24 h
+    // The inbox in each media store (drafts only: nothing is published), moving posted media aside, the daily digest, the 24 h
     // results and new comments; runs while paused too (none of it publishes).
     const nowS = Math.floor(at.getTime() / 1000),
       holder = crypto.randomUUID();
@@ -36,6 +37,7 @@ export async function runSchedule(env: Env, fetcher: typeof fetch, cron: string,
         ["accounts", sampleAccounts], // each account's followers, once a day
         ["comments", pollComments],
         ["connections", refreshConnections], // Instagram tokens renewed weekly
+        ["media stores", checkStores], // each store still answers, weekly
       ] as const) {
         try {
           console.log(`${name}: ${JSON.stringify(await run(env, deps))}`);

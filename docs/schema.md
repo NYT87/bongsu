@@ -270,6 +270,22 @@ Media moved aside after publishing (to UPLOADS/_posted/), or refused by the stor
 Primary key: (store, media_id).
 Index `media_cleanup_item`: (item_key).
 
+## `media_store`
+
+The instance's media stores, one per kind: settings, encrypted credentials, last check, the default.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `kind` | id: drive / s3 / local | no |  | primary key; MediaRef.store |
+| `is_default` | bool | no | 0 | where nothing names a store |
+| `settings` | json | no | "{}" | nothing secret: endpoint, bucket, root… |
+| `credentials` | text | yes |  | encrypted (core/crypto.ts): the S3 keys or the Drive grant |
+| `status` | text: ok / broken | no | "ok" |  |
+| `last_error` | text | yes |  |  |
+| `last_checked_at` | timestamp | yes |  |  |
+| `updated_at` | timestamp | no |  |  |
+| `updated_by` | text | yes |  |  |
+
 ## `memberships`
 
 Who belongs to which workspace, and with what role.

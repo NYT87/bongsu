@@ -3,19 +3,18 @@
 
 import type { Env } from "@bongsu/core/env";
 import { serveMedia } from "@bongsu/core/media";
-import { mediaStore, storeId } from "@bongsu/core/media/index";
+import { mediaStores, storeRows } from "@bongsu/core/media/index";
 import { tableNames } from "@bongsu/core/sql";
 import { Hono } from "hono";
 import { apiRoutes } from "./agent/routes";
 import { adminRoutes } from "./dashboard/routes";
 import { appRoutes } from "./pwa/routes";
 
-/** Secrets every instance needs, the ones its media store needs, and the ones a kind of connection needs (only when
- *  one exists). */
+/** Secrets every instance needs, and the ones a kind of connection needs (only when one exists). The media stores'
+ *  credentials are in the database, encrypted: they need ENCRYPTION_KEY like the rest. */
 const SECRETS = ["MEDIA_SIGNING_KEY"] as const;
 /** Tables /health looks for: the database is reachable and migrated. */
 const CORE_TABLES = ["api_keys", "audit", "drafts", "jobs", "locks", "push_subs"];
-const SECRETS_FOR_STORE: Record<string, (keyof Env)[]> = { drive: ["DRIVE_SA_JSON"], local: ["MEDIA_DIR"] };
 const SECRETS_FOR: Record<string, (keyof Env)[]> = {
   composio: ["COMPOSIO_CONSUMER_KEY"],
   instagram: ["ENCRYPTION_KEY"], // renewed tokens are stored encrypted
@@ -25,7 +24,8 @@ const SECRETS_FOR: Record<string, (keyof Env)[]> = {
 export function createApp(fetcher: typeof fetch) {
   const app = new Hono<{ Bindings: Env }>();
 
-  // Liveness plus a configuration check: database reachable and migrated, which secrets are set (names only).
+  // Liveness plus a configuration check: database reachable and migrated, which secrets are set (names only), and the
+  // media stores (at least one, none broken).
   app.get("/health", async (c) => {
     const tables = (await tableNames(c.env.DB)).filter((n) => CORE_TABLES.includes(n));
     const providers = (await c.env.DB.prepare("SELECT DISTINCT provider FROM connections").all<{ provider: string }>())
@@ -33,29 +33,36 @@ export function createApp(fetcher: typeof fetch) {
     // anything stored encrypted (credentials, OAuth app secrets, ntfy topics) needs the key to be read back
     const encrypted = await c.env.DB.prepare(
       `SELECT 1 FROM connections WHERE credentials IS NOT NULL UNION ALL SELECT 1 FROM oauth_apps
-       UNION ALL SELECT 1 FROM workspace_settings WHERE notify_url IS NOT NULL LIMIT 1`,
+       UNION ALL SELECT 1 FROM workspace_settings WHERE notify_url IS NOT NULL
+       UNION ALL SELECT 1 FROM media_store WHERE credentials IS NOT NULL LIMIT 1`,
     ).first();
+    const rows = await storeRows(c.env.DB);
     const needed = [
       ...SECRETS,
-      ...(SECRETS_FOR_STORE[storeId(c.env)] ?? []),
       ...providers.flatMap((p) => SECRETS_FOR[p.provider] ?? []),
       ...(encrypted ? (["ENCRYPTION_KEY"] as const) : []),
     ];
     const missing = [...new Set(needed)].filter((k) => !c.env[k]);
-    const ok = tables.length === CORE_TABLES.length && missing.length === 0;
+    const media_stores = rows.map((r) => ({ kind: r.kind, status: r.status, default: r.isDefault }));
+    const ok =
+      tables.length === CORE_TABLES.length &&
+      missing.length === 0 &&
+      rows.length > 0 &&
+      rows.every((r) => r.status === "ok");
     return c.json(
       {
         ok,
         dry_run: c.env.DRY_RUN !== "0",
         tables: tables.sort(),
         missing_secrets: missing,
+        media_stores,
       },
       ok ? 200 : 503,
     );
   });
 
-  app.on(["GET", "HEAD"], "/m/:file", (c) =>
-    serveMedia(c.req.raw, c.env.MEDIA_SIGNING_KEY, mediaStore(c.env, fetcher), Math.floor(Date.now() / 1000)),
+  app.on(["GET", "HEAD"], "/m/:store/:file", async (c) =>
+    serveMedia(c.req.raw, c.env.MEDIA_SIGNING_KEY, await mediaStores(c.env, fetcher), Math.floor(Date.now() / 1000)),
   );
 
   // The agent API: REST /v1 and MCP /mcp, behind API keys (agent/).

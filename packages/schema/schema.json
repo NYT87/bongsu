@@ -1633,6 +1633,59 @@
           ]
         }
       ]
+    },
+    "media_store": {
+      "description": "The instance's media stores, one per kind: settings, encrypted credentials, last check, the default.",
+      "columns": {
+        "kind": {
+          "type": "id",
+          "primaryKey": true,
+          "values": [
+            "drive",
+            "s3",
+            "local"
+          ],
+          "description": "MediaRef.store"
+        },
+        "is_default": {
+          "type": "bool",
+          "notNull": true,
+          "default": 0,
+          "description": "where nothing names a store"
+        },
+        "settings": {
+          "type": "json",
+          "notNull": true,
+          "default": "{}",
+          "description": "nothing secret: endpoint, bucket, root…"
+        },
+        "credentials": {
+          "type": "text",
+          "description": "encrypted (core/crypto.ts): the S3 keys or the Drive grant"
+        },
+        "status": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "ok",
+            "broken"
+          ],
+          "default": "ok"
+        },
+        "last_error": {
+          "type": "text"
+        },
+        "last_checked_at": {
+          "type": "timestamp"
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updated_by": {
+          "type": "text"
+        }
+      }
     }
   }
 }
