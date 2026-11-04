@@ -3,7 +3,7 @@
 import { env } from "cloudflare:workers";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
-import { createSession } from "@bongsu/api/pwa/session";
+import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { connectionSecret, listAccounts } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
@@ -478,6 +478,30 @@ describe("connecting into the workspace the flow started from", () => {
     const back = await callback("youtube", { code: "g-code", state: url.searchParams.get("state")! });
     expect(back.location).toMatch(/^https:\/\/bongsu\.test\/dashboard\/connections\?connected=/);
     expect(await workspaceOf("UCours")).toBe("b");
+  });
+
+  it("an instance admin who is only an editor of the workspace connects there as its admin, in both apps", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    await member("x", "creator"); // makes workspace b
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', ?1, 'editor', 1)",
+    )
+      .bind(me)
+      .run();
+    expect((await call("/admin-api/workspaces/b/open", {})).status).toBe(200);
+    expect((await call("/admin-api/state")).json).toMatchObject({ role: "admin", instanceAdmin: true });
+    const url = new URL((await call("/admin-api/connect/youtube/start", {})).json.url as string);
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    const back = await callback("youtube", { code: "g-code", state: url.searchParams.get("state")! });
+    expect(back.location).toMatch(/^https:\/\/bongsu\.test\/dashboard\/connections\?connected=/);
+    expect(await workspaceOf("UCours")).toBe("b");
+    // the app: the same rights in the same workspace
+    const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { userId: me });
+    await setSessionWorkspace(env.DB, token, "b");
+    const ina = `bongsu_session=${token}`;
+    expect((await app(ina, "/app-api/me")).json).toMatchObject({ connects: true });
+    expect((await app(ina, "/app-api/connections")).status).toBe(200);
+    expect((await youtubeFromApp(ina)).location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?connected=/);
   });
 
   it("refuses to finish into a workspace the user left, or that was archived, since the start", async () => {

@@ -46,9 +46,10 @@ async function firstMembership(db: Db, userId: string, notCreator = false) {
 }
 
 /** The workspace a request works in: the one its session names (sessions.workspace_id) when the user is a member
- *  there, or an instance admin, and it isn't archived; else the user's first. `role` is the membership's, "admin" for
- *  an instance admin without one. Null when there's none: the request works nowhere. `notCreator`: the dashboard's
- *  first pick (firstMembership). */
+ *  there, or an instance admin, and it isn't archived; else the user's first. `role` is the membership's; an instance
+ *  admin's is "admin" in every workspace, whatever their membership there (an instance admin acts anywhere with an
+ *  admin's rights: this is the one place that decides it). Null when there's none: the request works nowhere.
+ *  `notCreator`: the dashboard's first pick (firstMembership). */
 export async function sessionWorkspace(
   db: Db,
   s: { userId: string; workspaceId: string | null },
@@ -56,7 +57,7 @@ export async function sessionWorkspace(
 ): Promise<{ workspaceId: string; role: Role | null; instanceAdmin: boolean } | null> {
   const instanceAdmin = await isInstanceAdmin(db, s.userId);
   const roleOf = (role: string | null | undefined): Role | null =>
-    isRole(role) ? role : instanceAdmin ? "admin" : null;
+    instanceAdmin ? "admin" : isRole(role) ? role : null;
   if (s.workspaceId) {
     const r = await db
       .prepare(

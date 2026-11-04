@@ -357,6 +357,25 @@ describe("a request's workspace", () => {
     expect((await ina("/admin-api/media-stores")).status).toBe(200);
   });
 
+  it("an instance admin with a lesser membership still acts there as an admin, everywhere", async () => {
+    for (const role of ["editor", "creator"]) {
+      await setRole("ina", role);
+      expect(await sessionWorkspace(env.DB, { userId: "ina", workspaceId: "default" }), role).toEqual({
+        workspaceId: "default",
+        role: "admin",
+        instanceAdmin: true,
+      });
+      const dash = await sessionIn("ina", "default");
+      expect((await dash("/admin-api/state")).json, role).toMatchObject({ role: "admin", instanceAdmin: true });
+      expect((await dash("/admin-api/members")).status, role).toBe(200);
+      const app = await sessionIn("ina", "default", "pwa");
+      expect((await app("/app-api/me")).json, role).toMatchObject({
+        connects: true,
+        scopes: expect.arrayContaining(["approve", "resume", "pause"]),
+      });
+    }
+  });
+
   it("the app's signed-in routes need a session: no default caller", async () => {
     const anon = caller("pwa", "");
     for (const path of ["/app-api/status", "/app-api/queue", "/app-api/me/timezone"])
