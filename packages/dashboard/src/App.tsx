@@ -2,7 +2,7 @@
 // page. Paths live under /dashboard/ (the Worker serves index.html for each).
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { APP_ONLY, api, manages } from "./api";
+import { APP_ONLY, api, manages, switchWorkspace } from "./api";
 import { Guide, GuideLink } from "./docs";
 import {
   AcceptInvite,
@@ -37,6 +37,10 @@ export interface State {
   /** Whether the instance has a workspace at all (archived ones too): an instance admin in none of them gets the
    *  Instance pages, not the first run's "create your first workspace". */
   anyWorkspace: boolean;
+  /** The session's workspace, if any. */
+  workspace: { id: string; name: string } | null;
+  /** The workspaces this person can open (creator-only ones left out): more than one gets the switcher. */
+  workspaces: { id: string; name: string; role: string }[];
   dryRun: boolean;
   publicUrl: string;
 }
@@ -63,6 +67,8 @@ const ADMINS_ONLY: readonly string[] = ["connections", "members", "settings"];
 /** What an instance admin in no workspace has besides the Instance group: their own passkeys and devices, and the
  *  instance's audit. */
 const OUTSIDE: readonly string[] = ["devices", "audit"];
+/** Pages that belong to no workspace: switching workspaces stays on them. */
+const NO_WORKSPACE: readonly string[] = ["workspaces", "media", "apps", "devices"];
 /** Pages reached from other pages, not the sidebar. */
 const HIDDEN = [["start", "Get started", GetStarted]] as const;
 
@@ -185,6 +191,7 @@ function Shell({
   onSignOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const instance = state.instanceAdmin ? INSTANCE : [];
   // an instance admin in no workspace: nothing of a workspace's, so the Instance group is where they land
   const outside = state.noWorkspace;
@@ -211,6 +218,16 @@ function Shell({
     </a>
   );
   const Body = current[2];
+  const switchTo = async (id: string) => {
+    setSwitchError(null);
+    try {
+      await switchWorkspace(id);
+      // a full reload loads the state again in the new workspace; the pages of one workspace's start over at Overview
+      location.assign(`/dashboard/${NO_WORKSPACE.includes(section) ? section : ""}`);
+    } catch (e) {
+      setSwitchError(e instanceof Error ? e.message : String(e));
+    }
+  };
   return (
     <div className="shell">
       <a className="skip" href="#main">
@@ -218,6 +235,26 @@ function Shell({
       </a>
       <aside className={`sidebar${open ? " open" : ""}`}>
         <Brand />
+        {state.workspace && (
+          <div className="workspace">
+            {state.workspaces.length > 1 ? (
+              <>
+                <label htmlFor="workspace-switch">Workspace</label>
+                <select id="workspace-switch" value={state.workspace.id} onChange={(e) => switchTo(e.target.value)}>
+                  {state.workspaces.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} ({w.role})
+                    </option>
+                  ))}
+                </select>
+              </>
+            ) : (
+              <div className="workspace-name" title="Workspace">
+                {state.workspace.name}
+              </div>
+            )}
+          </div>
+        )}
         <button type="button" className="menu-btn" aria-expanded={open} onClick={() => setOpen(!open)}>
           Menu
         </button>
@@ -264,6 +301,11 @@ function Shell({
       </aside>
       <main className="main" id="main" tabIndex={-1}>
         <div className="content">
+          {switchError && (
+            <div className="banner" role="alert">
+              {switchError}
+            </div>
+          )}
           {state.dryRun && (
             <div className="banner" role="status">
               <strong>Dry run:</strong> nothing is published.{" "}

@@ -4,6 +4,7 @@
 import { STATE_S } from "@bongsu/core/connections";
 import type { Db } from "@bongsu/core/db";
 import { sha256Hex } from "@bongsu/core/formats/approved";
+import { isMember, mayOpen, type OpenableWorkspace } from "@bongsu/core/workspaces";
 
 export type App = "pwa" | "dashboard";
 export const COOKIE: Record<App, string> = { pwa: "bongsu_session", dashboard: "bongsu_admin" };
@@ -110,6 +111,31 @@ export async function setSessionWorkspace(db: Db, token: string, workspaceId: st
     .prepare("UPDATE sessions SET workspace_id = ?1 WHERE token_hash = ?2")
     .bind(workspaceId, await sha256Hex(token))
     .run();
+}
+
+/** Switches the session to a workspace the user can open (core/workspaces.ts mayOpen; `notCreator`: the dashboard's):
+ *  the dashboard's and the app's switch, and the Workspaces page's "open". An instance admin coming into one they
+ *  aren't a member of leaves a `workspace_open` row in its audit, so its admins see it; a member moving between their
+ *  own workspaces leaves none. Null, and the session unchanged, when the user can't open it. */
+export async function openWorkspace(
+  db: Db,
+  token: string,
+  userId: string,
+  workspaceId: string,
+  nowS: number,
+  opts: { notCreator?: boolean } = {},
+): Promise<OpenableWorkspace | null> {
+  const w = await mayOpen(db, userId, workspaceId, opts);
+  if (!w) return null;
+  await setSessionWorkspace(db, token, w.id);
+  if (!(await isMember(db, userId, w.id)))
+    await db
+      .prepare(
+        "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'workspace_open', ?3, '{}', ?4, ?3)",
+      )
+      .bind(nowS, `user:${userId}`, w.id, userId)
+      .run();
+  return w;
 }
 
 export async function endSession(db: Db, token: string | null) {

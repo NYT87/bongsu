@@ -119,8 +119,8 @@ describe("notifications to the topics", () => {
     await setWorkspaceNtfy(e, "default", TOPIC, 0);
     await setWorkspaceNtfy(e, "b", "https://ntfy.example.com/b-topic", 0);
     const note = notifier(e, topics, 0);
-    await note.send({ title: "Published", text: "default's item" }, "default");
-    await note.send({ title: "Digest", text: "B's day" }, "b");
+    await note.send({ group: "published", title: "Published", text: "default's item" }, "default");
+    await note.send({ group: "digest", title: "Digest", text: "B's day" }, "b");
     expect(posted.map((p) => [p.url, p.title, p.body])).toEqual([
       [TOPIC, "Published", "default's item"],
       ["https://ntfy.example.com/b-topic", "Digest", "B's day"],
@@ -128,7 +128,7 @@ describe("notifications to the topics", () => {
     expect(posted.every((p) => p.redirect === "manual" && p.signal)).toBe(true);
     posted = [];
     await setWorkspaceNtfy(e, "b", null, 0);
-    await notifier(e, topics, 0).send({ title: "Digest", text: "B's day" }, "b");
+    await notifier(e, topics, 0).send({ group: "digest", title: "Digest", text: "B's day" }, "b");
     expect(posted).toEqual([]);
   });
 });

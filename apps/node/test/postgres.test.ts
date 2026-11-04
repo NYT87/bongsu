@@ -73,6 +73,19 @@ beforeAll(async () => {
   const applied = await migratePostgres(driver, join(__dirname, "../../../migrations/postgres"));
   expect(applied).toContain("0009_baseline.sql");
   expect(await migratePostgres(driver, join(__dirname, "../../../migrations/postgres"))).toEqual([]);
+  // 0021: notification settings per person and workspace; a device now belongs to its person alone
+  const cols = async (table: string) =>
+    (
+      (await db
+        .prepare(
+          `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = '${table}'`,
+        )
+        .all()) as {
+        results: { column_name: string }[];
+      }
+    ).results.map((r) => r.column_name);
+  expect(await cols("notify_prefs")).toContain("grp");
+  expect(await cols("push_subs")).not.toContain("workspace_id");
   // a fresh instance has no workspace or user (0018 drops the baseline's empty seed): the tests' own, as on SQLite
   expect(await db.prepare("SELECT COUNT(*) AS n FROM users").first()).toEqual({ n: 0 });
   await db.batch([

@@ -319,6 +319,20 @@ Who belongs to which workspace, and with what role.
 
 Primary key: (workspace_id, user_id).
 
+## `notify_prefs`
+
+A person's notification settings in a workspace: only the groups they changed from their role's default.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `workspace_id` | text | no |  | primary key |
+| `user_id` | text | no |  | primary key |
+| `grp` | text: needs_you / problems / published / inbox / digest | no |  | primary key |
+| `enabled` | int | no |  | 1 or 0 |
+| `updated_at` | timestamp | no |  |  |
+
+Primary key: (workspace_id, user_id, grp).
+
 ## `oauth_apps`
 
 The owner's own OAuth apps (Meta, Google): client id and encrypted secret.
@@ -465,7 +479,6 @@ Web Push subscriptions: the devices notifications go to.
 | `device` | text | yes |  |  |
 | `created_at` | timestamp | no | now |  |
 | `last_ok_at` | timestamp | yes |  |  |
-| `workspace_id` | text | no | "default" |  |
 | `user_id` | text | no | "owner" |  |
 
 ## `rate_limits`

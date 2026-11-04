@@ -118,6 +118,26 @@ main[tabindex="-1"]:focus {
 .brand img {
   border-radius: 8px;
 }
+/* the sidebar's workspace: its name, or a labelled select when the person has several */
+.workspace {
+  padding: 0 8px 12px;
+  font-size: 13px;
+}
+.workspace label {
+  display: block;
+  margin: 0 0 4px;
+  color: var(--muted);
+}
+.workspace select {
+  min-height: 38px;
+  font-size: 14px;
+}
+.workspace-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .nav a {
   display: block;
   padding: 9px 12px;
@@ -292,6 +312,11 @@ button.icon-btn:hover {
   .brand {
     padding: 0;
     flex: 1;
+  }
+  .workspace {
+    order: 3;
+    flex-basis: 100%;
+    padding: 8px 0 0;
   }
   .menu-btn {
     display: inline-flex;

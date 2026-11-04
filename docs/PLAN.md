@@ -778,10 +778,11 @@ Design: `docs/superpowers/specs/2026-11-03-phase12-media-stores-design.md`.
 Several separate sets of accounts in one deployment, each with its own people: managing other people's accounts
 without a deployment per person. The data model is already there (Phase 3).
 
-- [ ] Dashboard: create, rename and archive workspaces; a workspace switcher. (Part 1 delivered the Workspaces page,
+- [x] Dashboard: create, rename and archive workspaces; a workspace switcher. (Part 1 delivered the Workspaces page,
       for instance admins: list, create, rename, add an admin, archive, restore, and open one to work in it, and a
-      workspace's admins rename theirs in Settings. Left: the switcher, so someone in several workspaces still goes
-      through that page or their session's first workspace; tick this with part 2.)
+      workspace's admins rename theirs in Settings. Part 2 added the sidebar's switcher for anyone who can open more
+      than one workspace, `POST /admin-api/session/workspace`; the old `/workspaces/:id/open` stays as an alias for one
+      minor version.)
 - [x] **Members and invites:** invite by email: a one-time link always shown in the dashboard with Copy, sent by
       the `Mailer` too when one is configured; the invitee signs up with email + passkey and only sees the
       workspaces they're in (#107).
@@ -790,13 +791,15 @@ without a deployment per person. The data model is already there (Phase 3).
       per workspace; the first run makes an instance admin who creates the first workspace (#18, #19, #20).
 - [ ] Per-workspace: connections, accounts, media store root (e.g. its own Drive folder), agent keys, time zone,
       notifications. The OAuth apps (D10) can be shared by the instance or set per workspace.
-- [ ] PWA: a workspace picker when a user belongs to more than one; notifications say which workspace.
+- [x] PWA: a workspace picker when a user belongs to more than one; notifications say which workspace. (Part 2: the
+      header's bottom sheet; pushes carry `?w=` and a title prefix.)
 - [ ] Workspace icon, optional, set in the dashboard; the PWA header, the picker and the notifications show it;
       the installed app's icon stays the instance's (#141).
 - [ ] Your name, edited in the dashboard, and a display name per workspace, used wherever a person is named
       (#142).
-- [ ] Notifications per user and workspace (who gets what).
-- [ ] Isolation tests across every surface, including the cron and the media links.
+- [x] Notifications per user and workspace (who gets what). (Part 2: five groups, role defaults, `notify_prefs`.)
+- [ ] Isolation tests across every surface, including the cron and the media links. (Part 2 covers notifications:
+      pushes, groups and switching; the cron and the media links remain.)
 
 | Role | Can |
 |---|---|

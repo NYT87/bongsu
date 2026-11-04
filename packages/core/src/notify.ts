@@ -1,13 +1,17 @@
 // Notifications: always the audit log and the Worker log; also the workspace's ntfy topic when it has one (set in the
 // dashboard, core/ntfy.ts: the title goes in the Title header, the text in the body), and Web Push to the installed
-// app of the workspace's members. Every message names its workspace, and nothing of one workspace reaches another's
-// topic or devices.
+// app of the workspace's members whose setting for the note's group is on (core/push.ts). Nothing of one workspace
+// reaches another's topic or people. The topic belongs to one workspace, so its messages stay as built; a push says
+// which workspace it's from: its links carry `w` (the app switches to it), its tag holds the workspace (two
+// workspaces' notes about one item don't replace each other) and, for a person in more than one, its title starts
+// with the workspace's name.
 import type { Db } from "./db";
 import type { Env } from "./env";
 import { instanceAdmins, mailer } from "./mail";
 import { postNtfy, workspaceNtfy } from "./ntfy";
 import { sendPush } from "./push";
 import type { Note } from "./texts/notifications";
+import { workspaceRef, workspacesOf } from "./workspaces";
 
 /** A notification button: opens `url` (an app path like "/#/drafts", or a full URL). */
 export interface Action {
@@ -37,6 +41,14 @@ export function actionsFor(target: string | undefined, extra: Action[] = []): { 
   return { url: own.url, actions: [...extra, own].slice(0, 2) };
 }
 
+/** An app link that opens in `workspaceId`: "/#/item/x" → "/?w=<id>#/item/x". A link to another site is left alone. */
+export function withWorkspace(url: string, workspaceId: string): string {
+  if (!url.startsWith("/") || url.startsWith("//")) return url;
+  const u = new URL(url, "https://app.invalid");
+  u.searchParams.set("w", workspaceId);
+  return `${u.pathname}${u.search}${u.hash}`;
+}
+
 export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifier {
   const abs = (u: string) => (u.startsWith("/") ? `${env.PUBLIC_URL.replace(/\/$/, "")}${u}` : u);
   /** Each workspace's topic, read once per notifier. */
@@ -52,8 +64,27 @@ export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifie
       );
     return topics.get(ws) as Promise<string | null>;
   };
+  /** How many workspaces each person can open, and each workspace's name, read once per notifier. */
+  const counts = new Map<string, Promise<number>>();
+  const several = async (userId: string) => {
+    if (!counts.has(userId))
+      counts.set(
+        userId,
+        workspacesOf(env.DB, userId).then((ws) => ws.length),
+      );
+    return ((await counts.get(userId)) as number) > 1;
+  };
+  const names = new Map<string, Promise<string>>();
+  const nameOf = (ws: string) => {
+    if (!names.has(ws))
+      names.set(
+        ws,
+        workspaceRef(env.DB, ws).then((r) => r?.name ?? ws),
+      );
+    return names.get(ws) as Promise<string>;
+  };
   return {
-    async send({ title, text, target, actions: extra }, workspaceId) {
+    async send({ group, title, text, target, actions: extra }, workspaceId) {
       console.log(`notify: ${title}: ${text}`);
       await env.DB.prepare(
         "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, ?4)",
@@ -72,18 +103,20 @@ export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifie
         }
       }
       // A push message carries about 4 KB, so the text is cut (ntfy and the audit keep all of it).
+      const w = (u: string) => withWorkspace(u, workspaceId);
       await sendPush(
         env,
         fetcher,
         {
           title,
           body: text.slice(0, 1500),
-          url: a.url,
-          tag: target ?? undefined,
-          actions: a.actions.map((x, i) => ({ action: `a${i}`, title: x.label, url: x.url })),
+          url: w(a.url),
+          tag: target ? `${workspaceId}:${target}` : undefined,
+          actions: a.actions.map((x, i) => ({ action: `a${i}`, title: x.label, url: w(x.url) })),
         },
         nowS,
-        { workspaceId },
+        { workspaceId, group },
+        async (userId) => ((await several(userId)) ? `${await nameOf(workspaceId)} · ${title}` : title),
       );
     },
   };

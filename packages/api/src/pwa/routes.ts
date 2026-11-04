@@ -15,19 +15,22 @@ import { zoneDate, zoneStamp } from "@bongsu/core/formats/time";
 import { mediaUrl } from "@bongsu/core/media";
 import { mediaStores, storeRows } from "@bongsu/core/media/index";
 import { isVideo, type MediaStore } from "@bongsu/core/media/store";
+import { effectivePrefs, isNoteGroup, setPref } from "@bongsu/core/notify-prefs";
 import { platforms } from "@bongsu/core/platforms/index";
 import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs } from "@bongsu/core/providers/index";
 import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
-import { mayConnect } from "@bongsu/core/roles";
+import { isRole, mayConnect } from "@bongsu/core/roles";
 import { mayBeLive } from "@bongsu/core/tick";
 import {
   callerZone,
   FALLBACK_ZONE,
   sessionWorkspace,
   setUserZone,
+  workspaceRef,
   workspaceSettings,
+  workspacesOf,
   workspaceZone,
 } from "@bongsu/core/workspaces";
 import { type Context, Hono } from "hono";
@@ -41,6 +44,7 @@ import {
   createSession,
   endSession,
   oauthCookie,
+  openWorkspace,
   readCookie,
   type Session,
   sessionCookie,
@@ -57,7 +61,17 @@ import {
   verifyRegistration,
 } from "./webauthn";
 
-type Vars = { Bindings: Env; Variables: { caller: Caller; connects: boolean; needs: { scope: Scope | null } } };
+type Vars = {
+  Bindings: Env;
+  Variables: {
+    caller: Caller;
+    connects: boolean;
+    needs: { scope: Scope | null };
+    session: Session;
+    /** Tagged by the router (below): a route a signed-in person in no workspace still reaches. */
+    noWorkspace: true;
+  };
+};
 type C = Context<Vars>;
 // The app works as the signed-in user, in their session's workspace (core/workspaces.ts sessionWorkspace), with their
 // role's rights there (agent/auth.ts ROLE_SCOPES; an instance admin's are an admin's): approving and resuming need
@@ -75,7 +89,11 @@ const NEEDS: [string, Scope | null][] = [
   ["/app-api/connect/*", null],
   ["/app-api/logout", null],
   ["/app-api/me/timezone", null],
+  // switching workspaces is the person's own; where they may go is mayOpen's (session.ts openWorkspace)
+  ["/app-api/session/*", null],
   ["/app-api/push/*", null],
+  // a person's own notification settings
+  ["/app-api/notify-prefs", null],
   ["/app-api/client-error", null],
   ["/app-api/comments/seen", null],
 ];
@@ -194,6 +212,9 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       workspaceTimezone: caller ? await workspaceZone(c.env.DB, caller.workspaceId) : FALLBACK_ZONE,
       // the text the app shows (packages/web/src/i18n.ts): the workspace's, English for someone not signed in
       locale: caller ? (await workspaceSettings(c.env.DB, caller.workspaceId)).locale : "en",
+      // where the session works, and the picker's list (creators included: the app is theirs)
+      workspace: caller ? await workspaceRef(c.env.DB, caller.workspaceId) : null,
+      workspaces: s ? await workspacesOf(c.env.DB, s.userId) : [],
     });
   });
 
@@ -332,13 +353,21 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
 
-  // ---- everything else needs a session
+  // ---- everything else needs a session, and a workspace to work in, except for switching to one: someone whose
+  // session works nowhere (an instance admin in none) picks one there, as the dashboard's `session` area allows.
+  // Tagged by the router, before the check reads it.
+  app.use("/app-api/session/*", async (c, next) => {
+    c.set("noWorkspace", true);
+    await next();
+  });
   app.use("/app-api/*", async (c, next) => {
     const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
     if (!s) return c.json({ error: "sign in" }, 401);
+    c.set("session", s);
     const caller = await callerFor(c, s);
-    if (!caller) return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
-    c.set("caller", caller);
+    if (caller) c.set("caller", caller);
+    else if (!c.get("noWorkspace"))
+      return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     await next();
   });
   // ---- and a role that allows the change
@@ -922,6 +951,19 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
 
+  // Switch the app's session to another workspace the person can open (session.ts openWorkspace, creators included).
+  app.post(
+    "/app-api/session/workspace",
+    wrap(async (c) => {
+      // the app's session only: the dashboard's keeps its own workspace
+      const token = readCookie(c.req.header("Cookie"));
+      const id = String((await body(c)).id ?? "");
+      // the session's user, with or without a workspace now: mayOpen decides where they may go
+      const w = token && (await openWorkspace(c.env.DB, token, c.get("session").userId, id, nowS()));
+      if (!w) throw new ops.ApiError(403, "you can't open that workspace");
+      return { ok: true, id: w.id };
+    }),
+  );
   // The signed-in user's own time zone (null: the workspace's). Only how times are shown and entered changes: the
   // database keeps UTC, so nothing planned moves.
   app.post(
@@ -938,37 +980,30 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
 
-  // Web Push subscriptions for this device: they belong to the signed-in user, in their workspace (core/push.ts), and
-  // only a browser push service's endpoint is taken (Bongsu sends requests to it).
+  // Web Push subscriptions for this device: they belong to the signed-in user, in no particular workspace (each
+  // workspace's notes reach the members it should, core/push.ts), and only a browser push service's endpoint is taken
+  // (Bongsu sends requests to it).
   app.post("/app-api/push/subscribe", async (c) => {
     const b = (await body(c)) as { endpoint?: string; keys?: { p256dh?: string; auth?: string }; device?: string };
     const key = (v: unknown) => typeof v === "string" && /^[A-Za-z0-9_=-]{8,200}$/.test(v);
     if (typeof b.endpoint !== "string" || b.endpoint.length > 1000 || !isPushEndpoint(b.endpoint))
       return c.json({ error: "not a browser push service's address" }, 400);
     if (!key(b.keys?.p256dh) || !key(b.keys?.auth)) return c.json({ error: "bad subscription" }, 400);
-    const { userId, workspaceId } = me(c);
+    const { userId } = me(c);
     if (!userId) return c.json({ error: "sign in" }, 401);
-    // the same device signed in as someone else (or in another workspace) moves to them
+    // the same device signed in as someone else moves to them
     await c.env.DB.prepare(
-      `INSERT INTO push_subs (endpoint, p256dh, auth, device, created_at, user_id, workspace_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+      `INSERT INTO push_subs (endpoint, p256dh, auth, device, created_at, user_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
        ON CONFLICT (endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth, device = excluded.device,
-         user_id = excluded.user_id, workspace_id = excluded.workspace_id`,
+         user_id = excluded.user_id`,
     )
-      .bind(
-        b.endpoint,
-        b.keys!.p256dh,
-        b.keys!.auth,
-        String(b.device ?? "").slice(0, 80) || null,
-        nowS(),
-        userId,
-        workspaceId,
-      )
+      .bind(b.endpoint, b.keys!.p256dh, b.keys!.auth, String(b.device ?? "").slice(0, 80) || null, nowS(), userId)
       .run();
     return c.json({ subscribed: true });
   });
-  // A test to the caller's own devices only.
+  // A test to the caller's own devices only, whatever their notification settings.
   app.post("/app-api/push/test", async (c) => {
-    const { userId, workspaceId } = me(c);
+    const { userId } = me(c);
     if (!userId) return c.json({ error: "sign in" }, 401);
     return c.json(
       await sendPush(
@@ -976,9 +1011,38 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         fetcher,
         { title: "Bongsu", body: "Push notifications work on this device.", url: "/#/settings" },
         nowS(),
-        { workspaceId, userId },
+        { userId },
       ),
     );
+  });
+
+  // The signed-in person's own notification groups in the session's workspace (core/notify-prefs.ts): what they
+  // changed from their role's defaults. A person's own settings, so no scope; an agent key never reaches /app-api.
+  const prefsFor = async (c: C) => {
+    const { workspaceId } = me(c);
+    const userId = userOf(c);
+    // the person's own membership role, as push delivery uses (core/notify-prefs.ts receivers): an instance admin
+    // visiting a workspace they're not in gets no notes from it, so has nothing to set
+    const m = await c.env.DB.prepare("SELECT role FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
+      .bind(workspaceId, userId)
+      .first<{ role: string }>();
+    if (!m || !isRole(m.role))
+      return c.json({ error: "you get no notifications from a workspace you're not a member of" }, 403);
+    return { workspaceId, userId, role: m.role };
+  };
+  app.get("/app-api/notify-prefs", async (c) => {
+    const who = await prefsFor(c);
+    if (who instanceof Response) return who;
+    return c.json({ groups: await effectivePrefs(c.env.DB, who.workspaceId, who.userId, who.role) });
+  });
+  app.put("/app-api/notify-prefs", async (c) => {
+    const who = await prefsFor(c);
+    if (who instanceof Response) return who;
+    const b = await body(c);
+    if (!isNoteGroup(b.grp)) return c.json({ error: "unknown group" }, 400);
+    if (typeof b.enabled !== "boolean") return c.json({ error: "enabled is true or false" }, 400);
+    await setPref(c.env.DB, who.workspaceId, who.userId, who.role, b.grp, b.enabled, nowS());
+    return c.json({ groups: await effectivePrefs(c.env.DB, who.workspaceId, who.userId, who.role) });
   });
 
   return app;

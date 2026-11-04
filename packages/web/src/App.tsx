@@ -18,11 +18,17 @@ import {
   type Item,
   type MetricPoint,
   type Metrics,
+  type NoteGroup,
+  type NotifyPrefs,
+  notifyPrefs,
   type QueueItem,
   type Results,
+  setNotifyPref,
+  switchWorkspace,
 } from "./api";
 import { type ChartSeries, LineChart } from "./Chart";
 import { dateLocale, type Key, setLocale, t } from "./i18n";
+import { takeWorkspaceParam } from "./workspace-link";
 
 type Me = {
   signedIn: boolean;
@@ -42,6 +48,9 @@ type Me = {
   connects?: boolean;
   /** Signed in, but a member of no workspace (yet, or any more): nothing to show but "ask for an invite". */
   noWorkspace?: boolean;
+  /** Where the session works (null: in none), and every workspace the person can open, with their role there. */
+  workspace?: { id: string; name: string } | null;
+  workspaces?: { id: string; name: string; role: string }[];
 };
 type Status = {
   dry_run: boolean;
@@ -509,6 +518,7 @@ const ICON = {
     20,
   ),
   chevR: svg(<path d="M9 18l6-6-6-6" />, 22),
+  chevD: svg(<path d="M6 9l6 6 6-6" />, 14),
 };
 
 /** The app's mark at 32 px: the small mark drawn for that size (public/favicon.svg, from mark-small.svg). */
@@ -525,15 +535,48 @@ const TABS = [
   ["#/stats", "tabs.stats", ICON.stats],
 ] as const satisfies readonly (readonly [string, Key, ReactNode])[];
 
+/** Load `me`, first moving the session to `w` when that's another workspace (a push link's); a 403 there answers
+ *  `gone` with the session where it was. */
+async function loadMe(w: string | null): Promise<{ me: Me; gone: boolean }> {
+  let me = await api<Me>("me");
+  if (!w || !me.signedIn || me.workspace?.id === w) return { me, gone: false };
+  try {
+    await switchWorkspace(w);
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 403) return { me, gone: true };
+    throw e;
+  }
+  cachePrune(true); // the day's cache is the other workspace's
+  me = await api<Me>("me");
+  return { me, gone: false };
+}
+
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
+  // a push link into a workspace the person can no longer open: said once, instead of routing to its page
+  const [gone, setGone] = useState(false);
+  // A push link's workspace (?w=, core/notify.ts withWorkspace), taken off the address before the first route. It waits
+  // here until it's used: signed out, the person signs in first and then lands in that workspace.
+  const pending = useRef<string | null>(null);
+  if (pending.current === null && location.search) {
+    const { w, cleaned } = takeWorkspaceParam(location);
+    if (w) {
+      pending.current = w;
+      history.replaceState(history.state, "", cleaned);
+    }
+  }
   const hash = useHash();
   const refreshMe = useCallback(() => {
-    Promise.all([api<Me>("me"), api<{ platforms: PlatformInfo[] }>("platforms").catch(() => ({ platforms: [] }))])
-      .then(([m, p]) => {
+    Promise.all([
+      loadMe(pending.current),
+      api<{ platforms: PlatformInfo[] }>("platforms").catch(() => ({ platforms: [] })),
+    ])
+      .then(([{ me: m, gone }, p]) => {
+        if (m.signedIn) pending.current = null;
         setZone(m.timezone);
         setLocale(m.locale);
         setPlatforms(p.platforms);
+        setGone(gone);
         setMe(m);
       })
       .catch(() => setMe(null));
@@ -544,6 +587,26 @@ export function App() {
     return (
       <main className="center">
         <p className="muted">{t("common.loading")}</p>
+      </main>
+    );
+  if (gone && me.signedIn)
+    return (
+      <main className="center">
+        <h1 className="brand-title">
+          {LOGO}
+          {BRAND.name}
+        </h1>
+        <h2>{t("workspace.gone")}</h2>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => {
+            location.hash = "#/queue";
+            setGone(false);
+          }}
+        >
+          {t("workspace.toQueue")}
+        </button>
       </main>
     );
   // an invite link, signed in or not: joining signs in as the person invited, in the workspace they join
@@ -560,7 +623,8 @@ export function App() {
     );
   if (!me.signedIn) return <SignIn me={me} onDone={refreshMe} />;
   if (me.noWorkspace) return <NoWorkspace onSignOut={refreshMe} />;
-  return <SignedIn me={me} hash={hash} onSignOut={refreshMe} />;
+  // keyed by the workspace, so a switch starts every page and the shared lists over in the new one
+  return <SignedIn key={me.workspace?.id} me={me} hash={hash} onRefresh={refreshMe} />;
 }
 
 /** Signed in, in no workspace (removed, or never invited): every page would answer 403, so only this and the way
@@ -591,7 +655,7 @@ function NoWorkspace({ onSignOut }: { onSignOut: () => void }) {
 /** Where the item page's back link goes: the last list page the owner was on (Today when unknown). */
 let lastList = "#/";
 
-function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: () => void }) {
+function SignedIn({ me, hash, onRefresh }: { me: Me; hash: string; onRefresh: () => void }) {
   const shared = useSharedState();
   const route = hash.replace(/^#/, "");
   // Needs you and the tab badges come from their own requests: reload them with each page, and when the app comes
@@ -657,12 +721,14 @@ function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: ()
   ) : route.startsWith("/stats") ? (
     <StatsPage />
   ) : route.startsWith("/settings") ? (
-    <SettingsPage me={me} onSignOut={onSignOut} />
+    <SettingsPage me={me} onSignOut={onRefresh} />
   ) : route.startsWith("/comments") ? (
     <CommentsPage />
   ) : (
     <TodayPage />
   );
+  const [picking, setPicking] = useState(false);
+  const several = (me.workspaces?.length ?? 0) > 1;
   const toApprove = shared.attention.length + shared.overdue.length;
   const openDrafts = shared.drafts.data?.drafts.length ?? 0;
   const badge: Record<string, number> = { "#/queue": toApprove, "#/drafts": openDrafts };
@@ -674,10 +740,27 @@ function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: ()
             <a href="#/" className="brand" aria-label={t("header.brandToday", { name: BRAND.name })}>
               {LOGO}
             </a>
-            <h1 className="clip">
-              {title}
-              {me.dryRun && <span className="pill warn">{t("header.dryRun")}</span>}
-            </h1>
+            <div className="head-title">
+              <h1 className="clip">
+                {title}
+                {me.dryRun && <span className="pill warn">{t("header.dryRun")}</span>}
+              </h1>
+              {me.workspace &&
+                (several ? (
+                  <button
+                    type="button"
+                    className="ws-name"
+                    aria-haspopup="dialog"
+                    aria-label={`${t("workspace.switch")}: ${me.workspace.name}`}
+                    onClick={() => setPicking(true)}
+                  >
+                    <span className="clip">{me.workspace.name}</span>
+                    {ICON.chevD}
+                  </button>
+                ) : (
+                  <span className="ws-name clip">{me.workspace.name}</span>
+                ))}
+            </div>
             <span className="head-icons">
               <a
                 href="#/comments"
@@ -715,6 +798,7 @@ function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: ()
           )}
         </div>
         <main>{page}</main>
+        {picking && <WorkspaceSheet me={me} onClose={() => setPicking(false)} onSwitched={onRefresh} />}
         <nav aria-label={t("tabs.nav")}>
           {TABS.map(([h, key, icon]) => {
             const label = t(key);
@@ -745,6 +829,73 @@ function SignedIn({ me, hash, onSignOut }: { me: Me; hash: string; onSignOut: ()
         </nav>
       </SharedCtx.Provider>
     </MeCtx.Provider>
+  );
+}
+
+/** The header's picker: the workspaces the person can open, with their role in each. Choosing one moves the app's
+ *  session there (the dashboard's keeps its own) and opens its queue. A native modal dialog, docked to the bottom in
+ *  the thumb zone: it brings the focus trap, Escape and the backdrop. */
+function WorkspaceSheet({ me, onClose, onSwitched }: { me: Me; onClose: () => void; onSwitched: () => void }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    const d = ref.current;
+    if (d && !d.open) d.showModal?.();
+  }, []);
+  const pick = async (id: string) => {
+    if (id === me.workspace?.id) return onClose();
+    setBusy(id);
+    setErr(null);
+    try {
+      await switchWorkspace(id);
+      cachePrune(true); // the day's cache is the old workspace's
+      location.hash = "#/queue";
+      onSwitched();
+    } catch (e) {
+      setErr(e instanceof HttpError && e.status === 403 ? t("workspace.gone") : (e as Error).message);
+      setBusy(null);
+    }
+  };
+  return (
+    // biome-ignore lint/a11y/useKeyWithClickEvents: a tap on the scrim closes it; the keyboard has Escape and Cancel
+    <dialog
+      ref={ref}
+      className="sheet"
+      aria-label={t("workspace.switch")}
+      onClose={onClose}
+      onClick={(e) => e.target === ref.current && ref.current?.close()}
+    >
+      <h2>{t("workspace.switch")}</h2>
+      <ul className="sheet-list">
+        {(me.workspaces ?? []).map((w) => {
+          const here = w.id === me.workspace?.id;
+          return (
+            <li key={w.id}>
+              <button
+                type="button"
+                className={here ? "on" : ""}
+                aria-current={here ? "true" : undefined}
+                disabled={busy !== null}
+                onClick={() => pick(w.id)}
+              >
+                <span className="clip">{w.name}</span>
+                <span className="muted small">{w.role}</span>
+                {here && <span className="check-mark">{ICON.check}</span>}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {err && (
+        <p className="notice bad small" role="alert">
+          {err}
+        </p>
+      )}
+      <button type="button" onClick={() => ref.current?.close()}>
+        {t("common.cancel")}
+      </button>
+    </dialog>
   );
 }
 
@@ -4248,6 +4399,57 @@ function TimeZoneCard({ me }: { me: Me }) {
   );
 }
 
+const GROUP_TEXT: Record<NoteGroup, [Key, Key]> = {
+  needs_you: ["notify.needs_you", "notify.needs_youNote"],
+  problems: ["notify.problems", "notify.problemsNote"],
+  published: ["notify.published", "notify.publishedNote"],
+  inbox: ["notify.inbox", "notify.inboxNote"],
+  digest: ["notify.digest", "notify.digestNote"],
+};
+
+/** The person's five notification groups in this workspace (core/notify-prefs.ts), under the device's own switch:
+ *  what this workspace sends to their devices. Someone who isn't a member here (an instance admin visiting) gets
+ *  nothing from it, and the server says so instead of the switches. */
+function NotifyGroups({ me }: { me: Me }) {
+  const [prefs, setPrefs] = useState<NotifyPrefs | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<NoteGroup | null>(null);
+  useEffect(() => {
+    notifyPrefs()
+      .then(setPrefs)
+      .catch((e: Error) => setErr(e.message));
+  }, []);
+  const set = (grp: NoteGroup, enabled: boolean) => {
+    setBusy(grp);
+    setErr(null);
+    setNotifyPref(grp, enabled)
+      .then(setPrefs)
+      .catch((e: Error) => setErr(e.message))
+      .finally(() => setBusy(null));
+  };
+  return (
+    <div className="groups">
+      <h3>{t("settings.groups", { name: me.workspace?.name ?? "" })}</h3>
+      {prefs?.groups.map(({ grp, enabled, isDefault }) => (
+        <div key={grp} className="group">
+          <Switch on={enabled} disabled={busy !== null} onChange={(on) => set(grp, on)} label={t(GROUP_TEXT[grp][0])} />
+          <p className="muted small">
+            {t(GROUP_TEXT[grp][1])}
+            {isDefault && ` · ${t("settings.groupDefault")}`}
+          </p>
+        </div>
+      ))}
+      {!prefs && !err && <p className="muted small">{t("common.loading")}</p>}
+      {err && (
+        <p className={`notice small ${prefs ? "bad" : ""}`} role="status">
+          {err}
+        </p>
+      )}
+      {(me.workspaces?.length ?? 0) > 1 && <p className="muted small">{t("settings.groupsOther")}</p>}
+    </div>
+  );
+}
+
 /** How to unblock notifications once the browser remembers "Block" (it won't ask again by itself). */
 function unblockHelp(): string {
   const brave = "brave" in navigator;
@@ -4366,6 +4568,7 @@ function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
           </button>
         </div>
         {note("push")}
+        <NotifyGroups me={me} />
       </div>
       {me.connects && <ConnectCard />}
       <TimeZoneCard me={me} />

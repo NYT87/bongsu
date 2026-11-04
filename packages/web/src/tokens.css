@@ -17,6 +17,8 @@
   --on-banner: #ffffff;
   --media: #000000;
   --qr-tile: #ffffff;
+  /* behind a sheet: dims the page so the sheet reads as on top without a shadow */
+  --scrim: rgb(15 23 42 / 0.4);
   /* channel code: four hues kept apart from each other and from the status colours */
   --reel: #7c3aed;
   --post: #0891b2;
@@ -42,6 +44,7 @@
     --bad: #f87171;
     --on-warn: #0f172a;
     --on-accent: #052e16;
+    --scrim: rgb(0 0 0 / 0.6);
     --reel: #a78bfa;
     --post: #22d3ee;
     --main: #f472b6;

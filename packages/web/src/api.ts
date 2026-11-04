@@ -9,9 +9,13 @@ export class HttpError extends Error {
   }
 }
 
-export async function api<T = Record<string, unknown>>(path: string, body?: unknown): Promise<T> {
+export async function api<T = Record<string, unknown>>(
+  path: string,
+  body?: unknown,
+  method: "GET" | "POST" | "PUT" = body === undefined ? "GET" : "POST",
+): Promise<T> {
   const r = await fetch(`/app-api/${path}`, {
-    method: body === undefined ? "GET" : "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -20,6 +24,17 @@ export async function api<T = Record<string, unknown>>(path: string, body?: unkn
   if (!r.ok) throw new HttpError(r.status, String(data.error ?? r.statusText), data);
   return data as T;
 }
+
+/** Move the app's session to another workspace the person can open; 403 when they can't (any more). */
+export const switchWorkspace = (id: string) => api<{ ok: true; id: string }>("session/workspace", { id });
+
+/** The five kinds of notification a member gets from a workspace (core/notify-prefs.ts), in this order. */
+export type NoteGroup = "needs_you" | "problems" | "published" | "inbox" | "digest";
+/** The signed-in person's groups in the session's workspace: on or off, and whether that's still their role's default. */
+export type NotifyPrefs = { groups: { grp: NoteGroup; enabled: boolean; isDefault: boolean }[] };
+export const notifyPrefs = () => api<NotifyPrefs>("notify-prefs");
+export const setNotifyPref = (grp: NoteGroup, enabled: boolean) =>
+  api<NotifyPrefs>("notify-prefs", { grp, enabled }, "PUT");
 
 export interface QueueItem {
   key: string;
