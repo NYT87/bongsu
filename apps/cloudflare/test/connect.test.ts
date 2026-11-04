@@ -28,29 +28,49 @@ let w: World;
 let cookie = "";
 /** The bootstrapped user (an instance admin, the default workspace's admin here). */
 let me = "";
-async function call(path: string, body?: unknown, withCookie = true) {
+/** This browser's connect-flow cookies (bongsu_oauth) by their path, as the starts set and the callbacks clear them. */
+let flows = new Map<string, string>();
+/** Keeps the response's cookies: the flows' in `flows`, the dashboard session's in `cookie` (`session`); returns them
+ *  all. */
+function keepCookies(r: Response, session = true) {
+  const sets = r.headers.getSetCookie();
+  for (const set of sets) {
+    const pair = set.split(";")[0];
+    if (pair.startsWith("bongsu_oauth=")) {
+      const path = /Path=([^;]+)/.exec(set)?.[1] ?? "/";
+      if (set.includes("Max-Age=0")) flows.delete(path);
+      else flows.set(path, pair);
+    } else if (session && !set.includes("Max-Age=0")) cookie = pair;
+  }
+  return sets;
+}
+async function call(path: string, body?: unknown, withCookie = true, flowCookie?: string | null) {
+  const cookies = [cookie && withCookie ? cookie : "", flowCookie ?? ""].filter(Boolean).join("; ");
   const r = await adminRoutes(w.fetch, fake).request(
     `https://bongsu.test${path}`,
     {
       method: body === undefined ? "GET" : "POST",
-      headers: { "Content-Type": "application/json", ...(cookie && withCookie ? { Cookie: cookie } : {}) },
+      headers: { "Content-Type": "application/json", ...(cookies ? { Cookie: cookies } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     },
     e,
   );
-  const set = r.headers.get("Set-Cookie");
-  if (set && !set.includes("Max-Age=0")) cookie = set.split(";")[0];
+  const setCookies = keepCookies(r);
   const text = await r.text();
   return {
     status: r.status,
     location: r.headers.get("Location"),
+    setCookies,
     json: (text.startsWith("{") ? JSON.parse(text) : {}) as Record<string, unknown>,
   };
 }
 
-/** The provider sending the browser back: no dashboard cookie (it's SameSite=Strict). */
-const callback = (provider: string, q: Record<string, string>) =>
-  call(`/admin-api/connect/${provider}/callback?${new URLSearchParams(q)}`, undefined, false);
+/** The provider sending the browser back: no dashboard cookie (it's SameSite=Strict), but the flow's cookie for this
+ *  callback (SameSite=Lax), unless `browser` says which one to send (null: none). */
+const callback = (provider: string, q: Record<string, string>, browser?: string | null) => {
+  const path = `/admin-api/connect/${provider}/callback`;
+  return call(`${path}?${new URLSearchParams(q)}`, undefined, false, browser === undefined ? flows.get(path) : browser);
+};
 const backParams = (location: string | null) => Object.fromEntries(new URL(location ?? "https://x/").searchParams);
 
 const META = { clientId: "meta-app-id", clientSecret: "meta-app-secret" };
@@ -58,6 +78,7 @@ const GOOGLE = { clientId: "google-app.apps.googleusercontent.com", clientSecret
 
 beforeEach(async () => {
   cookie = "";
+  flows = new Map();
   w = new World();
   await env.DB.batch(
     [
@@ -210,6 +231,88 @@ describe("Connect Instagram (Instagram Login)", () => {
     const r = await call("/admin-api/connect/instagram/paste", { value: "ig-token-1" });
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ label: "@demo_cycling", accounts: [{ id: "demo_cycling", created: false }] });
+  });
+});
+
+describe("a flow finishes only in the browser that started it", () => {
+  const stateOf = (r: { json: Record<string, unknown> }) => new URL(r.json.url as string).searchParams.get("state")!;
+  const IG = "/admin-api/connect/instagram/callback";
+  const unused = () =>
+    env.DB.prepare("SELECT COUNT(*) AS n FROM oauth_states WHERE used_at IS NULL").first<number>("n");
+
+  it("the start sets a Lax cookie for the callback alone, which sends it back and clears it", async () => {
+    await call("/admin-api/oauth-apps/meta", META);
+    const start = await call("/admin-api/connect/instagram/start", {});
+    const set = start.setCookies.find((x) => x.startsWith("bongsu_oauth="))!;
+    expect(set).toMatch(
+      /^bongsu_oauth=[A-Za-z0-9_-]{43}; Path=\/admin-api\/connect\/instagram\/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=900$/,
+    );
+    // only its hash is kept
+    const value = set.split(";")[0].split("=")[1];
+    const row = await env.DB.prepare("SELECT browser_hash FROM oauth_states").first<string>("browser_hash");
+    expect(row).toMatch(/^[0-9a-f]{64}$/);
+    expect(row).not.toContain(value);
+
+    const back = await callback("instagram", { code: "ig-code", state: stateOf(start) });
+    expect(backParams(back.location)).toMatchObject({ connected: "@demo_cycling" });
+    expect(back.setCookies).toEqual([
+      "bongsu_oauth=x; Path=/admin-api/connect/instagram/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+    ]);
+    expect(flows.size).toBe(0);
+  });
+
+  it("refuses a callback without the cookie, with another flow's or a forged one, and spends no code", async () => {
+    await call("/admin-api/oauth-apps/meta", META);
+    const mine = await call("/admin-api/connect/instagram/start", {});
+    const myCookie = flows.get(IG)!;
+    // someone else's flow, started in their own browser, its link sent to this one
+    flows = new Map();
+    const theirs = await call("/admin-api/connect/instagram/start", {});
+    const theirCookie = flows.get(IG)!;
+    for (const browser of [null, myCookie, "bongsu_oauth=forged-value-forged-value-forged-value-forged-va"]) {
+      const r = await callback("instagram", { code: "ig-code", state: stateOf(theirs) }, browser);
+      expect(r.status).toBe(302);
+      expect(backParams(r.location).error).toMatch(/isn't valid/);
+      expect(r.location).toMatch(/\/dashboard\/connections\?/);
+      expect(r.setCookies[0]).toMatch(/^bongsu_oauth=x; Path=\/admin-api\/connect\/instagram\/callback;.*Max-Age=0$/);
+    }
+    expect(w.igCodes).toEqual([]); // the token endpoint was never called
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM connections WHERE provider = 'instagram'").first()).toEqual({
+      n: 0,
+    });
+    // a refused callback doesn't use the state up: each flow still finishes in its own browser
+    expect(await unused()).toBe(2);
+    expect(
+      backParams((await callback("instagram", { code: "ig-code", state: stateOf(theirs) }, theirCookie)).location),
+    ).toMatchObject({ connected: "@demo_cycling" });
+    expect(
+      backParams((await callback("instagram", { code: "ig-code", state: stateOf(mine) }, myCookie)).location),
+    ).toMatchObject({ connected: "@demo_cycling" });
+    expect(w.igCodes).toHaveLength(2);
+  });
+
+  it("refuses a flow started before the browser was kept (no browser_hash)", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    const start = await call("/admin-api/connect/youtube/start", {});
+    await env.DB.prepare("UPDATE oauth_states SET browser_hash = NULL").run();
+    const r = await callback("youtube", { code: "g-code", state: stateOf(start) });
+    expect(backParams(r.location).error).toMatch(/isn't valid.*start again/);
+    expect(w.googleCodes).toEqual([]);
+  });
+
+  it("binds YouTube's flow too: without the cookie, Google's code isn't exchanged", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    const start = await call("/admin-api/connect/youtube/start", {});
+    expect(start.setCookies.find((x) => x.startsWith("bongsu_oauth="))).toContain(
+      "Path=/admin-api/connect/youtube/callback;",
+    );
+    const mine = flows.get("/admin-api/connect/youtube/callback")!;
+    w.googleChallenge = new URL(start.json.url as string).searchParams.get("code_challenge")!;
+    const r = await callback("youtube", { code: "g-code", state: stateOf(start) }, null);
+    expect(backParams(r.location).error).toMatch(/isn't valid/);
+    expect(w.googleCodes).toEqual([]);
+    const back = await callback("youtube", { code: "g-code", state: stateOf(start) }, mine);
+    expect(backParams(back.location)).toMatchObject({ connected: "Our Channel" });
   });
 });
 
@@ -372,6 +475,7 @@ describe("connecting into the workspace the flow started from", () => {
       },
       e,
     );
+    keepCookies(r, false); // the same browser as the dashboard's: the flow's cookie goes to the dashboard's callback
     return { status: r.status, json: (await r.json().catch(() => ({}))) as Record<string, unknown> };
   };
   const workspaceOf = (externalId: string) =>
@@ -421,6 +525,26 @@ describe("connecting into the workspace the flow started from", () => {
     const s = new URL(denied.json.url as string).searchParams.get("state")!;
     const cancelled = await callback("youtube", { error: "access_denied", state: s });
     expect(cancelled.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?error=/);
+  });
+
+  it("an app flow sets its cookie in the app's browser; a link opened elsewhere connects nothing", async () => {
+    await call("/admin-api/oauth-apps/google", GOOGLE);
+    const cara = await member("cara", "creator");
+    const start = await app(cara, "/app-api/connect/youtube/start", {});
+    const path = "/admin-api/connect/youtube/callback";
+    const caraBrowser = flows.get(path)!;
+    expect(caraBrowser).toMatch(/^bongsu_oauth=/);
+    const url = new URL(start.json.url as string);
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    // cara sends Google's link to someone else, who allows it in their browser
+    const elsewhere = await callback("youtube", { code: "g-code", state: url.searchParams.get("state")! }, null);
+    expect(backParams(elsewhere.location).error).toMatch(/isn't valid/);
+    expect(w.googleCodes).toEqual([]);
+    expect(await workspaceOf("UCours")).toBeNull();
+    // in cara's own browser it finishes, back in the app
+    const back = await callback("youtube", { code: "g-code", state: url.searchParams.get("state")! }, caraBrowser);
+    expect(back.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?connected=/);
+    expect(await workspaceOf("UCours")).toBe("b");
   });
 
   it("refuses editors, in the app as in the dashboard", async () => {

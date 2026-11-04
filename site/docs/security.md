@@ -63,6 +63,18 @@ least an hour ahead, and each move is audited (`release_move`) and notified. See
 The `metrics` scope, also in no default set, lets a key upload metrics samples (`ingest_metrics`, audited): numbers
 only, at least an hour old, into the series the charts read; it reaches nothing an approval covers.
 
+## Connecting accounts
+
+Connect Instagram, Connect YouTube (from the dashboard or the app) and Connect Google Drive are OAuth flows with your
+own OAuth apps, whose client secrets are stored encrypted. Each flow keeps its `state` (hashed) and PKCE verifier on
+the server, single use, for 15 minutes. It also belongs to the browser that started it: the start sets a random,
+HTTP-only cookie (`bongsu_oauth`, `SameSite=Lax`, sent only to that flow's callback, 15 minutes) and keeps its hash, and
+the callback finishes the flow only when the cookie comes back and matches, compared in constant time, before the
+provider's code is exchanged; it clears the cookie either way. So a provider link sent to someone else connects nothing:
+their browser has no cookie, the code is never spent and the flow can still be finished where it started. A flow
+started before this check existed is refused; start it again. The connection lands in the workspace the flow started
+from, if its starter may still connect there.
+
 ## Media links
 
 Instagram downloads media from `/m/<drive id>?exp=<unix time>&sig=<HMAC-SHA256>`. Links expire (6 hours) and are

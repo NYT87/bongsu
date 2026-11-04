@@ -8,6 +8,7 @@ import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { clearTokenCache } from "@bongsu/core/clients/google";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
+import { sha256Hex } from "@bongsu/core/formats/approved";
 import { scanInbox } from "@bongsu/core/inbox";
 import { type Mail, registerMailer } from "@bongsu/core/mail";
 import { mediaStores } from "@bongsu/core/media/index";
@@ -31,30 +32,42 @@ const fake: Verifiers = {
 let e: Env;
 let w: World;
 let cookie = "";
-async function call(path: string, body?: unknown, withCookie = true) {
+/** The Drive flow's cookie (bongsu_oauth) in this browser, as the start sets it and the callback clears it. */
+let driveFlow = "";
+async function call(path: string, body?: unknown, withCookie = true, flowCookie?: string) {
+  const cookies = [cookie && withCookie ? cookie : "", flowCookie ?? ""].filter(Boolean).join("; ");
   const r = await adminRoutes(w.fetch, fake).request(
     `https://bongsu.test${path}`,
     {
       method: body === undefined ? "GET" : "POST",
-      headers: { "Content-Type": "application/json", ...(cookie && withCookie ? { Cookie: cookie } : {}) },
+      headers: { "Content-Type": "application/json", ...(cookies ? { Cookie: cookies } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     },
     e,
   );
-  const set = r.headers.get("Set-Cookie");
-  if (set && !set.includes("Max-Age=0")) cookie = set.split(";")[0];
+  const setCookies = r.headers.getSetCookie();
+  for (const set of setCookies) {
+    if (set.startsWith("bongsu_oauth=")) driveFlow = set.includes("Max-Age=0") ? "" : set.split(";")[0];
+    else if (!set.includes("Max-Age=0")) cookie = set.split(";")[0];
+  }
   const text = await r.text();
   return {
     status: r.status,
     location: r.headers.get("Location"),
+    setCookies,
     json: (text.startsWith("{") ? JSON.parse(text) : {}) as Record<string, unknown>,
   };
 }
+/** Google sending the browser back to Drive's callback: no dashboard cookie (SameSite=Strict), the flow's cookie
+ *  (SameSite=Lax) unless `flowCookie` says which to send. */
+const driveCallback = (q: string, flowCookie: string = driveFlow) =>
+  call(`/admin-api/media-stores/drive/callback?${q}`, undefined, false, flowCookie);
 const AT = new Date("2026-10-20T00:00:00Z");
 const S3_FORM = { ...TEST_S3_SETTINGS, ...TEST_S3_KEYS };
 
 beforeEach(async () => {
   cookie = "";
+  driveFlow = "";
   w = new World();
   await env.DB.batch(
     [
@@ -208,11 +221,7 @@ describe("Connect Google Drive", () => {
 
     const url2 = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
     w.googleChallenge = url2.searchParams.get("code_challenge")!;
-    const back = await call(
-      `/admin-api/media-stores/drive/callback?code=g-code&state=${url2.searchParams.get("state")}`,
-      undefined,
-      false,
-    );
+    const back = await driveCallback(`code=g-code&state=${url2.searchParams.get("state")}`);
     expect(back.location).toBe("https://bongsu.test/dashboard/media?connected=drive");
     const stores = await mediaStores(e, w.fetch);
     expect(stores.default?.id).toBe("drive");
@@ -224,12 +233,47 @@ describe("Connect Google Drive", () => {
     const url = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
     w.googleChallenge = url.searchParams.get("code_challenge")!;
     w.googleGrantScope = "https://www.googleapis.com/auth/drive.file";
-    const back = await call(
-      `/admin-api/media-stores/drive/callback?code=g-code&state=${url.searchParams.get("state")}`,
-      undefined,
-      false,
-    );
+    const back = await driveCallback(`code=g-code&state=${url.searchParams.get("state")}`);
     expect(new URL(back.location!).searchParams.get("error")).toMatch(/didn't grant access to Drive/);
+  });
+
+  it("finishes only in the browser that started it: no cookie, another flow's or a forged one spends no code", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
+    const first = await call("/admin-api/media-stores/drive/start", {});
+    const firstCookie = driveFlow;
+    const start = await call("/admin-api/media-stores/drive/start", {});
+    const mine = driveFlow;
+    expect(start.setCookies.find((x) => x.startsWith("bongsu_oauth="))).toMatch(
+      /^bongsu_oauth=[A-Za-z0-9_-]{43}; Path=\/admin-api\/media-stores\/drive\/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=900$/,
+    );
+    const url = new URL(start.json.url as string);
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    w.googleGrantScope = "https://www.googleapis.com/auth/drive";
+    w.drivePut("UPLOADS/inbox/keep.txt", { md5: "k", mimeType: "text/plain" });
+    const q = `code=g-code&state=${url.searchParams.get("state")}`;
+    for (const flowCookie of ["", firstCookie, "bongsu_oauth=forged-value-forged-value-forged-value-forged-va"]) {
+      const r = await driveCallback(q, flowCookie);
+      expect(new URL(r.location!).searchParams.get("error")).toMatch(/isn't valid/);
+      expect(r.setCookies).toEqual([
+        "bongsu_oauth=x; Path=/admin-api/media-stores/drive/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=0",
+      ]);
+    }
+    expect(w.googleCodes).toEqual([]); // Google's token endpoint was never called
+    expect((await mediaStores(e, w.fetch)).default?.id).not.toBe("drive");
+    // a flow started before the browser was kept can't finish, even with its cookie
+    const firstState = new URL(first.json.url as string).searchParams.get("state");
+    await env.DB.prepare(
+      "UPDATE oauth_states SET browser_hash = NULL WHERE provider = 'media:drive' AND state_hash <> ?1",
+    )
+      .bind(await sha256Hex(url.searchParams.get("state")!))
+      .run();
+    const old = await driveCallback(`code=g-code&state=${firstState}`, firstCookie);
+    expect(new URL(old.location!).searchParams.get("error")).toMatch(/isn't valid/);
+    expect(w.googleCodes).toEqual([]);
+    // the refusals didn't use the state up: in the browser that started it, the flow finishes
+    expect((await driveCallback(q, mine)).location).toBe("https://bongsu.test/dashboard/media?connected=drive");
+    expect(w.googleCodes).toHaveLength(1);
   });
 });
 

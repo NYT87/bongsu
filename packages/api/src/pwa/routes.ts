@@ -40,6 +40,7 @@ import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
 import {
   createSession,
   endSession,
+  oauthCookie,
   readCookie,
   type Session,
   sessionCookie,
@@ -550,14 +551,16 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       connector(c);
       const b = await body(c);
       try {
-        const url = await startConnect(c.env, c.req.param("provider") ?? "", {
+        const flow = await startConnect(c.env, c.req.param("provider") ?? "", {
           userId: userOf(c),
           workspaceId: me(c).workspaceId,
           back: "app",
           reconnect: typeof b.reconnect === "string" ? b.reconnect : null,
           nowS: nowS(),
         });
-        return { url };
+        // only this browser can finish the flow at the dashboard's callback (core/connections.ts authorizeUrl)
+        c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
+        return { url: flow.url };
       } catch (e) {
         if (e instanceof ConnectError) throw new ops.ApiError(400, e.message);
         throw e;

@@ -854,6 +854,10 @@
         "workspace_id": {
           "type": "text",
           "description": "the workspace the flow connects into; NULL: the instance's (Drive)"
+        },
+        "browser_hash": {
+          "type": "text",
+          "description": "sha256 of the cookie set in the browser that started the flow"
         }
       }
     },

@@ -1,7 +1,15 @@
 // Setting up the media stores (the dashboard's Media page; docs/media-stores.md): save one (its settings, its
 // credentials encrypted), test it before saving, make it the default, remove it (with how many waiting approvals that
 // voids), connect Google Drive with the owner's Google app, and check every store weekly in the inbox's cron run.
-import { authorizeUrl, type CallbackQuery, ConnectError, driveRedirectUri, oauthApp, takeState } from "../connections";
+import {
+  authorizeUrl,
+  type CallbackQuery,
+  ConnectError,
+  driveRedirectUri,
+  oauthApp,
+  type StartedFlow,
+  takeState,
+} from "../connections";
 import { decryptSecret, encryptSecret } from "../crypto";
 import type { Env } from "../env";
 import { notifyInstanceAdmins } from "../notify";
@@ -170,7 +178,7 @@ export async function removeStore(env: Env, kind: StoreKind, nowS: number) {
 // ---- Connect Google Drive
 
 /** Starts Connect Google Drive: the owner's Google app (the one YouTube uses), scope drive, a refresh token. */
-export async function startDriveConnect(env: Env, userId: string, nowS: number) {
+export async function startDriveConnect(env: Env, userId: string, nowS: number): Promise<StartedFlow> {
   if (!offeredKinds().includes("drive")) throw new StoreError("this server doesn't offer Google Drive");
   const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL));
   return authorizeUrl(
@@ -187,9 +195,16 @@ export async function startDriveConnect(env: Env, userId: string, nowS: number) 
   );
 }
 
-/** Google's redirect back: the code becomes the Drive store's grant (saved after testing it). */
-export async function finishDriveConnect(env: Env, fetcher: typeof fetch, q: CallbackQuery, nowS: number) {
-  const st = await takeState(env, DRIVE_FLOW, q, nowS);
+/** Google's redirect back, in the browser that started the flow (`browser`: its cookie): the code becomes the Drive
+ *  store's grant (saved after testing it). */
+export async function finishDriveConnect(
+  env: Env,
+  fetcher: typeof fetch,
+  q: CallbackQuery,
+  browser: string | null,
+  nowS: number,
+) {
+  const st = await takeState(env, DRIVE_FLOW, q, browser, nowS);
   const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL));
   const r = await fetcher(GOOGLE_TOKEN, {
     method: "POST",

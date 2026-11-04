@@ -1,6 +1,7 @@
 // Sessions for the two apps: an HttpOnly, Secure, SameSite=Strict cookie with a random token; D1 keeps its sha256.
 // Each app has its own cookie and its own rows (sessions.app), so signing in to one never signs into or out of the
 // other: the PWA's (`bongsu_session`) lasts 30 days on the phone; the dashboard's (`bongsu_admin`) 12 hours.
+import { STATE_S } from "@bongsu/core/connections";
 import type { Db } from "@bongsu/core/db";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 
@@ -45,12 +46,25 @@ export function sessionCookie(token: string, maxAge?: number, app: App = "pwa"):
 }
 
 export function readCookie(header: string | null | undefined, app: App = "pwa"): string | null {
+  return cookieValue(header, COOKIE[app]);
+}
+
+function cookieValue(header: string | null | undefined, name: string): string | null {
   for (const part of (header ?? "").split(/;\s*/)) {
     const [k, v] = part.split("=");
-    if (k === COOKIE[app] && v) return v;
+    if (k === name && v) return v;
   }
   return null;
 }
+
+/** The cookie that binds a connect flow to the browser that started it (core/connections.ts authorizeUrl). SameSite=Lax,
+ *  unlike the sessions': it has to come back on the provider's top-level redirect to the callback, the only `path` it's
+ *  sent to. It lasts as long as the flow's state; the callback clears it (`maxAge` 0) whatever the outcome. */
+export const OAUTH_COOKIE = "bongsu_oauth";
+export function oauthCookie(value: string, path: string, maxAge: number = STATE_S): string {
+  return `${OAUTH_COOKIE}=${value}; Path=${path}; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
+}
+export const readOauthCookie = (header: string | null | undefined) => cookieValue(header, OAUTH_COOKIE);
 
 /** The session behind a token, for that app; null when there's none (or it expired). */
 export async function validSession(

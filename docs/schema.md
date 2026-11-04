@@ -346,6 +346,7 @@ OAuth flows in progress: the state's hash, the PKCE verifier, who started it. Si
 | `expires_at` | timestamp | no |  |  |
 | `used_at` | timestamp | yes |  |  |
 | `workspace_id` | text | yes |  | the workspace the flow connects into; NULL: the instance's (Drive) |
+| `browser_hash` | text | yes |  | sha256 of the cookie set in the browser that started the flow |
 
 ## `passkeys`
 

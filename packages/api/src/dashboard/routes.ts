@@ -17,6 +17,9 @@ import { ReleaseError } from "@bongsu/core/clients/youtube";
 import {
   type ConnectBack,
   ConnectError,
+  callbackPath,
+  connectCallbackPath,
+  driveRedirectUri,
   finishConnect,
   oauthApps,
   pasteConnect,
@@ -74,8 +77,10 @@ import {
   createSession,
   endSession,
   markVerified,
+  oauthCookie,
   randomToken,
   readCookie,
+  readOauthCookie,
   type Session,
   sessionCookie,
   setSessionWorkspace,
@@ -436,9 +441,13 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
 
   // The provider sends the browser back here. The dashboard's cookie is SameSite=Strict, so it doesn't come along on
   // this cross-site redirect: the flow's single-use state says who started it, in which workspace and from which app
-  // (core/connections.ts). A flow started in the app goes back to the app's Settings; an unknown state to the dashboard.
+  // (core/connections.ts), and the flow's own cookie (SameSite=Lax, set by the start) that this is the browser that
+  // started it. A flow started in the app goes back to the app's Settings; an unknown state to the dashboard.
   app.get("/admin-api/connect/:provider/callback", async (c) => {
     const provider = c.req.param("provider") ?? "";
+    const browser = readOauthCookie(c.req.header("Cookie"));
+    const path = connectCallbackPath(c.env.PUBLIC_URL, provider);
+    if (path) c.header("Set-Cookie", oauthCookie("x", path, 0)); // used once, whatever the outcome
     const back = (q: Record<string, string>, to: ConnectBack = "dashboard") =>
       c.redirect(
         `${origin(c)}${to === "app" ? "/#/settings" : "/dashboard/connections"}?${new URLSearchParams(q)}`,
@@ -455,6 +464,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           error: c.req.query("error"),
           errorDescription: c.req.query("error_description") ?? c.req.query("error_reason"),
         },
+        browser,
         nowS(),
       );
       await audit(
@@ -472,8 +482,10 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   });
 
   // Google's way back from Connect Google Drive (the media store): like the providers' callback above, the state says
-  // who started it.
+  // who started it and the flow's cookie that it's back in the same browser.
   app.get("/admin-api/media-stores/drive/callback", async (c) => {
+    const browser = readOauthCookie(c.req.header("Cookie"));
+    c.header("Set-Cookie", oauthCookie("x", callbackPath(driveRedirectUri(c.env.PUBLIC_URL)), 0));
     const back = (q: Record<string, string>) =>
       c.redirect(`${origin(c)}/dashboard/media?${new URLSearchParams(q)}`, 302);
     try {
@@ -486,6 +498,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           error: c.req.query("error"),
           errorDescription: c.req.query("error_description"),
         },
+        browser,
         nowS(),
       );
       await audit(c, "media_store_save", "drive", { connected: true }, r.userId, null);
@@ -1419,14 +1432,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       fresh(c);
       const b = await body(c);
-      const url = await startConnect(c.env, c.req.param("provider") ?? "", {
+      const flow = await startConnect(c.env, c.req.param("provider") ?? "", {
         userId: c.get("session").userId,
         workspaceId: ws(c),
         back: "dashboard",
         reconnect: typeof b.reconnect === "string" ? b.reconnect : null,
         nowS: nowS(),
       });
-      return { url };
+      c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
+      return { url: flow.url };
     }),
   );
   app.post(
@@ -1522,7 +1536,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores/drive/start",
     wrap(async (c) => {
       fresh(c);
-      return { url: await startDriveConnect(c.env, c.get("session").userId, nowS()) };
+      const flow = await startDriveConnect(c.env, c.get("session").userId, nowS());
+      c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
+      return { url: flow.url };
     }),
   );
   app.post(

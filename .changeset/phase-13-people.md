@@ -32,10 +32,14 @@ People, roles, invites and workspaces (Phase 13, part 1).
   dashboard; instance admins also read the instance's (new workspaces, media stores, OAuth apps, instance admins).
 - **Connect from the app.** Admins and creators connect Instagram and YouTube from the app's Settings with the
   instance's OAuth apps; a connection lands in the workspace the flow started from.
+- **Connect flows stay in their browser.** Every OAuth flow (Instagram and YouTube from the dashboard or the app,
+  Connect Google Drive) sets a short-lived cookie in the browser that started it, and the callback finishes it only in
+  that browser: a provider link sent to someone else can no longer connect their account into your workspace. A flow
+  someone started before the update is refused; start it again.
 - **Pause per workspace.** **Pause this workspace** and **Resume with passkey** act on one workspace; the others go on
   publishing. An agent key's `pause_scheduler` pauses its own workspace, and `get_status` and the digest say so.
 
-Updating an existing instance (migrations 0018 and 0019 run on their own):
+Updating an existing instance (migrations 0018, 0019 and 0020 run on their own):
 
 - Roles are converted: `owner` becomes `admin`, `approver` becomes `creator` and `viewer` becomes `editor`. People who
   were owners also become instance admins, so they keep Media, OAuth apps and the new Workspaces page; make anyone
