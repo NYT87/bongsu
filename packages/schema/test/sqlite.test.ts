@@ -236,3 +236,57 @@ describe("0015_drop_reports", () => {
     expect(tables).toContain("snapshots");
   });
 });
+
+describe("0018_people", () => {
+  const apply = (db: Db) => db.exec(readFileSync(join(SQL_DIR, "0018_people.sql"), "utf8"));
+
+  it("0018 converts roles, moves the pause and drops the empty seed", () => {
+    const db = fromMigrations("0018");
+    db.exec(`INSERT INTO settings (key, value, updated_at) VALUES ('paused', '{"reason":"trip"}', 1);
+      INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'B', 1);
+      INSERT INTO users (id, email, name, created_at) VALUES ('bea', 'bea@example.com', 'Bea', 1),
+        ('cy', 'cy@example.com', 'Cy', 1);
+      INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'approver', 1),
+        ('b', 'cy', 'viewer', 1), ('default', 'cy', 'owner', 1);`);
+    apply(db);
+    expect(db.prepare("SELECT role FROM memberships WHERE workspace_id = 'b' ORDER BY user_id").all()).toEqual([
+      { role: "creator" },
+      { role: "editor" },
+    ]);
+    // `default` holds a member other than `owner`, so it stays and takes the pause
+    expect(db.prepare("SELECT role FROM memberships WHERE workspace_id = 'default' ORDER BY user_id").all()).toEqual([
+      { role: "admin" },
+      { role: "admin" },
+    ]);
+    expect(db.prepare("SELECT paused FROM workspace_settings WHERE workspace_id = 'default'").get()).toEqual({
+      paused: '{"reason":"trip"}',
+    });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM settings WHERE key = 'paused'").get()).toEqual({ n: 0 });
+    expect(() =>
+      db.exec("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'owner', 'viewer', 1)"),
+    ).toThrow(/CHECK/);
+
+    const empty = fromMigrations("0018");
+    apply(empty);
+    expect(empty.prepare("SELECT COUNT(*) AS n FROM workspaces").get()).toEqual({ n: 0 });
+    expect(empty.prepare("SELECT COUNT(*) AS n FROM users").get()).toEqual({ n: 0 });
+    expect(empty.prepare("SELECT COUNT(*) AS n FROM workspace_settings").get()).toEqual({ n: 0 });
+    expect(empty.prepare("SELECT COUNT(*) AS n FROM memberships").get()).toEqual({ n: 0 });
+  });
+
+  it("keeps the seed when it holds anything", () => {
+    for (const fill of [
+      "UPDATE users SET email = 'owner@example.com' WHERE id = 'owner'",
+      "INSERT INTO passkeys (id, public_key, user_id) VALUES ('pk', 'x', 'owner')",
+      "INSERT INTO accounts (id, workspace_id, platform, handle, created_at, updated_at) VALUES ('a', 'default', 'instagram', 'demo_travel', 1, 1)",
+    ]) {
+      const db = fromMigrations("0018");
+      db.exec(fill);
+      apply(db);
+      expect(db.prepare("SELECT id FROM workspaces").all(), fill).toEqual([{ id: "default" }]);
+      expect(db.prepare("SELECT user_id, role FROM memberships").all(), fill).toEqual([
+        { user_id: "owner", role: "admin" },
+      ]);
+    }
+  });
+});

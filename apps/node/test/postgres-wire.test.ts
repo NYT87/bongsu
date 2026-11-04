@@ -48,7 +48,7 @@ describe("postgres.js against a Postgres server", () => {
     const r = await createApp(fetch).request("/health", {}, env);
     expect(await r.json()).toMatchObject({ ok: true });
     const n = await new PostgresDb(driver).prepare("SELECT COUNT(*) AS n FROM workspaces").first<{ n: unknown }>();
-    expect(n).toEqual({ n: 1 });
+    expect(n).toEqual({ n: 0 }); // a fresh instance: 0018 drops the baseline's empty `default`
   });
 
   // the conformance cases need the driver, made in beforeAll

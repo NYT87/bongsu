@@ -297,9 +297,11 @@ describe("signed in", () => {
       exports.default.fetch("https://scheduler.test/v1/status", { headers: { Authorization: `Bearer ${t}` } });
     expect((await v1(token)).status).toBe(200);
     // a smaller role, smaller rights; no membership, no access
-    await env.DB.prepare("UPDATE memberships SET role = 'viewer' WHERE user_id = 'owner'").run();
-    expect((await authenticate(env.DB, `Bearer ${token}`, now))?.scopes).toEqual(["read"]);
-    await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = 'owner'").run();
+    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
+    const smaller = (await authenticate(env.DB, `Bearer ${token}`, now))?.scopes;
+    expect(smaller).toContain("read");
+    expect(smaller).not.toContain("approve");
+    await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
     // expired
     expect(await authenticate(env.DB, `Bearer ${token}`, now + 31 * 86400)).toBeNull();
     // revoked: only by its person
@@ -449,9 +451,9 @@ describe("signed in", () => {
     expect(JSON.parse(stored?.settings ?? "")).toEqual({ captionRules: { hashtagMax: 10 } });
     const audit = (await call("/admin-api/audit")).json.entries as { action: string; target: string }[];
     expect(audit.find((x) => x.action === "account_update")?.target).toBe("demo_travel");
-    await env.DB.prepare("UPDATE memberships SET role = 'viewer' WHERE user_id = 'owner'").run();
+    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
     expect((await call("/admin-api/accounts/demo_travel", { captionRules: { hashtagMax: 3 } })).status).toBe(403);
-    await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = 'owner'").run();
+    await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
   });
 
   it("removing an account: disabled first, nothing left to publish, history kept", async () => {

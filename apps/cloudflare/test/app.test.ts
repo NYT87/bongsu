@@ -761,7 +761,7 @@ describe("me.scopes", () => {
         "plan",
       ]);
     } finally {
-      await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = ?1").bind(user?.user_id).run();
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(user?.user_id).run();
     }
   });
 });

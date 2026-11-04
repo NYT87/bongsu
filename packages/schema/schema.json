@@ -778,11 +778,9 @@
           "type": "text",
           "notNull": true,
           "values": [
-            "owner",
             "admin",
-            "approver",
             "editor",
-            "viewer"
+            "creator"
           ]
         },
         "created_at": {
@@ -1225,6 +1223,10 @@
         },
         "verified_at": {
           "type": "timestamp"
+        },
+        "workspace_id": {
+          "type": "text",
+          "description": "the workspace the session works in; NULL: the user's first"
         }
       },
       "indexes": [
@@ -1455,6 +1457,12 @@
         },
         "timezone": {
           "type": "text"
+        },
+        "instance_admin": {
+          "type": "bool",
+          "notNull": true,
+          "default": 0,
+          "description": "runs the instance: workspaces, media stores, OAuth apps"
         }
       }
     },
@@ -1490,6 +1498,10 @@
         "notify_url": {
           "type": "text",
           "description": "the workspace's ntfy topic URL, encrypted; NULL: none"
+        },
+        "paused": {
+          "type": "json",
+          "description": "{reason, by, at} while the workspace's publishing is paused; NULL: running"
         }
       }
     },
@@ -1507,6 +1519,10 @@
         "created_at": {
           "type": "timestamp",
           "notNull": true
+        },
+        "archived_at": {
+          "type": "timestamp",
+          "description": "archived: nothing publishes, no one signs in to it; NULL: active"
         }
       }
     },
@@ -1684,8 +1700,70 @@
         },
         "updated_by": {
           "type": "text"
+        },
+        "inbox_workspace": {
+          "type": "text",
+          "description": "the workspace the inbox feeds for a project no plan has; NULL: none"
         }
       }
+    },
+    "invites": {
+      "description": "Invitations to a workspace: the link's token (its sha256), for one email and role, single use.",
+      "columns": {
+        "token_hash": {
+          "type": "id",
+          "primaryKey": true
+        },
+        "workspace_id": {
+          "type": "id",
+          "notNull": true,
+          "references": "workspaces.id"
+        },
+        "email": {
+          "type": "text",
+          "notNull": true
+        },
+        "role": {
+          "type": "text",
+          "notNull": true,
+          "values": [
+            "admin",
+            "editor",
+            "creator"
+          ]
+        },
+        "invited_by": {
+          "type": "text",
+          "notNull": true,
+          "description": "users.id"
+        },
+        "created_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "expires_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "used_at": {
+          "type": "timestamp"
+        },
+        "used_by": {
+          "type": "text",
+          "description": "users.id"
+        },
+        "revoked_at": {
+          "type": "timestamp"
+        }
+      },
+      "indexes": [
+        {
+          "name": "invites_workspace",
+          "columns": [
+            "workspace_id"
+          ]
+        }
+      ]
     }
   }
 }

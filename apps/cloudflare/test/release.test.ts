@@ -303,7 +303,7 @@ describe("the PWA", () => {
       expect((await post("/app-api/youtube/release/options", when)).status).toBe(403);
       expect((await post("/app-api/youtube/release/verify", { challengeId: "x", response: {} })).status).toBe(403);
     } finally {
-      await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = ?1").bind(user?.user_id).run();
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = ?1").bind(user?.user_id).run();
     }
     expect(w.ytUpdates).toEqual([]);
   });
@@ -459,11 +459,11 @@ describe("the dashboard", () => {
     expect(w.ytUploads[0].publishAt).toBe("2099-11-06T10:00:00Z");
     expect((await call("/admin-api/videos/v-pub/release", move)).status).toBe(409);
     expect((await call("/admin-api/videos/v-none/release", move)).status).toBe(404);
-    await env.DB.prepare("UPDATE memberships SET role = 'viewer' WHERE user_id = 'owner'").run();
+    await env.DB.prepare("UPDATE memberships SET role = 'editor' WHERE user_id = 'owner'").run();
     try {
       expect((await call("/admin-api/videos/v-sched/release", move)).status).toBe(403);
     } finally {
-      await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = 'owner'").run();
+      await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
     }
   });
 });

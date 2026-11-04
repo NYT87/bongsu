@@ -63,9 +63,9 @@ beforeEach(async () => {
     "INSERT INTO users (id, name, created_at) VALUES ('bea', 'Bea', 0) ON CONFLICT (id) DO NOTHING",
   ).run();
   await env.DB.prepare(
-    "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'owner', 0) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'owner'",
+    "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'admin', 0) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = 'admin'",
   ).run();
-  await env.DB.prepare("UPDATE memberships SET role = 'owner' WHERE user_id = 'owner'").run();
+  await env.DB.prepare("UPDATE memberships SET role = 'admin' WHERE user_id = 'owner'").run();
 });
 
 describe("what an approval allows", () => {
@@ -493,7 +493,7 @@ describe("roles", () => {
   };
 
   it("lets only an owner or admin manage the instance in the dashboard", async () => {
-    for (const role of ["viewer", "editor", "approver"]) {
+    for (const role of ["editor", "creator"]) {
       const call = await admin(role);
       expect((await call("/admin-api/keys", { name: "k", scopes: ["plan", "pause"] })).status, role).toBe(403);
       expect((await call("/admin-api/settings", { timezone: "Europe/Madrid" })).status, role).toBe(403);
@@ -514,18 +514,15 @@ describe("roles", () => {
   });
 
   it("lets only a role with the right approve, resume, pause or edit in the app", async () => {
-    const viewer = await pwa("viewer");
-    expect((await viewer("/app-api/status")).status).toBe(200);
-    expect((await viewer("/app-api/approve/options", { key: "reel:x/y" })).status).toBe(403);
-    expect((await viewer("/app-api/resume/options", {})).status).toBe(403);
-    expect((await viewer("/app-api/pause", { reason: "x" })).status).toBe(403);
-    expect((await viewer("/app-api/item/hold", { key: "reel:x/y", hold: true })).status).toBe(403);
-    expect((await viewer("/app-api/comments/seen", {})).status).toBe(200);
+    // 0018's roles; Task 2 gives the creator its scopes and this test the whole table
     const editor = await pwa("editor");
+    expect((await editor("/app-api/status")).status).toBe(200);
     expect((await editor("/app-api/approve/options", { key: "reel:x/y" })).status).toBe(403);
+    expect((await editor("/app-api/resume/options", {})).status).toBe(403);
+    expect((await editor("/app-api/pause", { reason: "x" })).status).toBe(403);
     expect((await editor("/app-api/item/hold", { key: "reel:x/y", hold: true })).status).toBe(404); // allowed; no such item
-    const approver = await pwa("approver");
-    expect((await approver("/app-api/approve/options", { key: "reel:x/y" })).status).toBe(404); // allowed; no such item
-    expect((await approver("/app-api/item/hold", { key: "reel:x/y", hold: true })).status).toBe(403);
+    expect((await editor("/app-api/comments/seen", {})).status).toBe(200);
+    const admin = await pwa("admin");
+    expect((await admin("/app-api/approve/options", { key: "reel:x/y" })).status).toBe(404); // allowed; no such item
   });
 });

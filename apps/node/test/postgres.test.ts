@@ -73,8 +73,20 @@ beforeAll(async () => {
   const applied = await migratePostgres(driver, join(__dirname, "../../../migrations/postgres"));
   expect(applied).toContain("0009_baseline.sql");
   expect(await migratePostgres(driver, join(__dirname, "../../../migrations/postgres"))).toEqual([]);
-  // the baseline brings the default workspace and its owner, as SQLite's migrations do
-  expect(await db.prepare("SELECT role FROM memberships WHERE user_id = 'owner'").first()).toEqual({ role: "owner" });
+  // a fresh instance has no workspace or user (0018 drops the baseline's empty seed): the tests' own, as on SQLite
+  expect(await db.prepare("SELECT COUNT(*) AS n FROM users").first()).toEqual({ n: 0 });
+  await db.batch([
+    db.prepare("INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Default', 0) ON CONFLICT DO NOTHING"),
+    db.prepare(
+      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 0) ON CONFLICT DO NOTHING",
+    ),
+    db.prepare(
+      "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', NULL, 'Owner', 0, 1) ON CONFLICT DO NOTHING",
+    ),
+    db.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', 0) ON CONFLICT DO NOTHING",
+    ),
+  ]);
   await db
     .prepare(
       "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",

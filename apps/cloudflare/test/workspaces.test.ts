@@ -225,7 +225,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
       [
         "INSERT INTO users (id, email, name, created_at) VALUES ('bea', 'bea@example.com', 'Bea', 0) ON CONFLICT (id) DO NOTHING",
         "INSERT INTO users (id, email, name, created_at) VALUES ('nobody', 'nobody@example.com', 'Nobody', 0) ON CONFLICT (id) DO NOTHING",
-        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'owner', 0) ON CONFLICT DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bea', 'admin', 0) ON CONFLICT DO NOTHING",
       ].map((s) => env.DB.prepare(s)),
     );
   });
