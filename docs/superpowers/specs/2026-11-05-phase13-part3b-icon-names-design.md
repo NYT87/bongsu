@@ -27,7 +27,7 @@ New table `workspace_icons`:
 |---|---|---|
 | `workspace_id` | text, PK, FK → `workspaces.id` | one icon per workspace |
 | `png` | text, not null | the PNG's bytes, base64 (same on SQLite and Postgres) |
-| `hash` | text, not null, unique | SHA-256 of the bytes, lowercase hex |
+| `hash` | text, not null, indexed (not unique: two workspaces may use the same PNG) | SHA-256 of the bytes, lowercase hex |
 | `updated_at` | integer, not null | unix seconds |
 
 No icon means no row.
