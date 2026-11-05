@@ -146,7 +146,7 @@ where it differs from the name.
   - `site/docs/the-app.md` (You card);
   - `site/docs/the-dashboard.md` (Icon card, member names);
   - `docs/schema.md` (regenerated);
-  - the route list in `docs/` that names `/m` and `/health`;
+  - the route list in `docs/architecture.md` (beside `/m` and `/health`);
   - AGENTS.md ("One source of truth": the workspace icon is a setting in the database);
   - `docs/PLAN.md` boxes;
   - the changeset `.changeset/phase-13-part3b.md`.
