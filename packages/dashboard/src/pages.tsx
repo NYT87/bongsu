@@ -663,9 +663,9 @@ export function Media({ go }: Props) {
           {data.offered.includes("drive") && (
             <Card title={has("drive") ? "Google Drive: connect again" : "Add Google Drive"}>
               <p className="muted">
-                Drop files in each workspace's folder in your Drive (UPLOADS in the first one); Bongsu reads them and
-                moves posted ones to its _posted folder. It connects with your Google app (the one YouTube uses), which
-                needs this page's redirect URL: <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
+                Drop files in each workspace's folder in your Drive (shown in its Settings → Media); Bongsu reads them
+                and moves posted ones to its _posted folder. It connects with your Google app (the one YouTube uses),
+                which needs this page's redirect URL: <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
               </p>
               <div className="actions">
                 {data.googleApp ? (
@@ -708,7 +708,7 @@ export function Media({ go }: Props) {
             <Card title="Add this server's disk">
               <p className="muted">
                 The media folder of this server (MEDIA_DIR; /media in Docker). Copy files into each workspace's folder
-                there (UPLOADS in the first one), under inbox.
+                there (shown in its Settings → Media), under inbox.
               </p>
               <div className="actions">
                 <button

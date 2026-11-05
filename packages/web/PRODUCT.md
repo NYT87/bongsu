@@ -49,7 +49,7 @@ and it covers both YouTube (Shorts comments) and Instagram in one queue.
 - **Accounts:** a few Instagram accounts (Reels, posts, stories) and YouTube channels (Shorts comments, and moving a scheduled video's release date), configured
   per instance.
 - **Inputs:** plan items in D1 (added through the `bongsu` MCP tools or `/v1`, or in the app), the Drive inbox
-  (the workspace's folder, `UPLOADS` in the first one: `inbox/<project>/`, becomes a draft within ~25 min), and **New draft** uploads from the device.
+  (the workspace's folder, shown in Settings → Media: `inbox/<project>/`, becomes a draft within ~25 min), and **New draft** uploads from the device.
 - **Rituals:** the daily digest (from the workspace's digest hour), push and ntfy notifications with action buttons, approving from the
   notification or the item page, recording manual posts so they are never posted twice.
 - **Languages in the content:** English, Spanish and Korean captions and comments. The interface is English; its text lives in `src/i18n.ts` (a catalogue per locale, the workspace's locale from `/app-api/me`).

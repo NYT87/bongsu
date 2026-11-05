@@ -34,7 +34,7 @@ export const steps: Step[] = [
     sql: { sqlite: rebuild("INTEGER", "INTEGER"), postgres: rebuild("SMALLINT", "BIGINT") },
     apply: (t) => {
       t.media_cleanup.description =
-        "Media moved aside after publishing (to the workspace folder's `_posted/`, `UPLOADS` in the first), or refused by the store.";
+        "Media moved aside after publishing (to the workspace folder's `_posted/`), or refused by the store.";
       const s = t.media_store;
       s.description =
         "Media stores: the instance's (one per kind) and each workspace's own, settings, encrypted credentials, last check, the default.";

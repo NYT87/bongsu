@@ -28,13 +28,13 @@ steps 2 and 4 are new.
 
 Dashboard → **Media** → **Connect Google Drive**. Sign in with the Google account whose Drive holds the media and allow
 access; Google sends you back with Drive set up as a store (the first store you add is the default). Bongsu tests it
-first: it finds or makes the workspace's `<folder>/inbox` (`UPLOADS/inbox` in the first workspace), so reading and writing both work. **Connect again** replaces the grant, for
+first: it finds or makes the workspace's `<folder>/inbox` (its folder is shown in Settings → Media), so reading and writing both work. **Connect again** replaces the grant, for
 example after you revoked it in your Google account.
 
 ## 3. The folders
 
-Each workspace has a media folder: **`UPLOADS`** in the first one, a name made from the workspace's name in new ones (its
-admins can change it in Settings → Media). Make that folder at the top of the Drive: Bongsu finds it by name, so keep
+Each workspace has a media folder: a name made from the workspace's name (its
+admins can change it in Settings → Media), or **`UPLOADS`** for a workspace kept from before this release. Make that folder at the top of the Drive: Bongsu finds it by name, so keep
 only one folder with that name there. The paths below use `UPLOADS`; read it as the workspace's folder. A Drive
 connected by the instance serves every workspace, each in its own folder, and a workspace's admins can also connect
 their own Drive in **Settings → Media** (see [the dashboard](the-dashboard.md#settings)).

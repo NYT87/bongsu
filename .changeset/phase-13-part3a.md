@@ -10,8 +10,8 @@
 
 A media folder, media stores and OAuth apps per workspace (Phase 13, part 3a).
 
-- **Media folder.** Each workspace has its own: `UPLOADS` in the first one, a name made from the workspace's name in
-  new ones, editable by its admins in Settings → Media (Bongsu never moves files). Inside it: `inbox/<project>/`,
+- **Media folder.** Each workspace has its own: the slug of the workspace's name (`demo-travel`) for one created since, `UPLOADS` for a workspace
+  kept from before this release, editable by its admins in Settings → Media (Bongsu never moves files). Inside it: `inbox/<project>/`,
   `<project>/…`, `_posted/`, and the app's uploads in `_uploads/` (they were a top folder, "Bongsu app uploads").
 - **Stores.** Besides the instance's, a workspace's admins add their own S3 bucket or Google Drive in Settings → Media.
   A workspace's default is its own store if it has one, else the instance's. A file reference must be in the caller's
@@ -34,7 +34,7 @@ A media folder, media stores and OAuth apps per workspace (Phase 13, part 3a).
 
 Updating an existing instance (the migrations run on their own):
 
-- Nothing moves: the first workspace keeps `UPLOADS`, and the app's uploads from before stay in "Bongsu app uploads"
+- Nothing moves: a workspace kept from before this release keeps `UPLOADS`, and the app's uploads from before stay in "Bongsu app uploads"
   where they are; new uploads go to `_uploads/`.
 - New workspaces get a folder named from their name: create it in the store (or change it in Settings → Media) before
   dropping files in its inbox.

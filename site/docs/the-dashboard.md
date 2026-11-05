@@ -193,8 +193,8 @@ are off (`SCHEDULES=off` on Node). They are set where the instance is deployed (
 Settings has three tabs: **General**, **Media** and **OAuth apps** (`/dashboard/settings`, `/settings/media`,
 `/settings/apps`).
 
-**Media** (admins) sets the workspace's **media folder** (`UPLOADS` in the first workspace, a name made from the
-workspace's name in new ones; Bongsu never moves files, so move them yourself when you change it) and its own S3 bucket
+**Media** (admins) sets the workspace's **media folder** (a name made from the
+workspace's name, or `UPLOADS` for a workspace kept from before this release; Bongsu never moves files, so move them yourself when you change it) and its own S3 bucket
 or Google Drive. A workspace's default store is its own if it has one, else the instance's. A file must be in the
 workspace's own store or inside its folder in an instance store, or it's refused with "not in this workspace's media".
 The inbox scans `<folder>/inbox` in each of the workspace's stores, a few workspaces per run in turn.

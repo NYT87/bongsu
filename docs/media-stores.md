@@ -12,8 +12,8 @@ credentials encrypted with `ENCRYPTION_KEY`, the last check, whether it's the de
 environment, apart from `MEDIA_DIR` on Node: the directory the server offers as `local` (the runtime registers it, the
 dashboard only picks it; it never takes a server path).
 
-**Per workspace.** Each workspace has a media folder (`workspace_settings.media_folder`: `UPLOADS` in the first one, a
-slug of the name in new ones, editable by its admins; Bongsu never moves files) holding `inbox/<project>/`,
+**Per workspace.** Each workspace has a media folder (`workspace_settings.media_folder`: the slug of the name (`demo-travel`) for a workspace
+created since Phase 13 part 3a, `UPLOADS` for a workspace kept from before it, editable by its admins; Bongsu never moves files) holding `inbox/<project>/`,
 `<project>/…`, `_posted/` and the app's `_uploads/`. A workspace's admins can add a store of their own in Settings →
 Media (ids `s3-<ws>` / `drive-<ws>`, `media_store.workspace_id` set); the instance's keep the ids `drive`, `s3`, `local`.
 A workspace's default is its own store if it has one, else the instance's. A file reference must be in the caller's
@@ -49,7 +49,7 @@ guarantees (Drive's md5, an S3 ETag, a sha256) and is only compared for equality
 to a store that isn't set up counts as missing: removing a store means approving its items again (the dashboard says
 how many).
 
-**Paths are logical** (`<media_folder>/inbox/<project>/`, `<media_folder>/_posted/`; `media_folder` is `UPLOADS` in the first workspace), relative to the store's root: for Drive, the
+**Paths are logical** (`<media_folder>/inbox/<project>/`, `<media_folder>/_posted/`; `media_folder` is the name's slug, or `UPLOADS` for a workspace kept from before part 3a), relative to the store's root: for Drive, the
 connected account's top folders; for a bucket, its prefix; for a disk, a directory.
 
 **Nothing is deleted.** Bongsu only moves files aside. A store without a native move (S3) copies, then removes the

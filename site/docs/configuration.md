@@ -172,8 +172,8 @@ server's media directory.
 | `<folder>/_posted/` | posted media is moved here, in the store it's in |
 | `<folder>/_uploads/` | files uploaded from the app, in the store picked for the upload |
 
-`<folder>` is the workspace's media folder: `UPLOADS` in the first workspace, a name made from the workspace's name in
-new ones, editable by its admins. Bongsu never moves files when it changes.
+`<folder>` is the workspace's media folder: a name made from the workspace's name (`UPLOADS` for a workspace kept from
+before this release), editable by its admins in Settings → Media. Bongsu never moves files when it changes.
 
 ## Tunable limits (`packages/core/src/constants.ts`)
 

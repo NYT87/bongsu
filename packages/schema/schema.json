@@ -727,7 +727,7 @@
       }
     },
     "media_cleanup": {
-      "description": "Media moved aside after publishing (to the workspace folder's `_posted/`, `UPLOADS` in the first), or refused by the store.",
+      "description": "Media moved aside after publishing (to the workspace folder's `_posted/`), or refused by the store.",
       "columns": {
         "store": {
           "type": "text",
