@@ -6,6 +6,7 @@ import { env } from "cloudflare:workers";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Env } from "@bongsu/core/env";
+import { removeIcon, setIcon } from "@bongsu/core/icon";
 import { removeMember } from "@bongsu/core/invites";
 import { notifier } from "@bongsu/core/notify";
 import { setPref } from "@bongsu/core/notify-prefs";
@@ -13,6 +14,7 @@ import { addMember } from "@bongsu/core/people";
 import { isPushEndpoint, type PushNote, sendPush } from "@bongsu/core/push";
 import type { Note } from "@bongsu/core/texts/notifications";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { png } from "./icon-png";
 import { testEnv } from "./world";
 
 const b64url = (b: ArrayBuffer | Uint8Array) =>
@@ -306,5 +308,21 @@ describe("push delivery", () => {
     expect(await (await bea("/app-api/push/test", {})).json()).toEqual({ sent: 1, removed: 0 });
     expect(sent.map((s) => s.url)).toEqual([FCM("bea")]);
     expect((await received(FCM("bea"))).title).toBe("Bongsu");
+  });
+});
+
+describe("a push from a workspace with an icon", () => {
+  it("carries the icon's absolute URL; a workspace without one sends no icon field", async () => {
+    await subscribe(FCM("dan"), "dan");
+    const hash = await setIcon(env.DB, "default", png(256), 1);
+    try {
+      await send(note("published", "reel:x"), "default");
+      expect((await received(FCM("dan"))).icon).toBe(`${e.PUBLIC_URL.replace(/\/$/, "")}/icon/${hash}.png`);
+      await send(note("published", "reel:x"), "b");
+      const fromB = await received(FCM("dan"));
+      expect("icon" in fromB).toBe(false);
+    } finally {
+      await removeIcon(env.DB, "default");
+    }
   });
 });

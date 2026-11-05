@@ -15,6 +15,8 @@ export interface PushNote {
   body: string;
   url?: string;
   tag?: string;
+  /** The workspace's icon (absolute URL) for the notification; left out when it has none. */
+  icon?: string;
   actions?: { action: string; title: string; url: string }[];
 }
 

@@ -443,9 +443,12 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
         json: { error: "you can't open that workspace" },
       });
     const state = (await as("bea", "dashboard", "/admin-api/state")).json;
-    expect(state.workspaces).toEqual([{ id: "b", name: "Workspace B", role: "admin" }]);
+    expect(state.workspaces).toEqual([{ id: "b", name: "Workspace B", iconUrl: null, role: "admin" }]);
     const me = (await as("bea", "pwa", "/app-api/me")).json;
-    expect(me).toMatchObject({ workspace: { id: "b" }, workspaces: [{ id: "b", name: "Workspace B", role: "admin" }] });
+    expect(me).toMatchObject({
+      workspace: { id: "b" },
+      workspaces: [{ id: "b", name: "Workspace B", iconUrl: null, role: "admin" }],
+    });
     // no session of hers works in the default workspace
     expect(
       await env.DB.prepare(

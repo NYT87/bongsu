@@ -7,6 +7,7 @@
 // with the workspace's name.
 import type { Db } from "./db";
 import type { Env } from "./env";
+import { iconHashes, iconUrl } from "./icon";
 import { instanceAdmins, mailer } from "./mail";
 import { postNtfy, workspaceNtfy } from "./ntfy";
 import { sendPush } from "./push";
@@ -104,6 +105,11 @@ export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifie
       }
       // A push message carries about 4 KB, so the text is cut (ntfy and the audit keep all of it).
       const w = (u: string) => withWorkspace(u, workspaceId);
+      // looked up at send time: an icon changed a minute ago is the one the next push shows
+      const icon = iconUrl(
+        env.PUBLIC_URL.replace(/\/$/, ""),
+        (await iconHashes(env.DB, [workspaceId])).get(workspaceId),
+      );
       await sendPush(
         env,
         fetcher,
@@ -112,6 +118,7 @@ export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifie
           body: text.slice(0, 1500),
           url: w(a.url),
           tag: target ? `${workspaceId}:${target}` : undefined,
+          ...(icon ? { icon } : {}),
           actions: a.actions.map((x, i) => ({ action: `a${i}`, title: x.label, url: w(x.url) })),
         },
         nowS,

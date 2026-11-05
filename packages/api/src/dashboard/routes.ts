@@ -39,6 +39,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { LintRules } from "@bongsu/core/formats/caption-lint";
 import { isTimeZone, utcIso, zoneStamp } from "@bongsu/core/formats/time";
+import { IconError, iconHashes, iconUrl, removeIcon, setIcon } from "@bongsu/core/icon";
 import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
 import { FolderError } from "@bongsu/core/media/folders";
 import { offeredKinds, STORE_KINDS, type StoreKind, storeRows } from "@bongsu/core/media/index";
@@ -207,6 +208,17 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   const app = new Hono<Vars>();
   const nowS = () => Math.floor(Date.now() / 1000);
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");
+  /** `workspace` and `workspaces` with each one's `iconUrl` (null without one): one query for all of them. */
+  const withIcons = async <W extends { id: string }, L extends { id: string }>(
+    c: C,
+    workspace: W | null,
+    workspaces: L[],
+  ) => {
+    const ids = [...new Set([...(workspace ? [workspace.id] : []), ...workspaces.map((w) => w.id)])];
+    const hashes = await iconHashes(c.env.DB, ids);
+    const add = <T extends { id: string }>(w: T) => ({ ...w, iconUrl: iconUrl(origin(c), hashes.get(w.id)) });
+    return { workspace: workspace && add(workspace), workspaces: workspaces.map(add) };
+  };
   const body = async (c: C) => {
     try {
       return (await c.req.json()) as Record<string, unknown>;
@@ -321,8 +333,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         instanceAdmin: !!s && (where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId))),
         role: where?.role ?? null,
         // where the session works, and the switcher's list (creators' memberships left out: they use the app)
-        workspace: where ? await workspaceRef(c.env.DB, where.workspaceId) : null,
-        workspaces: s ? await workspacesOf(c.env.DB, s.userId, { notCreator: true }) : [],
+        ...(await withIcons(
+          c,
+          where ? await workspaceRef(c.env.DB, where.workspaceId) : null,
+          s ? await workspacesOf(c.env.DB, s.userId, { notCreator: true }) : [],
+        )),
         // signed in, but in no workspace yet: the first run's (or a removed member's) "create one" / "ask for one"
         noWorkspace: !!s && !where,
         // an instance admin in none of them still has the Instance pages, once the instance has a workspace
@@ -1852,6 +1867,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         .first<{ name: string }>();
       return {
         name: name?.name ?? "",
+        iconUrl: iconUrl(origin(c), (await iconHashes(c.env.DB, [ws(c)])).get(ws(c))),
         timezone: w.timezone,
         digestHour: w.digestHour,
         dryRun: c.env.DRY_RUN !== "0",
@@ -1877,6 +1893,31 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (name !== undefined) await renameWorkspace(c.env.DB, ws(c), name);
       await audit(c, "settings", null, { name, timezone: tz, digestHour: hour });
       return { saved: true };
+    }),
+  );
+  // The workspace's icon: one PNG, the raw body (core/icon.ts checks it). Admins only, as the other settings.
+  app.put(
+    "/admin-api/settings/icon",
+    wrap(async (c) => {
+      const bytes = new Uint8Array(await c.req.arrayBuffer());
+      // refused before it is looked at; checkIcon says the same for a direct caller
+      if (bytes.length > 204_800) throw new AdminError(400, "the icon is over 200 KB");
+      try {
+        const hash = await setIcon(c.env.DB, ws(c), bytes, nowS());
+        await audit(c, "workspace_icon_set", null, { hash });
+        return { iconUrl: iconUrl(origin(c), hash) };
+      } catch (e) {
+        if (e instanceof IconError) throw new AdminError(400, e.message);
+        throw e;
+      }
+    }),
+  );
+  app.delete(
+    "/admin-api/settings/icon",
+    wrap(async (c) => {
+      await removeIcon(c.env.DB, ws(c));
+      await audit(c, "workspace_icon_remove", null, {});
+      return { iconUrl: null };
     }),
   );
   // The workspace's ntfy topic: its notifications are also posted there (core/ntfy.ts).

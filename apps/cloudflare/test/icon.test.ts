@@ -4,18 +4,8 @@ import { env } from "cloudflare:workers";
 import { createApp } from "@bongsu/api/app";
 import { iconByHash, iconHashes, removeIcon, setIcon } from "@bongsu/core/icon";
 import { beforeEach, describe, expect, it } from "vitest";
+import { png } from "./icon-png";
 
-const SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
-function png(w: number, fill = 0): Uint8Array {
-  const b = new Uint8Array(24 + 40_000);
-  b.set(SIG, 0);
-  b.set([0, 0, 0, 13, 0x49, 0x48, 0x44, 0x52], 8);
-  const v = new DataView(b.buffer);
-  v.setUint32(16, w);
-  v.setUint32(20, w);
-  for (let i = 24; i < b.length; i++) b[i] = (i * 7 + fill) & 0xff; // all byte values, to test the base64 round trip
-  return b;
-}
 const get = (path: string) => createApp(fetch).request(`https://scheduler.test${path}`, {}, env);
 
 beforeEach(async () => {
