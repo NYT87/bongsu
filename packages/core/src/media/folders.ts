@@ -46,10 +46,12 @@ export async function uniqueFolder(db: Db, base: string, exceptWorkspace = ""): 
   }
 }
 
-/** Whether another workspace has the name as its folder. */
+/** Whether another workspace has the name as its folder, in any case: a disk on macOS or Windows (the local store)
+ *  or a Drive name search would take `uploads` for `UPLOADS`, and so another workspace's files. The unique index is on
+ *  LOWER(media_folder) too. */
 export async function folderTaken(db: Db, name: string, exceptWorkspace = ""): Promise<boolean> {
   return !!(await db
-    .prepare("SELECT 1 FROM workspace_settings WHERE media_folder = ?1 AND workspace_id <> ?2")
+    .prepare("SELECT 1 FROM workspace_settings WHERE LOWER(media_folder) = LOWER(?1) AND workspace_id <> ?2")
     .bind(name, exceptWorkspace)
     .first());
 }

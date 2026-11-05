@@ -643,9 +643,9 @@ A workspace's time zone, daily digest hour and locale.
 | `updated_at` | timestamp | no |  |  |
 | `notify_url` | text | yes |  | the workspace's ntfy topic URL, encrypted; NULL: none |
 | `paused` | json | yes |  | {reason, by, at} while the workspace's publishing is paused; NULL: running |
-| `media_folder` | text | yes |  | the workspace's top folder in the media store; unique |
+| `media_folder` | text | yes |  | the workspace's top folder in the media store; unique, ignoring case |
 
-Index `workspace_settings_media_folder`: (media_folder), unique.
+Index `workspace_settings_media_folder`: (LOWER(media_folder)), unique.
 
 ## `workspaces`
 

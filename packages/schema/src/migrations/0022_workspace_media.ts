@@ -33,6 +33,8 @@ export const steps: Step[] = [
   {
     sql: { sqlite: rebuild("INTEGER", "INTEGER"), postgres: rebuild("SMALLINT", "BIGINT") },
     apply: (t) => {
+      t.media_cleanup.description =
+        "Media moved aside after publishing (to the workspace folder's `_posted/`, `UPLOADS` in the first), or refused by the store.";
       const s = t.media_store;
       s.description =
         "Media stores: the instance's (one per kind) and each workspace's own, settings, encrypted credentials, last check, the default.";
@@ -54,14 +56,15 @@ export const steps: Step[] = [
     addColumn: {
       table: "workspace_settings",
       name: "media_folder",
-      column: { type: "text", description: "the workspace's top folder in the media store; unique" },
+      column: { type: "text", description: "the workspace's top folder in the media store; unique, ignoring case" },
     },
   },
   { sql: { sqlite: folders, postgres: folders } },
   {
     createIndex: {
       table: "workspace_settings",
-      index: { name: "workspace_settings_media_folder", columns: ["media_folder"], unique: true },
+      // without case: two folders that differ only in case are one folder on a disk or a Drive that ignores it
+      index: { name: "workspace_settings_media_folder", columns: ["media_folder"], unique: true, lower: true },
     },
   },
   {

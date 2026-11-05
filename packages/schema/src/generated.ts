@@ -67,7 +67,10 @@ export function schemaDoc(tables: Tables): string {
     const extra = [
       ...(t.primaryKey ? [`Primary key: (${t.primaryKey.join(", ")}).`] : []),
       ...(t.unique ?? []).map((u) => `Unique: (${u.join(", ")}).`),
-      ...(t.indexes ?? []).map((i) => `Index \`${i.name}\`: (${i.columns.join(", ")})${i.unique ? ", unique" : ""}.`),
+      ...(t.indexes ?? []).map(
+        (i) =>
+          `Index \`${i.name}\`: (${i.columns.map((c) => (i.lower ? `LOWER(${c})` : c)).join(", ")})${i.unique ? ", unique" : ""}.`,
+      ),
     ];
     if (extra.length) out.push("", ...extra);
     out.push("");

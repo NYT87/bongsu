@@ -1,5 +1,5 @@
 // Neutral schema changes: steps any dialect can generate, applied to the tables to know the schema after them.
-import { column, createTable, type Dialect } from "./ddl";
+import { column, createIndex, createTable, type Dialect } from "./ddl";
 import type { Column, Index, Table, Tables } from "./types";
 
 export type Step =
@@ -57,12 +57,8 @@ export function migrationSql(d: Dialect, m: Migration, before: Tables): string {
       out.push(
         `ALTER TABLE ${d.quote(s.addColumn.table)} ADD COLUMN ${column(d, s.addColumn.name, s.addColumn.column)};`,
       );
-    else if ("createIndex" in s) {
-      const ix = s.createIndex.index;
-      out.push(
-        `CREATE ${ix.unique ? "UNIQUE " : ""}INDEX ${d.quote(ix.name)} ON ${d.quote(s.createIndex.table)} (${ix.columns.map(d.quote).join(", ")});`,
-      );
-    } else if ("dropIndex" in s) out.push(`DROP INDEX ${d.quote(s.dropIndex.name)};`);
+    else if ("createIndex" in s) out.push(createIndex(d, s.createIndex.table, s.createIndex.index));
+    else if ("dropIndex" in s) out.push(`DROP INDEX ${d.quote(s.dropIndex.name)};`);
     else {
       const sql = s.sql[d.name];
       if (sql === undefined) throw new Error(`${m.name}: no ${d.name} SQL for a custom step`);

@@ -247,6 +247,34 @@ describe("the Workspaces page", () => {
     expect((await workspaceSettings(env.DB, "default")).mediaFolder).toBe("UPLOADS");
   });
 
+  it("compares folders without case: a disk or a Drive that ignores it would otherwise mix two workspaces' files", async () => {
+    const a = await createWorkspace(env.DB, { name: "Demo Studio", timezone: "UTC", createdBy: "owner" }, nowS());
+    const b = await createWorkspace(env.DB, { name: "Demo Two", timezone: "UTC", createdBy: "owner" }, nowS());
+    await setMediaFolder(env.DB, a, "Shared Media", nowS());
+    // the seeded workspace's UPLOADS, another's Shared Media: neither again in another case
+    await expect(setMediaFolder(env.DB, b, "uploads", nowS())).rejects.toThrow("another workspace uses uploads");
+    await expect(setMediaFolder(env.DB, b, "SHARED media", nowS())).rejects.toThrow("another workspace uses");
+    await expect(
+      createWorkspace(
+        env.DB,
+        { name: "Demo Three", timezone: "UTC", createdBy: "owner", mediaFolder: "Uploads" },
+        nowS(),
+      ),
+    ).rejects.toThrow("another workspace uses Uploads");
+    // a workspace changes its own folder's case
+    expect(await setMediaFolder(env.DB, a, "shared media", nowS())).toBe("shared media");
+    // the slug steps over a folder that differs only in case
+    await setMediaFolder(env.DB, b, "Demo-Four", nowS());
+    const c = await createWorkspace(env.DB, { name: "Demo Four", timezone: "UTC", createdBy: "owner" }, nowS());
+    expect((await workspaceSettings(env.DB, c)).mediaFolder).toBe("demo-four-2");
+    // and the database refuses it too, whatever writes the row
+    await expect(
+      env.DB.prepare("UPDATE workspace_settings SET media_folder = 'SHARED MEDIA' WHERE workspace_id = ?1")
+        .bind(c)
+        .run(),
+    ).rejects.toThrow(/UNIQUE/);
+  });
+
   it("lists, creates, renames and adds admins to workspaces, for instance admins only", async () => {
     const ina = await dash("ina");
     const list = (await ina("/admin-api/workspaces")).json.workspaces as Record<string, unknown>[];

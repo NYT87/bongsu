@@ -19,7 +19,7 @@ DROP TABLE media_store;
 ALTER TABLE media_store_new RENAME TO media_store;
 ALTER TABLE workspace_settings ADD COLUMN media_folder TEXT;
 UPDATE workspace_settings SET media_folder = CASE WHEN workspace_id = 'default' THEN 'UPLOADS' ELSE workspace_id END;
-CREATE UNIQUE INDEX workspace_settings_media_folder ON workspace_settings (media_folder);
+CREATE UNIQUE INDEX workspace_settings_media_folder ON workspace_settings (LOWER(media_folder));
 -- A workspace's own OAuth apps (Google, Meta), used instead of the instance's for its connections.
 CREATE TABLE workspace_oauth_apps (
   workspace_id TEXT NOT NULL,
