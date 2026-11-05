@@ -3286,7 +3286,8 @@ export function Workspaces(_: Props) {
           api<{ invite?: { url: string } }>("workspaces", {
             name,
             timezone: tz,
-            folder: folder.trim() || folderSlug(name),
+            // empty: the server picks, numbering it (demo-studio-2) when another workspace has the name's slug
+            folder: folder.trim(),
             admin: adminIsMe ? "me" : to,
           }),
         );
