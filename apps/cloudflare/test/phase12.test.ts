@@ -81,7 +81,7 @@ describe("Stories", () => {
   it("a draft scheduled as a Story needs no caption, takes no hour, and goes out as STORIES without comments", async () => {
     await signUp();
     await seedReel(w, { base: "short1_reel", date: "2026-10-20" }); // a Reel at 18:00
-    const img = w.drivePut("Bongsu app uploads/story.jpg", { md5: "a".repeat(32), mimeType: "image/jpeg" });
+    const img = w.drivePut("UPLOADS/_uploads/story.jpg", { md5: "a".repeat(32), mimeType: "image/jpeg" });
     await env.DB.prepare(
       "INSERT INTO drafts (id, kind, account, payload, source, created_by) VALUES ('d_s', 'photo', 'demo_travel', ?1, 'pwa', 'owner')",
     )
