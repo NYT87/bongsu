@@ -54,15 +54,8 @@ export async function inboxWorkspace(db: Db, store: string, project: string): Pr
     .first<{ workspace_id: string; archived: number | null }>();
   // a project only an archived workspace plans is that workspace's: it waits rather than go to another
   if (planned) return planned.archived === null ? planned.workspace_id : null;
-  const r = await db
-    .prepare(
-      `SELECT s.inbox_workspace FROM media_store s
-         JOIN workspaces w ON w.id = s.inbox_workspace AND w.archived_at IS NULL
-       WHERE s.kind = ?1`,
-    )
-    .bind(store)
-    .first<{ inbox_workspace: string | null }>();
-  return r?.inbox_workspace ?? null;
+  // media_store.inbox_workspace is gone (0022); Task 2 gives each workspace's folder its own inbox
+  return null;
 }
 
 /** The project's Instagram account in the workspace, from its planned items; null when the project has none yet. */

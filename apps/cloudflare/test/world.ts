@@ -551,7 +551,7 @@ export const TEST_S3_SETTINGS = {
 export async function seedS3Store(o: { isDefault?: boolean } = {}, db: Env["DB"] = env.DB) {
   await db
     .prepare(
-      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', ?1, ?2, ?3, 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', 's3', ?1, ?2, ?3, 'ok', 0)",
     )
     .bind(
       o.isDefault ? 1 : 0,

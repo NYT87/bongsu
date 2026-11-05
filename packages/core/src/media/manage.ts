@@ -106,9 +106,9 @@ export async function saveStore(
   if (!t.ok) throw new StoreError(`the store didn't answer as it should: ${t.error}`);
   const first = !(await storeRows(env.DB)).length;
   await env.DB.prepare(
-    `INSERT INTO media_store (kind, is_default, settings, credentials, status, last_error, last_checked_at, updated_at, updated_by)
-     VALUES (?1, ?2, ?3, ?4, 'ok', NULL, ?5, ?5, ?6)
-     ON CONFLICT (kind) DO UPDATE SET settings = excluded.settings, credentials = excluded.credentials, status = 'ok',
+    `INSERT INTO media_store (id, kind, is_default, settings, credentials, status, last_error, last_checked_at, updated_at, updated_by)
+     VALUES (?1, ?1, ?2, ?3, ?4, 'ok', NULL, ?5, ?5, ?6)
+     ON CONFLICT (id) DO UPDATE SET settings = excluded.settings, credentials = excluded.credentials, status = 'ok',
        last_error = NULL, last_checked_at = excluded.last_checked_at, updated_at = excluded.updated_at,
        updated_by = excluded.updated_by`,
   )
@@ -144,9 +144,8 @@ export async function setInboxWorkspace(env: Env, kind: StoreKind, workspaceId: 
     !(await env.DB.prepare("SELECT 1 FROM workspaces WHERE id = ?1 AND archived_at IS NULL").bind(workspaceId).first())
   )
     throw new StoreError(`no workspace ${workspaceId}`);
-  await env.DB.prepare("UPDATE media_store SET inbox_workspace = ?1, updated_at = ?2 WHERE kind = ?3")
-    .bind(workspaceId, nowS, kind)
-    .run();
+  // media_store.inbox_workspace is gone (0022): nothing to save until Task 2 removes this function
+  void nowS;
 }
 
 /** Approvals of items not published yet whose media are in a store: what removing it voids. */

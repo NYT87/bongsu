@@ -2,6 +2,7 @@
 // and memberships. Who may do what is roles.ts; which workspace a request works in is workspaces.ts.
 import type { Db } from "./db";
 import { isTimeZone } from "./formats/time";
+import { checkFolderName, FolderError, folderSlug, folderTaken, uniqueFolder } from "./media/folders";
 import type { Role } from "./roles";
 
 const hex = (bytes: number) =>
@@ -25,23 +26,28 @@ export async function createUser(
   return id;
 }
 
-/** A workspace, `w_<16 hex>`, with its settings: the zone given, the digest at 8, English. Nobody's a member yet
+/** A workspace, `w_<16 hex>`, with its settings: the zone given, the digest at 8, English, a media folder. Nobody's a member yet
  *  (addMember). `createdBy` is who asked; the caller's audit row records it, the workspace has no column for it. */
 export async function createWorkspace(
   db: Db,
-  o: { name: string; timezone: string; createdBy: string },
+  o: { name: string; timezone: string; createdBy: string; mediaFolder?: string },
   nowS: number,
 ): Promise<string> {
   if (!isTimeZone(o.timezone)) throw new Error(`unknown time zone ${o.timezone}`);
+  // a folder given is checked and must be free; else the name's slug, numbered when another workspace has it
+  const folder =
+    o.mediaFolder === undefined ? await uniqueFolder(db, folderSlug(o.name)) : checkFolderName(o.mediaFolder);
+  if (o.mediaFolder !== undefined && (await folderTaken(db, folder)))
+    throw new FolderError(`another workspace uses ${folder}`);
   const id = `w_${hex(8)}`;
   // together: a workspace without settings would fall back to UTC unnoticed
   await db.batch([
     db.prepare("INSERT INTO workspaces (id, name, created_at) VALUES (?1, ?2, ?3)").bind(id, o.name, nowS),
     db
       .prepare(
-        "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES (?1, ?2, 8, 'en', ?3)",
+        "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, media_folder, updated_at) VALUES (?1, ?2, 8, 'en', ?3, ?4)",
       )
-      .bind(id, o.timezone, nowS),
+      .bind(id, o.timezone, folder, nowS),
   ]);
   return id;
 }

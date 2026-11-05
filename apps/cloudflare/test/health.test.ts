@@ -7,7 +7,7 @@ describe("/health", () => {
   it("reports the migrated tables, the dry-run setting, no missing secrets and the media stores", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
     await env.DB.prepare(
-      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('s3', 1, '{}', 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, status, updated_at) VALUES ('s3', 's3', 1, '{}', 'ok', 0)",
     ).run();
     const res = await exports.default.fetch("https://scheduler.test/health");
     expect(res.status).toBe(200);
@@ -23,7 +23,7 @@ describe("/health", () => {
   it("needs ENCRYPTION_KEY once a media store keeps credentials", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
     await env.DB.prepare(
-      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', 1, '{}', 'x', 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', 's3', 1, '{}', 'x', 'ok', 0)",
     ).run();
     const r = await createApp(fetch).request(
       "https://scheduler.test/health",

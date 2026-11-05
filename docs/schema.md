@@ -291,11 +291,13 @@ Index `media_cleanup_item`: (item_key).
 
 ## `media_store`
 
-The instance's media stores, one per kind: settings, encrypted credentials, last check, the default.
+Media stores: the instance's (one per kind) and each workspace's own, settings, encrypted credentials, last check, the default.
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
-| `kind` | id: drive / s3 / local | no |  | primary key; MediaRef.store |
+| `id` | id | no |  | primary key; drive, s3, local (the instance's); drive-<workspace>, s3-<workspace> |
+| `kind` | id: drive / s3 / local | no |  | MediaRef.store's kind |
+| `workspace_id` | text | yes |  | the workspace it belongs to; NULL: the instance's |
 | `is_default` | bool | no | 0 | where nothing names a store |
 | `settings` | json | no | "{}" | nothing secret: endpoint, bucket, root… |
 | `credentials` | text | yes |  | encrypted (core/crypto.ts): the S3 keys or the Drive grant |
@@ -304,7 +306,6 @@ The instance's media stores, one per kind: settings, encrypted credentials, last
 | `last_checked_at` | timestamp | yes |  |  |
 | `updated_at` | timestamp | no |  |  |
 | `updated_by` | text | yes |  |  |
-| `inbox_workspace` | text | yes |  | the workspace the inbox feeds for a project no plan has; NULL: none |
 
 ## `memberships`
 
@@ -361,6 +362,7 @@ OAuth flows in progress: the state's hash, the PKCE verifier, who started it. Si
 | `used_at` | timestamp | yes |  |  |
 | `workspace_id` | text | yes |  | the workspace the flow connects into; NULL: the instance's (Drive) |
 | `browser_hash` | text | yes |  | sha256 of the cookie set in the browser that started the flow |
+| `app_scope` | text: workspace / instance | yes |  | whose OAuth app the flow used; NULL: the instance's |
 
 ## `passkeys`
 
@@ -613,6 +615,21 @@ People: the first one owns the instance. Email identifies them; passkeys sign th
 | `timezone` | text | yes |  |  |
 | `instance_admin` | bool | no | 0 | runs the instance: workspaces, media stores, OAuth apps |
 
+## `workspace_oauth_apps`
+
+A workspace's own OAuth apps (Google, Meta), used instead of the instance's for its connections.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `workspace_id` | text | no |  | primary key |
+| `id` | text | no |  | primary key; the provider's app id, as oauth_apps.id |
+| `client_id` | text | no |  |  |
+| `client_secret` | text | no |  | encrypted (core/crypto.ts) |
+| `updated_at` | timestamp | no |  |  |
+| `updated_by` | text | yes |  |  |
+
+Primary key: (workspace_id, id).
+
 ## `workspace_settings`
 
 A workspace's time zone, daily digest hour and locale.
@@ -626,6 +643,9 @@ A workspace's time zone, daily digest hour and locale.
 | `updated_at` | timestamp | no |  |  |
 | `notify_url` | text | yes |  | the workspace's ntfy topic URL, encrypted; NULL: none |
 | `paused` | json | yes |  | {reason, by, at} while the workspace's publishing is paused; NULL: running |
+| `media_folder` | text | yes |  | the workspace's top folder in the media store; unique |
+
+Index `workspace_settings_media_folder`: (media_folder), unique.
 
 ## `workspaces`
 

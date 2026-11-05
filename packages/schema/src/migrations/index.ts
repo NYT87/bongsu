@@ -15,6 +15,7 @@ import { steps as people } from "./0018_people";
 import { steps as oauthStateWorkspace } from "./0019_oauth_state_workspace";
 import { steps as oauthStateBrowser } from "./0020_oauth_state_browser";
 import { steps as notifyPrefs } from "./0021_notify_prefs";
+import { steps as workspaceMedia } from "./0022_workspace_media";
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -40,4 +41,5 @@ export const MIGRATIONS: Migration[] = [
   { name: "0019_oauth_state_workspace", steps: oauthStateWorkspace },
   { name: "0020_oauth_state_browser", steps: oauthStateBrowser },
   { name: "0021_notify_prefs", steps: notifyPrefs },
+  { name: "0022_workspace_media", steps: workspaceMedia },
 ];

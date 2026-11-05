@@ -91,7 +91,7 @@ beforeAll(async () => {
   await db.batch([
     db.prepare("INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Default', 0) ON CONFLICT DO NOTHING"),
     db.prepare(
-      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 0) ON CONFLICT DO NOTHING",
+      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, media_folder, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 'UPLOADS', 0) ON CONFLICT DO NOTHING",
     ),
     db.prepare(
       "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', NULL, 'Owner', 0, 1) ON CONFLICT DO NOTHING",
@@ -102,7 +102,7 @@ beforeAll(async () => {
   ]);
   await db
     .prepare(
-      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, status, updated_at) VALUES ('local', 'local', 1, '{}', 'ok', 0)",
     )
     .run(); // the server's disk, as the dashboard's Media page sets it up
 });

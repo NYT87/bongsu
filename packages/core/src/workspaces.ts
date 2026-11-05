@@ -3,6 +3,7 @@
 
 import type { Db } from "./db";
 import { isTimeZone } from "./formats/time";
+import { checkFolderName, FolderError, folderTaken } from "./media/folders";
 import { isInstanceAdmin, isRole, type Role } from "./roles";
 
 export interface WorkspaceSettings {
@@ -10,6 +11,8 @@ export interface WorkspaceSettings {
   timezone: string;
   digestHour: number;
   locale: string;
+  /** The workspace's top folder in the media store (media/folders.ts); its id for one saved without. */
+  mediaFolder: string;
 }
 
 /** The zone of a workspace without settings, and of someone in no workspace. */
@@ -18,15 +21,16 @@ const FALLBACK = { timezone: FALLBACK_ZONE, digestHour: 8, locale: "en" };
 
 export async function workspaceSettings(db: Db, workspaceId: string): Promise<WorkspaceSettings> {
   const r = await db
-    .prepare("SELECT timezone, digest_hour, locale FROM workspace_settings WHERE workspace_id = ?1")
+    .prepare("SELECT timezone, digest_hour, locale, media_folder FROM workspace_settings WHERE workspace_id = ?1")
     .bind(workspaceId)
-    .first<{ timezone: string; digest_hour: number; locale: string }>();
-  if (!r) return { workspaceId, ...FALLBACK };
+    .first<{ timezone: string; digest_hour: number; locale: string; media_folder: string | null }>();
+  if (!r) return { workspaceId, ...FALLBACK, mediaFolder: workspaceId };
   return {
     workspaceId,
     timezone: isTimeZone(r.timezone) ? r.timezone : FALLBACK.timezone,
     digestHour: r.digest_hour,
     locale: r.locale,
+    mediaFolder: r.media_folder ?? workspaceId,
   };
 }
 
@@ -136,7 +140,7 @@ export const workspaceZone = async (db: Db, workspaceId: string) => (await works
 export async function setWorkspaceSettings(
   db: Db,
   workspaceId: string,
-  s: Partial<Omit<WorkspaceSettings, "workspaceId">>,
+  s: Partial<Omit<WorkspaceSettings, "workspaceId" | "mediaFolder">>,
   nowS: number,
 ) {
   if (s.timezone !== undefined && !isTimeZone(s.timezone)) throw new Error(`unknown time zone ${s.timezone}`);
@@ -149,6 +153,23 @@ export async function setWorkspaceSettings(
     )
     .bind(workspaceId, s.timezone ?? cur.timezone, s.digestHour ?? cur.digestHour, s.locale ?? cur.locale, nowS)
     .run();
+}
+
+/** Gives the workspace another media folder: checked, and refused when another workspace has it. It only renames the
+ *  setting: files already in the old folder stay there (the dashboard says so). Returns the saved name. */
+export async function setMediaFolder(db: Db, workspaceId: string, name: string, nowS: number): Promise<string> {
+  const folder = checkFolderName(name);
+  if (await folderTaken(db, folder, workspaceId)) throw new FolderError(`another workspace uses ${folder}`);
+  const cur = await workspaceSettings(db, workspaceId);
+  await db
+    .prepare(
+      `INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, media_folder, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+       ON CONFLICT (workspace_id) DO UPDATE SET media_folder = excluded.media_folder, updated_at = excluded.updated_at`,
+    )
+    .bind(workspaceId, cur.timezone, cur.digestHour, cur.locale, folder, nowS)
+    .run();
+  return folder;
 }
 
 /** The zone a person sees and enters times in: their own (users.timezone), else their workspace's; UTC for someone in

@@ -46,7 +46,7 @@ CODE_HASH=$(printf %s "$CODE" | sha256sum | cut -d' ' -f1)
 # older .wrangler state that still has them working.
 wr d1 execute bongsu --local --command "
 INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Demo Studio', unixepoch()) ON CONFLICT (id) DO NOTHING;
-INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', '$TZ_NAME', 8, 'en', unixepoch())
+INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, media_folder, updated_at) VALUES ('default', '$TZ_NAME', 8, 'en', 'UPLOADS', unixepoch())
   ON CONFLICT (workspace_id) DO UPDATE SET timezone = excluded.timezone, updated_at = excluded.updated_at;
 INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', 'owner@example.com', 'Demo Owner', unixepoch(), 1)
   ON CONFLICT (id) DO UPDATE SET instance_admin = 1, email = COALESCE(users.email, excluded.email),

@@ -32,7 +32,7 @@ async function fill(db: Db) {
     // a fresh database has no workspace or user (0018): the instance's own
     s("INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Default', 0)"),
     s(
-      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 0)",
+      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, media_folder, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 'UPLOADS', 0)",
     ),
     s(
       "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', 'owner@example.com', 'Owner', 0, 1)",

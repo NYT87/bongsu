@@ -11,8 +11,9 @@ import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { dailyDigest } from "@bongsu/core/digest";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
+import { createWorkspace } from "@bongsu/core/people";
 import { tick } from "@bongsu/core/tick";
-import { setWorkspaceSettings } from "@bongsu/core/workspaces";
+import { setMediaFolder, setWorkspaceSettings, workspaceSettings } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { approve, clearPlan, copyText, igHappyPath, MD5, planItem, testEnv, World } from "./world";
 
@@ -230,6 +231,20 @@ describe("the Workspaces page", () => {
       { action: "settings", workspace_id: "b" },
       { action: "invite_create", workspace_id: "b" },
     ]);
+  });
+
+  it("gives each workspace a media folder from its name, numbered when another has it, and keeps them unique", async () => {
+    const a = await createWorkspace(env.DB, { name: "Demo Studio", timezone: "UTC", createdBy: "owner" }, nowS());
+    const b = await createWorkspace(env.DB, { name: "Demo Studio", timezone: "UTC", createdBy: "owner" }, nowS());
+    expect((await workspaceSettings(env.DB, a)).mediaFolder).toBe("demo-studio");
+    expect((await workspaceSettings(env.DB, b)).mediaFolder).toBe("demo-studio-2");
+    await expect(setMediaFolder(env.DB, b, "demo-studio", nowS())).rejects.toThrow(
+      "another workspace uses demo-studio",
+    );
+    expect(await setMediaFolder(env.DB, b, "Client B", nowS())).toBe("Client B");
+    expect((await workspaceSettings(env.DB, b)).mediaFolder).toBe("Client B");
+    // the seeded workspace keeps the folder its files are in
+    expect((await workspaceSettings(env.DB, "default")).mediaFolder).toBe("UPLOADS");
   });
 
   it("lists, creates, renames and adds admins to workspaces, for instance admins only", async () => {
