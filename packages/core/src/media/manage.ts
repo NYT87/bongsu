@@ -163,6 +163,16 @@ export async function setDefaultStore(env: Env, scope: StoreScope, kind: StoreKi
   ]);
 }
 
+/** A workspace uses the instance's default again: none of its own stores is marked as its default (they stay set up,
+ *  and the files that name them still resolve). */
+export async function useInstanceDefault(env: Env, workspaceId: string, nowS: number) {
+  await env.DB.prepare(
+    "UPDATE media_store SET is_default = 0, updated_at = ?1 WHERE workspace_id = ?2 AND is_default = 1",
+  )
+    .bind(nowS, workspaceId)
+    .run();
+}
+
 /** The latest approvals of items not published yet whose media are in a store (by id): what removing it voids. */
 async function approvalsIn(env: Env, id: string): Promise<string[]> {
   const r = await env.DB.prepare(
@@ -283,7 +293,7 @@ export async function finishDriveConnect(
     token_uri: GOOGLE_TOKEN,
   });
   await saveStore(env, fetcher, { workspaceId: st.workspaceId }, "drive", {}, grant, st.userId, nowS);
-  return { userId: st.userId };
+  return { userId: st.userId, workspaceId: st.workspaceId };
 }
 
 // ---- the weekly check

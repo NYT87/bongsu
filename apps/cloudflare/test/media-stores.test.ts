@@ -500,7 +500,7 @@ describe("Connect Google Drive for a workspace", () => {
     const f = await start("wadmin", ws);
     expect(f.url.searchParams.get("client_id")).toBe(OWN.id);
     const back = await driveCallback(`code=g-code&state=${f.url.searchParams.get("state")}`, f.cookie);
-    expect(back.location).toBe("https://bongsu.test/dashboard/media?connected=drive");
+    expect(back.location).toBe("https://bongsu.test/dashboard/settings/media?connected=drive");
     expect(w.googleCodes[0]).toMatchObject({ client_id: OWN.id, client_secret: OWN.secret });
     const rows = await env.DB.prepare(
       "SELECT id, workspace_id FROM media_store WHERE kind = 'drive' AND workspace_id IS NOT NULL",
