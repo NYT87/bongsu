@@ -28,7 +28,7 @@ crons = []
 directory = "../../packages/web/dist"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
-run_worker_first = ["/app-api/*", "/admin-api/*", "/dashboard", "/dashboard/*", "/v1/*", "/mcp", "/m/*", "/health"]
+run_worker_first = ["/app-api/*", "/admin-api/*", "/dashboard", "/dashboard/*", "/v1/*", "/mcp", "/m/*", "/icon/*", "/health"]
 
 # Workers Logs: the runs' console output kept a few days on the free plan, readable in the dashboard
 # (Workers → this Worker → Logs) or with the observability API. Everything is logged (head_sampling_rate 1).
