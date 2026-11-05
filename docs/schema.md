@@ -276,7 +276,7 @@ Named locks with an expiry, so a slow run can't overlap the next.
 
 ## `media_cleanup`
 
-Media moved aside after publishing (to UPLOADS/_posted/), or refused by the store.
+Media moved aside after publishing (to the workspace folder's `_posted/`, `UPLOADS` in the first), or refused by the store.
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|

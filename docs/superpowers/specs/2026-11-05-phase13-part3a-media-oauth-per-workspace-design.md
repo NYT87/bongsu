@@ -116,7 +116,7 @@ routes): `GET`/`PUT /settings/media-folder`, `GET /workspace/stores`, `PUT`/`DEL
 
 ## 3. App
 
-- Uploads go to the workspace's default store, under `<folder>/inbox/<project>/`, as today under `UPLOADS`.
+- Uploads go to the workspace's default store, under `<folder>/_uploads/` (it was the top folder "Bongsu app uploads"), so they don't land in the inbox.
 - The drafts page names the real folder: "drop files in `<folder>/inbox/<project>/`".
 - Items given by path resolve in the workspace's default store, under its folder.
 - The app's Connect uses the workspace's OAuth app when it has one (the flow is the dashboard's).

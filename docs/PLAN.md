@@ -789,8 +789,10 @@ without a deployment per person. The data model is already there (Phase 3).
 - [x] **Roles** (table below) enforced in every route: dashboard, PWA, API, MCP: instance admin, admin, editor and
       creator; creators use the app and connect their own accounts there (the creators' part of #33); pause and resume
       per workspace; the first run makes an instance admin who creates the first workspace (#18, #19, #20).
-- [ ] Per-workspace: connections, accounts, media store root (e.g. its own Drive folder), agent keys, time zone,
-      notifications. The OAuth apps (D10) can be shared by the instance or set per workspace.
+- [x] Per-workspace: connections, accounts, media store root (e.g. its own Drive folder), agent keys, time zone,
+      notifications. The OAuth apps (D10) can be shared by the instance or set per workspace. (Part 3a: a media
+      folder per workspace, its own S3 or Drive stores, its own Meta and Google apps, the inbox per workspace, a
+      read-only Scheduler section; #21.)
 - [x] PWA: a workspace picker when a user belongs to more than one; notifications say which workspace. (Part 2: the
       header's bottom sheet; pushes carry `?w=` and a title prefix.)
 - [ ] Workspace icon, optional, set in the dashboard; the PWA header, the picker and the notifications show it;
@@ -798,8 +800,8 @@ without a deployment per person. The data model is already there (Phase 3).
 - [ ] Your name, edited in the dashboard, and a display name per workspace, used wherever a person is named
       (#142).
 - [x] Notifications per user and workspace (who gets what). (Part 2: five groups, role defaults, `notify_prefs`.)
-- [ ] Isolation tests across every surface, including the cron and the media links. (Part 2 covers notifications:
-      pushes, groups and switching; the cron and the media links remain.)
+- [x] Isolation tests across every surface, including the cron and the media links. (Part 2 covers notifications:
+      pushes, groups and switching; part 3a the cron (inbox, store checks) and the media links; #24.)
 
 | Role | Can |
 |---|---|

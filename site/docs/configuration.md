@@ -103,7 +103,7 @@ dashboard's mark.
 | `RP_ID` | passkey relying-party id: the app's hostname |
 | `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` | Web Push |
 | `JOBS_PER_TICK` | optional, on the cron Worker: publishing jobs advanced per run (default `4`, at most `100`). See [How many go out at once](#how-many-go-out-at-once) |
-| `INBOX_WORKSPACES_PER_RUN` | optional, on the cron Worker: workspaces whose inbox folder one run scans (default `3`, at most `100`); the next run carries on with the following ones |
+| `INBOX_WORKSPACES_PER_RUN` | optional, on the cron Worker: workspaces whose inbox folder one run scans (default `3`, at most `100`); the next run carries on with the following ones. Set at deploy time, never in the dashboard |
 
 ## Secrets
 
@@ -167,10 +167,13 @@ server's media directory.
 
 | Path | Use |
 |---|---|
-| `UPLOADS/<project>/…` | media of plan items (looked up in the default store) |
-| `UPLOADS/inbox/<project>/` | drop files here to get drafts (every store's inbox is read) |
-| `UPLOADS/_posted/` | posted media is moved here, in the store it's in |
-| `Bongsu app uploads/` | files uploaded from the app, in the store picked for the upload |
+| `<folder>/<project>/…` | media of plan items (looked up in the workspace's default store) |
+| `<folder>/inbox/<project>/` | drop files here to get drafts (every store's inbox is read) |
+| `<folder>/_posted/` | posted media is moved here, in the store it's in |
+| `<folder>/_uploads/` | files uploaded from the app, in the store picked for the upload |
+
+`<folder>` is the workspace's media folder: `UPLOADS` in the first workspace, a name made from the workspace's name in
+new ones, editable by its admins. Bongsu never moves files when it changes.
 
 ## Tunable limits (`packages/core/src/constants.ts`)
 

@@ -65,7 +65,7 @@ Google Drive is not a connection here: it is a media store, set up on the **Medi
 
 ## Media
 
-Where your Reels and photos live. **Your stores** lists each one with its **Status** and when it was last **Checked**
+Where the instance's Reels and photos live (instance admins; a workspace's own stores are in **Settings → Media**). Every workspace uses these stores in its own media folder. **Your stores** lists each one with its **Status** and when it was last **Checked**
 (Bongsu checks every store weekly): **Test** checks it reads and writes, **Make default** makes it the store used where
 nothing names one (planned items given by a path, drafts from agents, the first choice on the app's upload page), and
 **Remove** stops Bongsu reading it, after saying how many waiting approvals that voids. Removing asks for your passkey
@@ -184,7 +184,25 @@ members can't open it, it gets no daily digest and its comments and metrics are 
 back as it was (posts that came due meanwhile go out only within the catch-up window). Archiving, restoring and adding
 an admin ask for your passkey again.
 
+**Scheduler** is a read-only section for instance admins: the three runs and their times, `JOBS_PER_TICK` and
+`INBOX_WORKSPACES_PER_RUN` as the cron last recorded them, and when the inbox last ran. They are set where the instance
+is deployed ([Configuration](configuration.md)); making the schedule tunable is tracked in issue #64.
+
 ## Settings
+
+Settings has three tabs: **General**, **Media** and **OAuth apps** (`/dashboard/settings`, `/settings/media`,
+`/settings/apps`).
+
+**Media** (admins) sets the workspace's **media folder** (`UPLOADS` in the first workspace, a name made from the
+workspace's name in new ones; Bongsu never moves files, so move them yourself when you change it) and its own S3 bucket
+or Google Drive. A workspace's default store is its own if it has one, else the instance's. A file must be in the
+workspace's own store or inside its folder in an instance store, or it's refused with "not in this workspace's media".
+The inbox scans `<folder>/inbox` in each of the workspace's stores, a few workspaces per run in turn.
+
+**OAuth apps** (admins) holds the workspace's own Meta and Google apps, with the same redirect URLs as the instance's. A
+connection uses the workspace's app if it has one, else the instance's, and keeps the one it started with.
+
+**General** is the rest of this section.
 
 **Workspace** holds its **Name** (it can't be emptied), the **Time zone**, the default for everyone (each person can
 choose their own in the app), and the **Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the

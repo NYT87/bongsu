@@ -12,6 +12,16 @@ credentials encrypted with `ENCRYPTION_KEY`, the last check, whether it's the de
 environment, apart from `MEDIA_DIR` on Node: the directory the server offers as `local` (the runtime registers it, the
 dashboard only picks it; it never takes a server path).
 
+**Per workspace.** Each workspace has a media folder (`workspace_settings.media_folder`: `UPLOADS` in the first one, a
+slug of the name in new ones, editable by its admins; Bongsu never moves files) holding `inbox/<project>/`,
+`<project>/…`, `_posted/` and the app's `_uploads/`. A workspace's admins can add a store of their own in Settings →
+Media (ids `s3-<ws>` / `drive-<ws>`, `media_store.workspace_id` set); the instance's keep the ids `drive`, `s3`, `local`.
+A workspace's default is its own store if it has one, else the instance's. A file reference must be in the caller's
+workspace (its own store, or inside its folder in an instance store) or it's refused ("not in this workspace's media");
+S3 ids and paths with `.`, `..` or empty segments are refused. A broken store of a workspace is told to that workspace
+(link: Settings → Media), the instance's to the instance admins. OAuth apps can be a workspace's own too (Meta, Google):
+a flow uses the workspace's app if set, else the instance's, and keeps the one it started with.
+
 Several can be set up side by side, one of each kind. Every reference to a file names its store, so each file is read
 from its own; the **default** store is used where nothing names one (plan items given by a path, file ids from the
 agent API, the upload page's first choice).
@@ -20,7 +30,7 @@ agent API, the upload page's first choice).
 credentials don't decrypt, or a kind the runtime doesn't offer, lands in `errors` instead of failing the request), with
 `for(ref)` (the store a reference names, or null), `default`, `all` and `uploadable`. `media/manage.ts` is the
 dashboard's side: `testStore`, `saveStore` (tests first), `setDefaultStore`, `removeStore`, `waitingApprovalsIn`,
-Connect Google Drive (`startDriveConnect`, `finishDriveConnect`), `setInboxWorkspace` and the weekly `checkStores` in
+Connect Google Drive (`startDriveConnect`, `finishDriveConnect`), and the weekly `checkStores` in
 the inbox's cron run. The stores are the instance's: a broken one is told to the instance admins
 (`notifyInstanceAdmins`: the audit log in no workspace, and an email with a `Mailer`), not to any workspace.
 
@@ -30,8 +40,8 @@ the inbox's cron run. The stores are the instance's: a broken one is told to the
 |---|---|
 | Publishing (`core/tick.ts`) | `stat` each approved file in its own store just before publishing: it must still exist with the approved checksum |
 | Media links (`core/media.ts`) | `publicUrl` when the file's store has it (Instagram fetches the store directly); otherwise a signed `/m/<store>/<id>` link that `stat`s and `stream`s the file, ranges included |
-| The inbox (`core/inbox.ts`) | in every store: `resolve("UPLOADS/inbox")`, `list` each project, `readText` the caption files; a store that fails doesn't stop the others. A project's draft goes to the workspace whose plan has it, else to the store's **inbox feeds** workspace (`media_store.inbox_workspace`, the Media page); without one it waits (`inboxWorkspace`) |
-| Cleanup (`core/cleanup.ts`) | `move` posted media (a post as its folder) to `UPLOADS/_posted/` in its own store, `ensureFolder` |
+| The inbox (`core/inbox.ts`) | per workspace, at most `INBOX_WORKSPACES_PER_RUN` of them per run, in turn: `resolve("<media_folder>/inbox")` in each of its stores (its own, plus the instance's), `list` each project, `readText` the caption files; a store that fails doesn't stop the others. Drafts go to the workspace being scanned; the old `inbox_workspace` picker is gone |
+| Cleanup (`core/cleanup.ts`) | `move` posted media (a post as its folder) to `<media_folder>/_posted/` in its own store, `ensureFolder` |
 | The app (`api/pwa/approve.ts`, `uploads.ts`) | `resolve` / `list` / `stat` an item's media for the approval page; `createUpload` in the store the owner picks |
 
 **References.** Approvals, plan items and drafts store `{store, id, checksum}`. The checksum is whatever the store
@@ -39,7 +49,7 @@ guarantees (Drive's md5, an S3 ETag, a sha256) and is only compared for equality
 to a store that isn't set up counts as missing: removing a store means approving its items again (the dashboard says
 how many).
 
-**Paths are logical** (`UPLOADS/inbox/<project>/`, `UPLOADS/_posted/`), relative to the store's root: for Drive, the
+**Paths are logical** (`<media_folder>/inbox/<project>/`, `<media_folder>/_posted/`; `media_folder` is `UPLOADS` in the first workspace), relative to the store's root: for Drive, the
 connected account's top folders; for a bucket, its prefix; for a disk, a directory.
 
 **Nothing is deleted.** Bongsu only moves files aside. A store without a native move (S3) copies, then removes the
@@ -114,8 +124,8 @@ Checklist:
 
 The `drive` store (`media/drive.ts`) does everything with one OAuth grant of the owner's, made by **Connect Google
 Drive** with the owner's Google app (`oauth_apps` id `google`, the one YouTube uses) and the scope `drive`: it sees the
-files the owner drops in by hand and can move them. Uploads from the app open a resumable session in a top folder,
-"Bongsu app uploads", made on first use. The checksum is Drive's md5, which Drive computes a moment after an upload.
+files the owner drops in by hand and can move them. Uploads from the app open a resumable session in the
+workspace's `_uploads` folder, made on first use. The checksum is Drive's md5, which Drive computes a moment after an upload.
 The `/m/` proxy streams the files (Drive has no presigned URLs).
 
 ## S3
