@@ -164,9 +164,19 @@ describe("POST /app-api/me/name", () => {
     const amy = await as("amy", "default");
     const r = await amy.post("/app-api/me/name", { name: "  Jo " });
     expect(r.status).toBe(200);
-    expect((await amy.me()).json.you).toEqual({ name: "Jo", displayName: null, shownAs: "Jo" });
+    expect((await amy.me()).json.you).toEqual({
+      name: "Jo",
+      emailName: "amy",
+      displayName: null,
+      shownAs: "Jo",
+    });
     expect((await amy.post("/app-api/me/name", { name: "" })).status).toBe(200);
-    expect((await amy.me()).json.you).toEqual({ name: null, displayName: null, shownAs: "amy" });
+    expect((await amy.me()).json.you).toEqual({
+      name: null,
+      emailName: "amy",
+      displayName: null,
+      shownAs: "amy",
+    });
     const bad = await amy.post("/app-api/me/name", { name: LONG });
     expect([bad.status, bad.json.error]).toEqual([400, "a name is 1 to 60 characters"]);
   });
@@ -182,8 +192,21 @@ describe("POST /app-api/me/display-name", () => {
   it("shows in that workspace only, and is audited with its workspace", async () => {
     const inA = await as("amy", "default");
     expect((await inA.post("/app-api/me/display-name", { name: "J. Park" })).status).toBe(200);
-    expect((await inA.me()).json.you).toEqual({ name: "Amy", displayName: "J. Park", shownAs: "J. Park" });
+    expect((await inA.me()).json.you).toEqual({
+      name: "Amy",
+      emailName: "amy",
+      displayName: "J. Park",
+      shownAs: "J. Park",
+    });
     expect(((await (await as("amy", "b")).me()).json.you as Json).shownAs).toBe("Amy");
+    // the picker's list names her in each workspace as that workspace does
+    const listed = ((await inA.me()).json.workspaces as Json[]).map((x) => [x.id, x.shownAs]);
+    expect(listed).toEqual(
+      expect.arrayContaining([
+        ["default", "J. Park"],
+        ["b", "Amy"],
+      ]),
+    );
     const rows = (await auditRows("member_name")).results;
     expect(rows.map((r) => [r.target, r.workspace_id, r.user_id])).toEqual([["amy", "default", "amy"]]);
     expect((await inA.post("/app-api/me/display-name", { name: "" })).status).toBe(200);
@@ -310,13 +333,20 @@ describe("where people are named", () => {
     expect(v.json).toMatchObject({ approved: true });
     const item = () => agent(`/v1/items/${encodeURIComponent(key)}`);
     expect((await item()).approval.approved_by).toBe("Ana");
+    // the app's item page says the same
+    const ina = await as("ina", "default");
+    const appItem = async (k: string) =>
+      (await ina.get(`/app-api/item?key=${encodeURIComponent(k)}`)).json.approved as Json;
+    expect(await appItem(key)).toMatchObject({ by: "Ana", matches: true });
     // a removed member's approval still names them (by their own name: the display name went with the membership)
     await env.DB.prepare("DELETE FROM memberships WHERE workspace_id = 'default' AND user_id = 'amy'").run();
     expect((await item()).approval.approved_by).toBe("Amy");
+    expect(await appItem(key)).toMatchObject({ by: "Amy" });
     // an approval that recorded no person
     const other = await planItem({ folder, name: "short2_x", date: "2026-10-21" });
     await approve(other, { due: "2026-10-21 18:00", caption: "x", comment: null, media: [] });
     expect((await agent(`/v1/items/${encodeURIComponent(other)}`)).approval).toMatchObject({ approved_by: null });
+    expect(await appItem(other)).toMatchObject({ by: null });
   });
 
   it("drafts: an app upload names its person, an agent's draft its key", async () => {

@@ -234,6 +234,29 @@ export async function memberNames(db: Db, userIds: string[], workspaceId: string
   return out;
 }
 
+/** One person's name in each of several workspaces (display name there, else name, else the email's local part), in
+ *  one query; a workspace they're not in names them without the first. Null when they have none of these. */
+export async function memberNamesIn(
+  db: Db,
+  userId: string,
+  workspaceIds: string[],
+): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>(workspaceIds.map((w) => [w, null]));
+  const u = await db
+    .prepare("SELECT name, email FROM users WHERE id = ?1")
+    .bind(userId)
+    .first<{ name: string | null; email: string | null }>();
+  if (!u) return out;
+  const own = u.name || localPart(u.email);
+  const r = await db
+    .prepare("SELECT workspace_id, display_name FROM memberships WHERE user_id = ?1")
+    .bind(userId)
+    .all<{ workspace_id: string; display_name: string | null }>();
+  const shown = new Map(r.results.map((m) => [m.workspace_id, m.display_name]));
+  for (const w of workspaceIds) out.set(w, shown.get(w) || own);
+  return out;
+}
+
 /** A person's own name, everywhere; null goes back to the email's local part. */
 export async function setUserName(db: Db, userId: string, name: string | null) {
   await db.prepare("UPDATE users SET name = ?1 WHERE id = ?2").bind(name, userId).run();

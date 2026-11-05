@@ -23,7 +23,7 @@ import { mediaStores } from "@bongsu/core/media/index";
 import { isMedia, isVideo, type MediaEntry } from "@bongsu/core/media/store";
 import { platform } from "@bongsu/core/platforms/index";
 import { type Format, formatLabel } from "@bongsu/core/platforms/types";
-import { workspaceSettings } from "@bongsu/core/workspaces";
+import { memberName, workspaceSettings } from "@bongsu/core/workspaces";
 
 export interface Resolved {
   key: string;
@@ -56,7 +56,7 @@ export interface Resolved {
   comment2: string | null; // the second comment, posted right after the first (none when null)
   alt: string; // alt.txt as stored (fingerprinted); altLines() is what's published
   media: { store: string; id: string; checksum: string; mime: string; name: string }[];
-  approved: { at: string; matches: boolean; commentsOnly?: boolean } | null; // commentsOnly: just the comments differ
+  approved: { at: string; matches: boolean; commentsOnly?: boolean; by: string | null } | null; // commentsOnly: just the comments differ
   problems: string[]; // anything that blocks approval
   lint: Check[]; // the caption check's warnings (its failures are in problems)
 }
@@ -209,7 +209,8 @@ export async function resolveItem(
       (a.altSha256 ?? null) === snap.altSha256 &&
       a.media.map((x) => `${x.store}:${x.id}:${x.checksum}`).join(" ") === snap.media.join(" ");
     const comments = a.commentSha256 === snap.commentSha256 && (a.comment2Sha256 ?? null) === snap.comment2Sha256;
-    r.approved = { at: a.approvedAt, matches: same && comments, commentsOnly: same && !comments };
+    const by = a.approvedByUser ? await memberName(env.DB, a.approvedByUser, workspaceId) : null;
+    r.approved = { at: a.approvedAt, matches: same && comments, commentsOnly: same && !comments, by };
   }
   return r;
 }
@@ -265,7 +266,8 @@ async function resolveShort(env: Env, key: string, workspaceId: string): Promise
   const a = (await latestApprovals(env.DB, [key])).get(key);
   if (a && a.dueAt !== null) {
     const matches = a.account === row.channel && a.captionSha256 === (await sha256Hex(text));
-    r.approved = { at: a.approvedAt, matches };
+    const by = a.approvedByUser ? await memberName(env.DB, a.approvedByUser, workspaceId) : null;
+    r.approved = { at: a.approvedAt, matches, by };
   }
   return r;
 }

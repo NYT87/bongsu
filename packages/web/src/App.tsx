@@ -50,9 +50,9 @@ type Me = {
   noWorkspace?: boolean;
   /** Where the session works (null: in none), and every workspace the person can open, with their role there. */
   workspace?: { id: string; name: string; mediaFolder: string; iconUrl: string | null } | null;
-  workspaces?: { id: string; name: string; role: string; iconUrl: string | null }[];
+  workspaces?: { id: string; name: string; role: string; iconUrl: string | null; shownAs: string | null }[];
   /** The person's own name (all workspaces), the one this workspace shows for them, and what it shows now. */
-  you?: { name: string | null; displayName: string | null; shownAs: string | null } | null;
+  you?: { name: string | null; emailName: string | null; displayName: string | null; shownAs: string | null } | null;
 };
 type Status = {
   dry_run: boolean;
@@ -902,9 +902,8 @@ function WorkspaceSheet({ me, onClose, onSwitched }: { me: Me; onClose: () => vo
                 <WsIcon url={w.iconUrl} />
                 <span className="clip">
                   {w.name}
-                  {/* the list doesn't carry the name each workspace shows, so only this one's is known */}
-                  {here && me.you?.shownAs && me.you.shownAs !== me.you.name && (
-                    <span className="muted small ws-as">{t("workspace.shownAs", { name: me.you.shownAs })}</span>
+                  {w.shownAs && w.shownAs !== me.you?.name && (
+                    <span className="muted small ws-as">{t("workspace.shownAs", { name: w.shownAs })}</span>
                   )}
                 </span>
                 <span className="muted small">{w.role}</span>
@@ -2016,7 +2015,9 @@ function ItemPage({
       {item.approved && !item.failed && !done && (
         <p className={`notice ${item.approved.matches ? "ok" : "warn"}`}>
           {item.approved.matches
-            ? t("item.approvedAt", { when: utcToZone(item.approved.at) })
+            ? item.approved.by
+              ? t("item.approvedByAt", { name: item.approved.by, when: utcToZone(item.approved.at) })
+              : t("item.approvedAt", { when: utcToZone(item.approved.at) })
             : item.approved.commentsOnly
               ? t("item.commentsChanged")
               : t("item.changed")}
@@ -4543,7 +4544,7 @@ function YouCard({ me, onSaved }: { me: Me; onSaved: () => void }) {
         t("you.shownIn", { workspace: me.workspace?.name ?? "" }),
         shown,
         setShown,
-        you.name ?? (you.displayName ? "" : (you.shownAs ?? "")),
+        you.name ?? you.emailName ?? "",
       )}
     </div>
   );

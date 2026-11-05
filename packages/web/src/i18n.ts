@@ -320,6 +320,7 @@ export const en = {
   "item.failedAgain": "Approve it again to start over.",
   "item.failedMayBeLive":
     "{platform} was asked to publish it, so it may be live: check the account (post it by hand if it isn't there), then record it with record_posted.",
+  "item.approvedByAt": "Approved by {name}, {when}, exactly as shown.",
   "item.approvedAt": "Approved {when}, exactly as shown.",
   "item.commentsChanged":
     "Only the comments changed since it was approved: approve them (the post itself stays as approved).",

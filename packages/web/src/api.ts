@@ -119,7 +119,7 @@ export interface Item {
   comment2?: string | null;
   alt: string;
   media: { store: string; id: string; checksum: string; mime: string; name: string; url: string }[];
-  approved: { at: string; matches: boolean; commentsOnly?: boolean } | null;
+  approved: { at: string; matches: boolean; commentsOnly?: boolean; by?: string | null } | null;
   problems: string[];
   lint?: { check: string; status: string; detail: string }[];
   results?: Results | null;

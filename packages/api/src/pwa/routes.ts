@@ -30,6 +30,7 @@ import {
   checkName,
   FALLBACK_ZONE,
   memberName,
+  memberNamesIn,
   NameError,
   sessionWorkspace,
   setDisplayName,
@@ -227,7 +228,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         c.env.DB,
         origin(c),
         caller ? await workspaceOf(c.env.DB, caller.workspaceId) : null,
-        s ? await workspacesOf(c.env.DB, s.userId) : [],
+        s ? await withShownAs(c.env.DB, s.userId, await workspacesOf(c.env.DB, s.userId)) : [],
       )),
       // the signed-in person's names: their own, the one this workspace shows, and what it shows now (core/workspaces.ts)
       you: s ? await youOf(c.env.DB, s.userId, caller?.workspaceId ?? null) : null,
@@ -1115,9 +1116,22 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   return app;
 }
 
+/** The picker's list with the name each workspace shows for the person, from one batched lookup. */
+const withShownAs = async <W extends { id: string }>(db: Db, userId: string, list: W[]) => {
+  const names = await memberNamesIn(
+    db,
+    userId,
+    list.map((w) => w.id),
+  );
+  return list.map((w) => ({ ...w, shownAs: names.get(w.id) ?? null }));
+};
+
 /** `you` in GET /app-api/me: the person's own name, the display name in the workspace, and what the workspace shows. */
 const youOf = async (db: Db, userId: string, workspaceId: string | null) => {
-  const u = await db.prepare("SELECT name FROM users WHERE id = ?1").bind(userId).first<{ name: string | null }>();
+  const u = await db
+    .prepare("SELECT name, email FROM users WHERE id = ?1")
+    .bind(userId)
+    .first<{ name: string | null; email: string | null }>();
   const m = workspaceId
     ? await db
         .prepare("SELECT display_name FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
@@ -1126,6 +1140,7 @@ const youOf = async (db: Db, userId: string, workspaceId: string | null) => {
     : null;
   return {
     name: u?.name ?? null,
+    emailName: u?.email ? u.email.split("@")[0] || null : null,
     displayName: m?.display_name ?? null,
     shownAs: workspaceId ? await memberName(db, userId, workspaceId) : null,
   };

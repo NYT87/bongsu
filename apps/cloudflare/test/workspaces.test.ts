@@ -447,7 +447,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     const me = (await as("bea", "pwa", "/app-api/me")).json;
     expect(me).toMatchObject({
       workspace: { id: "b" },
-      workspaces: [{ id: "b", name: "Workspace B", iconUrl: null, role: "admin" }],
+      workspaces: [{ id: "b", name: "Workspace B", iconUrl: null, shownAs: expect.anything(), role: "admin" }],
     });
     // no session of hers works in the default workspace
     expect(

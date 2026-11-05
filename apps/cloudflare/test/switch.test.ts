@@ -129,7 +129,7 @@ describe("switching the session's workspace", () => {
     expect((await opens()).results).toEqual([]);
     // the app's list is the same, and its switch works the same way
     const amyApp = await app("amy", "default");
-    expect((await meOf(amyApp)).workspaces).toEqual(before.workspaces);
+    expect((await meOf(amyApp)).workspaces).toMatchObject(before.workspaces as object[]);
     expect(await amyApp("/app-api/session/workspace", { id: w2 })).toEqual({ status: 200, json: { ok: true, id: w2 } });
     expect((await meOf(amyApp)).workspace).toEqual({
       id: w2,
@@ -173,8 +173,8 @@ describe("switching the session's workspace", () => {
 
     const cleoApp = await app("cleo", "default");
     expect((await meOf(cleoApp)).workspaces).toEqual([
-      { id: "default", name: "Default", iconUrl: null, role: "admin" },
-      { id: w2, name: "Studio Two", iconUrl: null, role: "creator" },
+      { id: "default", name: "Default", iconUrl: null, shownAs: expect.anything(), role: "admin" },
+      { id: w2, name: "Studio Two", iconUrl: null, shownAs: expect.anything(), role: "creator" },
     ]);
     expect((await cleoApp("/app-api/session/workspace", { id: w2 })).status).toBe(200);
     const me = await meOf(cleoApp);
@@ -238,7 +238,7 @@ describe("switching the session's workspace", () => {
     const otto = await app("otto");
     expect(await meOf(otto)).toMatchObject({
       workspace: { id: "default", name: "Default", iconUrl: null },
-      workspaces: [{ id: "default", name: "Default", iconUrl: null, role: "editor" }],
+      workspaces: [{ id: "default", name: "Default", iconUrl: null, shownAs: expect.anything(), role: "editor" }],
     });
   });
 
