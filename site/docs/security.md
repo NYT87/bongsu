@@ -86,8 +86,13 @@ nothing.
 
 Every row of plan data carries its workspace, and the app, the API and the MCP server act within the caller's: items,
 drafts, jobs, accounts, the comments inbox and replies, manual post records. Account ids are unique across the
-instance. Pausing is per workspace too. Nothing lands in a workspace nobody chose: a draft from a store's inbox goes
-to the workspace of its project's plan, else to the store's **Inbox feeds** workspace, else it waits.
+instance. Pausing is per workspace too.
+
+Media is kept apart the same way. Each workspace has its own media folder, in its own store or in the instance's. The
+inbox scans each workspace's `<folder>/inbox` and drafts into that workspace only. A file reference (an agent's
+`create_draft`, a draft from the app, a schedule) must be in the caller's workspace: in its own store, or inside its
+folder in an instance store. Anything else is refused with "not in this workspace's media". The `/m` links stay signed
+per store and file.
 
 ## Secrets
 
