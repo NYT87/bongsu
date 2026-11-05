@@ -105,7 +105,6 @@ interface Listed {
 }
 
 export class S3Store implements MediaStore {
-  readonly id = "s3";
   private readonly aws: AwsClient;
   private readonly prefix: string;
 
@@ -113,6 +112,7 @@ export class S3Store implements MediaStore {
     private readonly s: S3Settings,
     credentials: S3Credentials,
     private readonly fetcher: typeof fetch,
+    readonly id = "s3",
   ) {
     this.aws = new AwsClient({
       accessKeyId: credentials.accessKeyId,
@@ -250,6 +250,13 @@ export class S3Store implements MediaStore {
     const rel = clean(path);
     if (!rel) return null;
     return (await this.head(rel)) ?? (await this.folder(`${rel}/`));
+  }
+
+  async inside(id: string, folderPath: string) {
+    const rel = b64url.decode(id);
+    const folder = clean(folderPath);
+    // the key says where it is: the trailing slash keeps "inbox/tr" from matching "inbox/trip"
+    return !!rel && !!folder && rel.startsWith(`${folder}/`) && rel.length > folder.length + 1;
   }
 
   async list(folderId: string) {

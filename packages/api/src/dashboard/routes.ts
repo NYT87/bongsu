@@ -45,7 +45,6 @@ import {
   savedCredentials,
   saveStore,
   setDefaultStore,
-  setInboxWorkspace,
   startDriveConnect,
   testStore,
   waitingApprovalsIn,
@@ -1494,7 +1493,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }),
   );
 
-  // ---- media stores: where the media live (core/media/manage.ts). Secrets never go back to the browser.
+  // ---- media stores: where the media live (core/media/manage.ts). Secrets never go back to the browser. These are the
+  // instance's stores; a workspace's own are set up in the app.
+  const INSTANCE = { workspaceId: null };
   const storeKind = (c: C): StoreKind => {
     const k = c.req.param("kind") ?? "";
     if (!(STORE_KINDS as readonly string[]).includes(k)) throw new AdminError(404, `no store kind ${k}`);
@@ -1504,7 +1505,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores",
     wrap(async (c) => ({
       stores: await Promise.all(
-        (await storeRows(c.env.DB)).map(async (r) => ({
+        (await storeRows(c.env.DB, INSTANCE)).map(async (r) => ({
           kind: r.kind,
           default: r.isDefault,
           settings: r.settings,
@@ -1513,17 +1514,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           lastError: r.lastError,
           lastCheckedAt: r.lastCheckedAt ? utcIso(r.lastCheckedAt) : null,
           // what removing it would void
-          waitingApprovals: await waitingApprovalsIn(c.env, r.kind),
-          inboxWorkspace: r.inboxWorkspace,
+          waitingApprovals: await waitingApprovalsIn(c.env, r.id),
         })),
       ),
-      // what an inbox can feed
-      workspaces: (
-        await c.env.DB.prepare("SELECT id, name FROM workspaces WHERE archived_at IS NULL ORDER BY name, id").all<{
-          id: string;
-          name: string;
-        }>()
-      ).results,
       offered: offeredKinds(),
       googleApp: !!(await c.env.DB.prepare("SELECT 1 FROM oauth_apps WHERE id = 'google'").first()),
       encryptionKeySet: !!c.env.ENCRYPTION_KEY,
@@ -1532,7 +1525,10 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   /** The settings and credentials a form sends: S3's from its fields, the saved keys when both are left empty. */
   const storeInput = async (c: C, kind: StoreKind, b: Record<string, unknown>) => {
     if (kind === "s3")
-      return { settings: { ...s3Settings(b) }, credentials: s3Credentials(b) ?? (await savedCredentials(c.env, "s3")) };
+      return {
+        settings: { ...s3Settings(b) },
+        credentials: s3Credentials(b) ?? (await savedCredentials(c.env, INSTANCE, "s3")),
+      };
     if (kind === "local") return { settings: {}, credentials: null };
     throw new AdminError(400, "Google Drive is connected with its button, not a form");
   };
@@ -1541,7 +1537,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const kind = storeKind(c);
       if (kind === "drive") {
-        const creds = await savedCredentials(c.env, "drive");
+        const creds = await savedCredentials(c.env, INSTANCE, "drive");
         if (!creds) throw new AdminError(400, "connect Google Drive first");
         return testStore(c.env, fetcher, "drive", {}, creds);
       }
@@ -1555,7 +1551,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       fresh(c);
       const kind = storeKind(c);
       const { settings, credentials } = await storeInput(c, kind, await body(c));
-      await saveStore(c.env, fetcher, kind, settings, credentials, c.get("session").userId, nowS());
+      await saveStore(c.env, fetcher, INSTANCE, kind, settings, credentials, c.get("session").userId, nowS());
       await audit(c, "media_store_save", kind, kind === "s3" ? { ...settings } : {}, undefined, null);
       return { saved: true };
     }),
@@ -1573,21 +1569,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores/:kind/default",
     wrap(async (c) => {
       const kind = storeKind(c);
-      await setDefaultStore(c.env, kind, nowS());
+      await setDefaultStore(c.env, INSTANCE, kind, nowS());
       await audit(c, "media_store_default", kind, {}, undefined, null);
       return { default: kind };
-    }),
-  );
-  // The workspace that gets the drafts of the projects in this store's inbox that no plan has yet (null: they wait).
-  app.post(
-    "/admin-api/media-stores/:kind/inbox",
-    wrap(async (c) => {
-      const kind = storeKind(c);
-      const w = (await body(c)).workspace;
-      const workspace = typeof w === "string" && w ? w : null;
-      await setInboxWorkspace(c.env, kind, workspace, nowS());
-      await audit(c, "media_store_inbox", kind, { workspace }, undefined, null);
-      return { inboxWorkspace: workspace };
     }),
   );
   app.post(
@@ -1596,7 +1580,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       fresh(c);
       const kind = storeKind(c);
       const voided = await waitingApprovalsIn(c.env, kind);
-      await removeStore(c.env, kind, nowS());
+      await removeStore(c.env, INSTANCE, kind, nowS());
       await audit(c, "media_store_remove", kind, { voidedApprovals: voided }, undefined, null);
       return { removed: true, voidedApprovals: voided };
     }),

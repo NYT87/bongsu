@@ -534,7 +534,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // The media stores, for Settings (read-only: they're set up in the dashboard; no settings or secrets here).
   app.get("/app-api/media-stores", async (c) =>
     c.json({
-      stores: (await storeRows(c.env.DB)).map((r) => ({
+      stores: (await storeRows(c.env.DB, { workspaceId: me(c).workspaceId })).map((r) => ({
         kind: r.kind,
         default: r.isDefault,
         status: r.status,

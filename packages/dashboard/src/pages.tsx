@@ -480,8 +480,6 @@ interface StoreInfo {
   lastError: string | null;
   lastCheckedAt: string | null;
   waitingApprovals: number;
-  /** The workspace that gets the drafts of new projects dropped in its inbox; null: they wait. */
-  inboxWorkspace: string | null;
 }
 const STORE_NAME: Record<string, string> = {
   drive: "Google Drive",
@@ -520,7 +518,6 @@ export function Media({ go }: Props) {
     offered: string[];
     googleApp: boolean;
     encryptionKeySet: boolean;
-    workspaces: { id: string; name: string }[];
   }>("media-stores");
   const { confirm, dialog } = useConfirm();
   const [err, setErr] = useState<string | null>(null);
@@ -582,7 +579,6 @@ export function Media({ go }: Props) {
                       <th>Store</th>
                       <th>Status</th>
                       <th>Checked</th>
-                      <th>Inbox feeds</th>
                       <th className="right">
                         <span className="vh">Actions</span>
                       </th>
@@ -603,31 +599,6 @@ export function Media({ go }: Props) {
                         </td>
                         <td data-label="Checked" className="small nowrap">
                           {s.lastCheckedAt ? when(Date.parse(s.lastCheckedAt) / 1000) : "—"}
-                        </td>
-                        <td data-label="Inbox feeds">
-                          {/* a project a plan has goes to that plan's workspace; this one gets the others */}
-                          <select
-                            aria-label={`The workspace ${STORE_NAME[s.kind]}'s inbox feeds`}
-                            title="Drafts of projects in UPLOADS/inbox that no plan has yet go to this workspace"
-                            value={s.inboxWorkspace ?? ""}
-                            onChange={(e) => {
-                              const id = e.target.value || null;
-                              const name = data.workspaces.find((w) => w.id === id)?.name;
-                              act(
-                                () => api(`media-stores/${s.kind}/inbox`, { workspace: id }),
-                                id
-                                  ? `New projects in ${STORE_NAME[s.kind]}'s inbox go to ${name ?? id} now.`
-                                  : `New projects in ${STORE_NAME[s.kind]}'s inbox wait now.`,
-                              );
-                            }}
-                          >
-                            <option value="">No workspace: they wait</option>
-                            {data.workspaces.map((w) => (
-                              <option key={w.id} value={w.id}>
-                                {w.name}
-                              </option>
-                            ))}
-                          </select>
                         </td>
                         <td className="right nowrap">
                           <button

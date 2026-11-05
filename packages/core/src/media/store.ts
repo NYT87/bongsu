@@ -48,6 +48,9 @@ export interface MediaStore {
   readText(id: string): Promise<string>;
   /** The file or folder at a logical path, or null. */
   resolve(path: string): Promise<MediaEntry | null>;
+  /** Whether the file or folder is anywhere below the folder at a path (not the folder itself): what keeps a
+   *  workspace's references inside its own media folder. False when the folder doesn't exist. */
+  inside(id: string, folderPath: string): Promise<boolean>;
   /** What's directly inside a folder. */
   list(folderId: string): Promise<MediaEntry[]>;
   /** The folder at a path, created (with its parents) when missing; returns its id. */

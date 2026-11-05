@@ -567,7 +567,7 @@ export async function seedMediaStore(db: Env["DB"] = env.DB, key = TEST_ENCRYPTI
   await db.prepare("DELETE FROM media_store").run();
   await db
     .prepare(
-      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('drive', 1, '{}', ?1, 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, credentials, status, updated_at) VALUES ('drive', 'drive', 1, '{}', ?1, 'ok', 0)",
     )
     .bind(await encryptSecret(key, grant))
     .run();

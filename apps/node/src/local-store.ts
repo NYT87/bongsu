@@ -27,14 +27,16 @@ const TYPES: Record<string, string> = {
 const mimeOf = (name: string) => TYPES[extname(name).toLowerCase()] ?? "application/octet-stream";
 
 export class LocalStore implements MediaStore {
-  readonly id = "local";
   private readonly root: string;
   /** inode → path relative to the root; checked on use, rebuilt by a walk when stale. */
   private paths = new Map<string, string>();
   /** "path:size:mtime" → sha256, so an unchanged file isn't hashed again. */
   private sums = new Map<string, string>();
 
-  constructor(root: string) {
+  constructor(
+    root: string,
+    readonly id = "local",
+  ) {
     this.root = resolve(root);
   }
 
@@ -163,6 +165,12 @@ export class LocalStore implements MediaStore {
 
   async resolve(path: string) {
     return this.entry(path.split("/").filter(Boolean).join("/"));
+  }
+
+  async inside(id: string, folderPath: string) {
+    const rel = await this.pathOf(id);
+    const folder = folderPath.split("/").filter(Boolean).join("/");
+    return rel !== null && !!folder && rel.startsWith(`${folder}/`);
   }
 
   async list(folderId: string) {

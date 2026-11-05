@@ -543,8 +543,9 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     const a = String(made.json.id);
     const stores = (await as("ina3", "dashboard", "/admin-api/media-stores")).json.stores as { kind: string }[];
     expect(stores.length).toBeGreaterThan(0);
-    const inbox = await send("ina3", "dashboard", `/admin-api/media-stores/${stores[0].kind}/inbox`, { workspace: a });
-    expect(inbox.status).toBe(200);
+    // an instance-level action of the instance admin: its audit row is in no workspace
+    const dflt = await send("ina3", "dashboard", `/admin-api/media-stores/${stores[0].kind}/default`, {});
+    expect(dflt.status).toBe(200);
     const where = async () =>
       (
         await env.DB.prepare("SELECT action, workspace_id FROM audit ORDER BY id").all<{
@@ -555,7 +556,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(await where()).toEqual([
       { action: "workspace_create", workspace_id: null },
       { action: "invite_create", workspace_id: a },
-      { action: "media_store_inbox", workspace_id: null },
+      { action: "media_store_default", workspace_id: null },
     ]);
     // B's admin and editor: none of A's rows, none of the instance's, and no way to ask for them; a device's error
     // in B's app is B's
@@ -580,7 +581,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     const inst = await as("ina3", "dashboard", "/admin-api/audit?instance=1");
     expect(inst.status).toBe(200);
     expect((inst.json.entries as { action: string }[]).map((x) => x.action)).toEqual([
-      "media_store_inbox",
+      "media_store_default",
       "workspace_create",
     ]);
     expect((await as("ina3", "dashboard", "/admin-api/audit")).json).toMatchObject({ noWorkspace: true });

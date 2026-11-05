@@ -6,15 +6,38 @@ import { createApp } from "@bongsu/api/app";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { clearTokenCache } from "@bongsu/core/clients/google";
+import { encryptSecret } from "@bongsu/core/crypto";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { scanInbox } from "@bongsu/core/inbox";
 import { type Mail, registerMailer } from "@bongsu/core/mail";
-import { mediaStores } from "@bongsu/core/media/index";
-import { CHECK_EVERY_S, checkStores } from "@bongsu/core/media/manage";
+import { DriveStore } from "@bongsu/core/media/drive";
+import { mediaStores, storeRows } from "@bongsu/core/media/index";
+import {
+  CHECK_EVERY_S,
+  checkStores,
+  removeStore,
+  StoreError,
+  saveStore,
+  setDefaultStore,
+  waitingApprovalsIn,
+} from "@bongsu/core/media/manage";
+import { setWorkspaceNtfy } from "@bongsu/core/ntfy";
+import { createWorkspace } from "@bongsu/core/people";
+import { workspaceSettings } from "@bongsu/core/workspaces";
 import { beforeEach, describe, expect, it } from "vitest";
-import { joinDefault, seedS3Store, TEST_S3_KEYS, TEST_S3_SETTINGS, testEnv, UNBOOTSTRAP, World } from "./world";
+import {
+  joinDefault,
+  seedS3Store,
+  TEST_DRIVE_GRANT,
+  TEST_ENCRYPTION_KEY,
+  TEST_S3_KEYS,
+  TEST_S3_SETTINGS,
+  testEnv,
+  UNBOOTSTRAP,
+  World,
+} from "./world";
 
 const fake: Verifiers = {
   registration: (async (o: { response: { id: string } }) => ({
@@ -105,6 +128,18 @@ describe("the dashboard's Media page", () => {
     expect(JSON.stringify(r.json)).not.toContain("r-drive");
   });
 
+  it("lists the instance's stores only, and has no inbox workspace to choose any more", async () => {
+    await seedS3Store();
+    await env.DB.prepare(
+      "INSERT INTO media_store (id, kind, workspace_id, is_default, settings, status, updated_at) VALUES ('s3-w_other', 's3', 'w_other', 0, '{}', 'ok', 0)",
+    ).run();
+    const r = await call("/admin-api/media-stores");
+    expect((r.json.stores as { kind: string }[]).map((s) => s.kind)).toEqual(["drive", "s3"]); // not a workspace's own
+    expect(r.json).not.toHaveProperty("workspaces");
+    expect(JSON.stringify(r.json)).not.toContain("inboxWorkspace");
+    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: "default" })).status).toBe(404);
+  });
+
   it("tests a bucket before saving it, keeps the keys encrypted, and keeps them when the form leaves them empty", async () => {
     const bad = await call("/admin-api/media-stores/s3/test", { ...S3_FORM, accessKeyId: "WRONG" });
     expect(bad.json).toMatchObject({ ok: false });
@@ -166,33 +201,176 @@ describe("the dashboard's Media page", () => {
   });
 });
 
-describe("the workspace a store's inbox feeds", () => {
-  it("is chosen per store by an instance admin, among the workspaces; none leaves new projects waiting", async () => {
-    const listed = async () => (await call("/admin-api/media-stores")).json;
-    const first = await listed();
-    expect((first.stores as { kind: string; inboxWorkspace: string | null }[])[0]).toMatchObject({
-      kind: "drive",
-      inboxWorkspace: null,
+describe("stores scoped by workspace", () => {
+  const SAVE = { settings: TEST_S3_SETTINGS, keys: JSON.stringify(TEST_S3_KEYS) };
+  /** A workspace, and its own bucket store. */
+  async function withStore(name: string) {
+    const id = await createWorkspace(env.DB, { name, timezone: "UTC", createdBy: "owner" }, 0);
+    await saveStore(e, w.fetch, { workspaceId: id }, "s3", SAVE.settings, SAVE.keys, "owner", 0);
+    return id;
+  }
+  const ids = async (workspaceId?: string | null) => (await mediaStores(e, w.fetch, workspaceId)).all.map((s) => s.id);
+
+  it("loads a workspace's own store beside the instance's of the same kind, each workspace seeing only its own", async () => {
+    await seedS3Store();
+    const a = await withStore("Demo Studio A");
+    const b = await withStore("Demo Studio B");
+    const all = await storeRows(env.DB);
+    expect(all.map((r) => [r.id, r.kind, r.workspaceId])).toEqual(
+      expect.arrayContaining([
+        ["s3", "s3", null],
+        [`s3-${a}`, "s3", a],
+        [`s3-${b}`, "s3", b],
+      ]),
+    );
+    expect(await ids(a)).toEqual(["drive", "s3", `s3-${a}`]);
+    expect(await ids(b)).toEqual(["drive", "s3", `s3-${b}`]);
+    expect(await ids()).toEqual(["drive", "s3"]);
+    expect(await ids(null)).toEqual(["drive", "s3"]);
+    expect((await storeRows(env.DB, { workspaceId: null })).map((r) => r.id)).toEqual(["drive", "s3"]);
+    expect((await mediaStores(e, w.fetch, a)).get(`s3-${a}`)?.id).toBe(`s3-${a}`);
+  });
+
+  it("makes a workspace's first store its default, and changing it leaves the instance's default alone", async () => {
+    await seedS3Store();
+    const a = await withStore("Demo Studio A");
+    expect((await mediaStores(e, w.fetch, a)).default?.id).toBe(`s3-${a}`);
+    expect((await mediaStores(e, w.fetch)).default?.id).toBe("drive"); // the instance's
+    expect((await mediaStores(e, w.fetch, "default")).default?.id).toBe("drive"); // a workspace with none of its own
+    // a second own store, made the default: the first stops being one, the instance's rows are untouched
+    w.drivePut(`${(await workspaceSettings(env.DB, a)).mediaFolder}/inbox/keep.txt`, {
+      md5: "k",
+      mimeType: "text/plain",
     });
-    expect(first.workspaces).toEqual(expect.arrayContaining([{ id: "default", name: expect.any(String) }]));
-    expect(await call("/admin-api/media-stores/drive/inbox", { workspace: "default" })).toMatchObject({
-      status: 200,
-      json: { inboxWorkspace: "default" },
+    await saveStore(e, w.fetch, { workspaceId: a }, "drive", {}, TEST_DRIVE_GRANT, "owner", 0);
+    await setDefaultStore(e, { workspaceId: a }, "drive", 1);
+    const defaults = (await storeRows(env.DB)).filter((r) => r.isDefault).map((r) => r.id);
+    expect(defaults).toEqual(["drive", `drive-${a}`]);
+    expect((await mediaStores(e, w.fetch, a)).default?.id).toBe(`drive-${a}`);
+    // a scope can't make another scope's store its default
+    await expect(setDefaultStore(e, { workspaceId: "default" }, "s3", 2)).rejects.toThrow(/no s3 store/);
+    await expect(setDefaultStore(e, { workspaceId: null }, "s3", 2)).resolves.toBeUndefined();
+    expect((await storeRows(env.DB)).filter((r) => r.isDefault).map((r) => r.id)).toEqual([`drive-${a}`, "s3"]);
+  });
+
+  it("refuses a workspace the server's disk, and tests a workspace's store in its own folder", async () => {
+    const a = await createWorkspace(env.DB, { name: "Demo Studio A", timezone: "UTC", createdBy: "owner" }, 0);
+    await expect(saveStore(e, w.fetch, { workspaceId: a }, "local", {}, null, "owner", 0)).rejects.toThrow(StoreError);
+    await saveStore(e, w.fetch, { workspaceId: a }, "s3", SAVE.settings, SAVE.keys, "owner", 0);
+    expect(w.s3.objects.has(`${(await workspaceSettings(env.DB, a)).mediaFolder}/inbox/`)).toBe(true);
+    expect(w.s3.objects.has("UPLOADS/inbox/")).toBe(false); // not the instance's folder
+  });
+
+  it("removes a workspace's store unless an approved, unpublished item uses it, naming the item", async () => {
+    const a = await withStore("Demo Studio A");
+    const approval = (key: string, store: string) =>
+      addApproval(env.DB, {
+        key,
+        account: "demo_travel",
+        dueAt: 1_900_000_000,
+        captionSha256: "c",
+        commentSha256: null,
+        altSha256: null,
+        media: [{ store, id: "abc", checksum: "e1" }],
+        approvedAt: "2026-10-01T00:00:00Z",
+        approvedBy: "owner",
+      });
+    await approval("reel:trip/short1", `s3-${a}`);
+    await approval("reel:trip/other", "s3"); // the instance's store: not this one's
+    expect(await waitingApprovalsIn(e, `s3-${a}`)).toBe(1);
+    await expect(removeStore(e, { workspaceId: a }, "s3", 1)).rejects.toThrow(
+      "1 approved items use this store: reel:trip/short1",
+    );
+    expect(await ids(a)).toContain(`s3-${a}`);
+    // published: it no longer counts
+    await env.DB.prepare(
+      "INSERT INTO posted (item_key, account, published_at, permalink, source) VALUES ('reel:trip/short1', 'demo_travel', 1790000000, 'https://example.com/p/', 'manual')",
+    ).run();
+    expect(await waitingApprovalsIn(e, `s3-${a}`)).toBe(0);
+    await removeStore(e, { workspaceId: a }, "s3", 2);
+    expect(await ids(a)).not.toContain(`s3-${a}`);
+    // the instance's scope removes only the instance's
+    await expect(removeStore(e, { workspaceId: a }, "drive", 3)).rejects.toThrow(/no drive store/);
+  });
+
+  it("forgets the folders remembered for a removed store, and only its own", async () => {
+    const a = await withStore("Demo Studio A");
+    const keep = [`drive_upload_folder:drive-${a}:Uploads`, "inbox_folder:s3:x", "drive_upload_folder:drive:Uploads"];
+    await env.DB.batch(
+      [`inbox_folder:s3-${a}`, `inbox_folder:s3-${a}:${a}`, ...keep].map((k) =>
+        env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, 'x')").bind(k),
+      ),
+    );
+    await removeStore(e, { workspaceId: a }, "s3", 1);
+    const keys = await env.DB.prepare("SELECT key FROM settings WHERE key LIKE '%folder:%' ORDER BY key").all<{
+      key: string;
+    }>();
+    expect(keys.results.map((k) => k.key)).toEqual([...keep].sort());
+  });
+
+  it("tells a workspace's own people when its store breaks, the instance admins when the instance's does", async () => {
+    const a = await withStore("Demo Studio A");
+    await setWorkspaceNtfy(e, a, "https://ntfy.test/topic-a", 0);
+    const topics: string[] = [];
+    const spy: typeof fetch = async (input, init) => {
+      const url = new Request(input as RequestInfo).url;
+      if (url.startsWith("https://ntfy.test/")) topics.push(url);
+      return w.fetch(input, init);
+    };
+    // A's bucket keys stop working; the instance's Drive is revoked too
+    await env.DB.prepare("UPDATE media_store SET credentials = ?1 WHERE id = ?2")
+      .bind(
+        await encryptSecret(TEST_ENCRYPTION_KEY, JSON.stringify({ ...TEST_S3_KEYS, accessKeyId: "WRONG" })),
+        `s3-${a}`,
+      )
+      .run();
+    expect(await checkStores(e, { fetch: spy, now: AT })).toEqual({ checked: ["drive"], broken: [`s3-${a}`] });
+    expect(topics).toEqual(["https://ntfy.test/topic-a"]); // A's topic only, not the default workspace's
+    const said = (
+      await env.DB.prepare("SELECT workspace_id FROM audit WHERE action = 'notify' AND target = 'media_stores'").all<{
+        workspace_id: string | null;
+      }>()
+    ).results.map((r) => r.workspace_id);
+    expect(said).toEqual([a]); // none in no workspace: the instance admins weren't told
+    // the status is the row's own
+    const row = await env.DB.prepare("SELECT status FROM media_store WHERE id = ?1").bind(`s3-${a}`).first("status");
+    expect(row).toBe("broken");
+    // now the instance's Drive breaks: the instance admins hear of it (audit in no workspace), no workspace's topic
+    topics.length = 0;
+    w.googleRefuse = true;
+    clearTokenCache();
+    const later = new Date(AT.getTime() + (CHECK_EVERY_S + 60) * 1000);
+    expect(await checkStores(e, { fetch: spy, now: later })).toMatchObject({
+      broken: expect.arrayContaining(["drive"]),
     });
-    expect((await listed()).stores).toEqual([expect.objectContaining({ kind: "drive", inboxWorkspace: "default" })]);
-    const audit = await env.DB.prepare(
-      "SELECT target, detail, workspace_id FROM audit WHERE action = 'media_store_inbox'",
-    ).first<{ target: string; detail: string; workspace_id: string | null }>();
-    expect(audit).toEqual({ target: "drive", detail: '{"workspace":"default"}', workspace_id: null });
-    // a workspace that doesn't exist, or a store that isn't set up, is refused
-    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: "nope" })).status).toBe(400);
-    expect((await call("/admin-api/media-stores/s3/inbox", { workspace: "default" })).status).toBe(400);
-    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: null })).json).toEqual({
-      inboxWorkspace: null,
+    expect(topics).toEqual([]);
+    const inst = await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM audit WHERE action = 'notify' AND target = 'media_stores' AND workspace_id IS NULL",
+    ).first("n");
+    expect(inst).toBe(1);
+  });
+
+  it("keeps two Drive stores' folders apart: the same path resolves to each grant's own folder", async () => {
+    const w2 = new World();
+    const folder = (name: string, parent?: string) => ({
+      md5: "",
+      mimeType: "application/vnd.google-apps.folder",
+      name,
+      parent,
     });
-    // a workspace admin who isn't an instance admin can't choose it
-    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE email = 'owner@example.com'").run();
-    expect((await call("/admin-api/media-stores/drive/inbox", { workspace: "default" })).status).toBe(403);
+    w.drivePut("UPLOADS/inbox/a.txt", { md5: "a", mimeType: "text/plain" });
+    w2.drive.set("other_uploads", folder("UPLOADS"));
+    w2.drive.set("other_inbox", folder("inbox", "other_uploads"));
+    const grant2 = JSON.stringify({ ...JSON.parse(TEST_DRIVE_GRANT), refresh_token: "r-other" });
+    const one = new DriveStore({ oauth: TEST_DRIVE_GRANT, fetch: w.fetch, id: "drive" });
+    const two = new DriveStore({ oauth: grant2, fetch: w2.fetch, id: "drive-w_other" });
+    const first = await one.resolve("UPLOADS/inbox");
+    expect((await two.resolve("UPLOADS/inbox"))?.id).toBe("other_inbox");
+    expect((await one.resolve("UPLOADS/inbox"))?.id).toBe(first?.id); // not the other's, from the cache
+    expect(first?.id).not.toBe("other_inbox");
+    expect((await two.stat("other_inbox"))?.parent).toBe("other_uploads");
+    expect(await two.inside("other_inbox", "UPLOADS")).toBe(true);
+    expect(await one.inside("other_inbox", "UPLOADS")).toBe(false);
   });
 });
 

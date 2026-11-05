@@ -24,8 +24,10 @@ interface DriveFile {
   trashed?: boolean;
 }
 
-/** Folder path → its folder, per Worker instance (see resolve). */
+/** "<store id>:<folder path>" → its folder, per Worker instance (see resolve). */
 const folderIds = new Map<string, { entry: MediaEntry; until: number }>();
+/** How far up a file's folders are followed. */
+const MAX_DEPTH = 20;
 const FOLDER_TTL_MS = 10 * 60_000;
 export const clearFolderCache = () => folderIds.clear();
 
@@ -46,12 +48,17 @@ export interface DriveStoreOptions {
   fetch: typeof fetch;
   /** Where the folders made for uploads are remembered (settings), so each is created once. */
   db?: Db;
+  /** The store's id ("drive" for the instance's, "drive-<workspace>" for a workspace's own): the folders remembered
+   *  here are per store, since two grants have different folders under the same path. */
+  id?: string;
 }
 
 export class DriveStore implements MediaStore {
-  readonly id = "drive";
+  readonly id: string;
 
-  constructor(private o: DriveStoreOptions) {}
+  constructor(private o: DriveStoreOptions) {
+    this.id = o.id ?? "drive";
+  }
 
   private async auth() {
     return { Authorization: `Bearer ${await refreshToken(this.o.oauth, this.o.fetch)}` };
@@ -99,7 +106,7 @@ export class DriveStore implements MediaStore {
     let start = 0,
       node: MediaEntry | null = null;
     for (let i = parts.length - 1; i > 0; i--) {
-      const hit = folderIds.get(parts.slice(0, i).join("/"));
+      const hit = folderIds.get(`${this.id}:${parts.slice(0, i).join("/")}`);
       if (hit && hit.until > Date.now()) {
         node = hit.entry;
         start = i;
@@ -113,7 +120,8 @@ export class DriveStore implements MediaStore {
   private async walk(parts: string[], start: number, from: MediaEntry | null): Promise<MediaEntry | null> {
     const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     const remember = (i: number, e: MediaEntry) => {
-      if (e.folder) folderIds.set(parts.slice(0, i + 1).join("/"), { entry: e, until: Date.now() + FOLDER_TTL_MS });
+      if (e.folder)
+        folderIds.set(`${this.id}:${parts.slice(0, i + 1).join("/")}`, { entry: e, until: Date.now() + FOLDER_TTL_MS });
     };
     let node = from;
     if (start === 0) {
@@ -130,6 +138,18 @@ export class DriveStore implements MediaStore {
       remember(i, node);
     }
     return node;
+  }
+
+  async inside(id: string, folderPath: string) {
+    const folder = await this.resolve(folderPath);
+    if (!folder?.folder) return false;
+    // up the parents, a bounded number of steps (a deep tree costs a request each)
+    let at = (await this.stat(id))?.parent ?? null;
+    for (let i = 0; i < MAX_DEPTH && at !== null; i++) {
+      if (at === folder.id) return true;
+      at = (await this.stat(at))?.parent ?? null;
+    }
+    return false;
   }
 
   async list(folderId: string) {
@@ -178,7 +198,7 @@ export class DriveStore implements MediaStore {
 
   /** A top folder of the owner's for uploads, created on first use and remembered in settings. */
   private async ownerFolder(name: string): Promise<string> {
-    const key = `drive_upload_folder:${name}`;
+    const key = `drive_upload_folder:${this.id}:${name}`;
     const hit = await this.o.db
       ?.prepare("SELECT value FROM settings WHERE key = ?1")
       .bind(key)
