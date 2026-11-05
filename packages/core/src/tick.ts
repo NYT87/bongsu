@@ -233,6 +233,10 @@ export async function tick(
   const lock = `tick:${part}`;
   if (!(await acquire(env.DB, lock, holder, nowS, 240))) return { status: "locked" };
   try {
+    // what this run was limited by: the dashboard reads it, since the variables live on this Worker, not the API's
+    await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
+      .bind(`tick_last:${part}`, JSON.stringify({ at: nowS, jobsPerTick: jobsPerTick(env) }))
+      .run();
     const c = new Ctx(env, deps);
     // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
     c.held = await heldWorkspaces(env.DB);

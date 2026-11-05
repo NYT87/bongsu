@@ -41,4 +41,6 @@ export interface Env {
   SMTP_PASS?: string;
   /** Publishing jobs advanced per tick (constants.ts JOBS_PER_TICK): unset, 4 on Cloudflare and 20 on Node. */
   JOBS_PER_TICK?: string;
+  /** Workspaces the inbox run scans per run (constants.ts INBOX_WORKSPACES_PER_RUN): unset, 3 on Cloudflare and 20 on Node. */
+  INBOX_WORKSPACES_PER_RUN?: string;
 }

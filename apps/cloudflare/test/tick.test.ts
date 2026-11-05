@@ -53,6 +53,17 @@ describe("tick: guards", () => {
     expect(await jobs()).toEqual([]);
   });
 
+  it("records the jobs per tick it ran with, per part", async () => {
+    await env.DB.prepare("DELETE FROM settings WHERE key LIKE 'tick_last:%'").run();
+    const at = Math.floor(AT.getTime() / 1000);
+    await tick(await testEnv(env), { fetch: w.fetch, now: AT });
+    await tick(await testEnv(env, { JOBS_PER_TICK: "7" }), { fetch: w.fetch, now: AT }, "shorts");
+    const last = async (k: string) =>
+      JSON.parse((await env.DB.prepare("SELECT value FROM settings WHERE key = ?1").bind(k).first("value")) as string);
+    expect(await last("tick_last:instagram")).toEqual({ at, jobsPerTick: 4 });
+    expect(await last("tick_last:shorts")).toEqual({ at, jobsPerTick: 7 });
+  });
+
   it("skips a tick while another holds the lock", async () => {
     await env.DB.prepare("INSERT INTO locks VALUES ('tick:instagram', 'other', ?1)")
       .bind(Math.floor(AT.getTime() / 1000) + 100)

@@ -12,6 +12,7 @@ PUBLIC_URL = "https://bongsu.example.com"
 RP_ID = "bongsu.example.com"
 VAPID_PUBLIC_KEY = "REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY"
 VAPID_SUBJECT = "mailto:owner@example.com"
+# INBOX_WORKSPACES_PER_RUN = "3"   # workspaces the inbox scan reaches per run (the rest on the next ones): 3 fits the free plan
 # JOBS_PER_TICK = "4"   # publishing jobs advanced per run: 4 fits the free plan's 50 subrequests; raise it on the paid plan
 
 [[d1_databases]]
@@ -21,7 +22,7 @@ database_id = "00000000-0000-0000-0000-000000000000"
 migrations_dir = "../../migrations/sqlite"
 
 [triggers]
-crons = ["*/5 * * * *", "2,32 * * * *", "7,22,37,52 * * * *"]   # tick(): Instagram / Shorts comments; the Drive inbox (src/config.ts CRON_*)
+crons = ["*/5 * * * *", "2,32 * * * *", "7,22,37,52 * * * *"]   # tick(): Instagram / Shorts comments; the Drive inbox (core/constants.ts CRON_*)
 
 # Workers Logs: the runs' console output kept a few days on the free plan, readable in the dashboard
 # (Workers → this Worker → Logs) or with the observability API. Everything is logged (head_sampling_rate 1).

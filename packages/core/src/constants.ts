@@ -14,6 +14,12 @@ export const JOBS_PER_TICK = 4;
 export const NODE_JOBS_PER_TICK = 20;
 /** The most one tick advances whatever the setting: a tick holds its lock for 4 minutes, and the next one is 5 away. */
 export const JOBS_PER_TICK_MAX = 100;
+/** Workspaces the inbox run scans per run (inbox.ts): each costs a few subrequests per store, and the free plan allows
+ *  50 per invocation, so a run reaches a few and the next picks up after them. Node defaults to
+ *  NODE_INBOX_WORKSPACES_PER_RUN; the INBOX_WORKSPACES_PER_RUN variable overrides either, up to the max. */
+export const INBOX_WORKSPACES_PER_RUN = 3;
+export const NODE_INBOX_WORKSPACES_PER_RUN = 20;
+export const INBOX_WORKSPACES_PER_RUN_MAX = 100;
 /** The cron triggers (wrangler.toml): Instagram every 5 minutes; Shorts comments twice an hour, in their own
  *  invocation, so neither run gets near the free plan's 10 ms CPU limit. */
 export const CRON_INSTAGRAM = "*/5 * * * *";

@@ -464,8 +464,6 @@ describe("Connect Google Drive", () => {
 describe("several stores side by side", () => {
   it("drafts what's dropped in the inbox of every store, each draft naming its store", async () => {
     await seedS3Store();
-    // "trip" is in no plan: the stores' inboxes feed the default workspace
-    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'default'").run();
     const env2 = { ...e };
     w.drivePut("UPLOADS/inbox/trip/fromdrive.mp4", {
       md5: "d1",
@@ -487,7 +485,6 @@ describe("several stores side by side", () => {
 
   it("keeps scanning the other stores when one fails", async () => {
     await seedS3Store();
-    await env.DB.prepare("UPDATE media_store SET inbox_workspace = 'default'").run();
     await w.s3.put("UPLOADS/inbox/trip/frombucket.mp4", "video", "video/mp4");
     w.googleRefuse = true; // the Drive grant was revoked
     const r = await scanInbox(e, { fetch: w.fetch, now: new Date(Date.now() + 3600_000) });

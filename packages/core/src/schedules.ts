@@ -21,7 +21,7 @@ export const SCHEDULES = [CRON_INSTAGRAM, CRON_SHORTS, CRON_INBOX] as const;
 export async function runSchedule(env: Env, fetcher: typeof fetch, cron: string, at: Date): Promise<void> {
   const deps = { fetch: fetcher, now: at };
   if (cron === CRON_INBOX) {
-    // The inbox in each media store (drafts only: nothing is published), moving posted media aside, the daily digest, the 24 h
+    // The inbox in each workspace's media folder, a few workspaces a run (drafts only: nothing is published), moving posted media aside, the daily digest, the 24 h
     // results and new comments; runs while paused too (none of it publishes).
     const nowS = Math.floor(at.getTime() / 1000),
       holder = crypto.randomUUID();

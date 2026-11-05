@@ -103,6 +103,7 @@ dashboard's mark.
 | `RP_ID` | passkey relying-party id: the app's hostname |
 | `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` | Web Push |
 | `JOBS_PER_TICK` | optional, on the cron Worker: publishing jobs advanced per run (default `4`, at most `100`). See [How many go out at once](#how-many-go-out-at-once) |
+| `INBOX_WORKSPACES_PER_RUN` | optional, on the cron Worker: workspaces whose inbox folder one run scans (default `3`, at most `100`); the next run carries on with the following ones |
 
 ## Secrets
 
@@ -142,6 +143,7 @@ The same names, from the environment (`.env` with docker-compose; [self-hosting.
 | `MIGRATIONS_DIR`, `WEB_DIR` | set in the image | the folder holding `sqlite/` and `postgres/` migrations, and the built app |
 | `RP_ID` | `PUBLIC_URL`'s host | the passkeys' relying party |
 | `JOBS_PER_TICK` | `20` | publishing jobs advanced per run, at most `100` ([How many go out at once](#how-many-go-out-at-once)) |
+| `INBOX_WORKSPACES_PER_RUN` | `20` | workspaces whose inbox folder one run scans, at most `100` |
 
 ## How many go out at once
 
