@@ -12,7 +12,7 @@ const ALLOWED = /^[A-Za-z0-9_ -]+$/;
  *  empty, `.` or `..` segment in it throws (plan data builds these paths, and `..` would climb out of the folder). */
 export const mediaPath = (folder: string, rest = ""): string => {
   const r = rest.replace(/^\/+|\/+$/g, "");
-  if (r && r.split("/").some((x) => x === "" || x === "." || x === ".."))
+  if (r !== "" && r.split("/").some((x) => x === "" || x === "." || x === ".."))
     throw new FolderError(`not a path inside the folder: ${rest}`);
   return r ? `${folder}/${r}` : folder;
 };
