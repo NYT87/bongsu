@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { cleanMedia } from "@bongsu/core/cleanup";
-import { scanInbox } from "@bongsu/core/inbox";
+import { nextWorkspaces, scanInbox } from "@bongsu/core/inbox";
 import { saveStore } from "@bongsu/core/media/manage";
 import { createWorkspace } from "@bongsu/core/people";
 import { workspaceSettings } from "@bongsu/core/workspaces";
@@ -243,6 +243,32 @@ describe("the Drive inbox", () => {
       expect(new Set(reached.flat())).toEqual(new Set(IDS));
       expect(reached[0]).toEqual(["default", "r1"]);
       expect((await drafts()).map((d) => d.workspace_id).sort()).toEqual([...IDS].sort());
+    });
+
+    it("gives each workspace reached its share of the run's drafts, what one leaves going to the next", async () => {
+      for (const id of ["r1", "r2"]) await workspace(id);
+      const put = (folder: string, n: number) => {
+        for (let i = 1; i <= n; i++)
+          w.drivePut(`${folder}/inbox/trip/${folder}_${i}.mp4`, { md5: MD5, mimeType: "video/mp4", modified: OLD });
+      };
+      put("UPLOADS", 1);
+      put("r1", 10);
+      put("r2", 10);
+      const e = await testEnv(env, { INBOX_WORKSPACES_PER_RUN: "3" });
+      const r = await scanInbox(e, { fetch: w.fetch, now: NOW });
+      expect(r.reached).toEqual(["default", "r1", "r2"]);
+      // six a run: two each, the one default doesn't use going to the last
+      const by = (await drafts()).reduce<Record<string, number>>(
+        (m, d) => ({ ...m, [d.workspace_id]: (m[d.workspace_id] ?? 0) + 1 }),
+        {},
+      );
+      expect(by).toEqual({ default: 1, r1: 2, r2: 3 });
+      expect(r.waiting).toBe(15);
+    });
+
+    it("orders the workspaces itself, whatever order the database gave them in", () => {
+      expect(nextWorkspaces(["w_b", "default", "w_a"], "default", 2)).toEqual(["w_a", "w_b"]);
+      expect(nextWorkspaces(["w_b", "default", "w_a"], null, 2)).toEqual(["default", "w_a"]);
     });
 
     it("records the run: reached, total and limit", async () => {

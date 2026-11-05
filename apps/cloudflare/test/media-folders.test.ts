@@ -347,7 +347,8 @@ describe("the app's list of stores", () => {
     // a workspace with none of its own: the instance's default (the first row, drive) alone
     expect(await list("cy")).toEqual([
       { id: "drive", kind: "drive", own: false, default: false, status: "ok", where: null },
-      { id: "s3", kind: "s3", own: false, default: true, status: "ok", where: "media" },
+      // the instance's bucket is the instance admins' to know, as in the dashboard
+      { id: "s3", kind: "s3", own: false, default: true, status: "ok", where: null },
     ]);
     await saveStore(e, w.fetch, { workspaceId: B }, "s3", TEST_S3_SETTINGS, JSON.stringify(TEST_S3_KEYS), "owner", 0);
     const own = await list("bea");
@@ -356,6 +357,7 @@ describe("the app's list of stores", () => {
       ["s3", false, false],
       [`s3-${B}`, true, true], // its own default wins; the instance's isn't marked too
     ]);
+    expect(own.find((s) => s.id === `s3-${B}`)).toMatchObject({ where: "media" }); // its own bucket is named
   });
 });
 

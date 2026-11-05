@@ -553,7 +553,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         own: r.workspaceId === ws,
         default: r.id === effective,
         status: r.status,
-        where: r.kind === "s3" ? String(r.settings.bucket ?? "") : null,
+        // its own bucket's name; the instance's is the instance admins' to know (as in the dashboard)
+        where: r.kind === "s3" && r.workspaceId === ws ? String(r.settings.bucket ?? "") : null,
       })),
     });
   });

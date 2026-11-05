@@ -27,7 +27,8 @@ import { workspaceSettings } from "./workspaces";
 
 /** Wait this long after the last change in an item before drafting it. */
 export const SETTLE_S = 10 * 60;
-/** Items drafted per run (each costs a few subrequests; the free plan allows 50 per invocation). */
+/** Items drafted per run (each costs a few subrequests; the free plan allows 50 per invocation), shared among the
+ *  workspaces reached. */
 const ITEMS_PER_RUN = 6;
 
 interface Item {
@@ -64,8 +65,10 @@ const saveSetting = (env: Env, key: string, value: string) =>
  *  first after the cursor on, wrapping round, at most `limit`. The cursor is only a position, so it doesn't matter
  *  whether its workspace is still there. */
 export function nextWorkspaces(ids: string[], cursor: string | null, limit: number): string[] {
-  const after = cursor === null ? 0 : ids.filter((i) => i <= cursor).length;
-  return [...ids.slice(after), ...ids.slice(0, after)].slice(0, limit);
+  // sorted here, the way `<=` compares: the database's ORDER BY may follow a collation that doesn't
+  const sorted = [...ids].sort();
+  const after = cursor === null ? 0 : sorted.filter((i) => i <= cursor).length;
+  return [...sorted.slice(after), ...sorted.slice(0, after)].slice(0, limit);
 }
 
 /** The project's Instagram account in the workspace, from its planned items; null when the project has none yet. */
@@ -200,13 +203,19 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
     for (const r of seen.results) done.add(`${store.id}:${r.media_id}`);
   }
   const fresh = items.filter((i) => !done.has(`${i.store.id}:${i.key}`) && i.media.length);
-  const ready: Item[] = [];
-  for (const i of fresh) {
-    if (ready.length >= ITEMS_PER_RUN) break;
+  const settled = (i: Item) => {
     const files = [...i.media, ...Object.values(i.texts).filter((x): x is MediaEntry => !!x)];
-    const settled =
-      i.media.every((m) => m.checksum) && Math.max(...files.map((f) => unix(f.modifiedAt))) <= nowS - SETTLE_S;
-    if (settled) ready.push(i);
+    return i.media.every((m) => m.checksum) && Math.max(...files.map((f) => unix(f.modifiedAt))) <= nowS - SETTLE_S;
+  };
+  // each workspace reached gets its share (at least one), what one doesn't use going to the ones after it: a backlog
+  // in one workspace doesn't starve the others of the run
+  const ready: Item[] = [];
+  let budget = ITEMS_PER_RUN;
+  for (const [n, ws] of reached.entries()) {
+    const share = Math.max(1, Math.floor(budget / (reached.length - n)));
+    const mine = fresh.filter((i) => i.workspaceId === ws && settled(i)).slice(0, share);
+    ready.push(...mine);
+    budget = Math.max(0, budget - mine.length);
   }
   const drafted: { title: string; workspaceId: string }[] = [];
   // a project without planned items starts on its workspace's first Instagram account
