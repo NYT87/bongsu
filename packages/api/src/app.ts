@@ -33,6 +33,7 @@ export function createApp(fetcher: typeof fetch) {
     // anything stored encrypted (credentials, OAuth app secrets, ntfy topics) needs the key to be read back
     const encrypted = await c.env.DB.prepare(
       `SELECT 1 FROM connections WHERE credentials IS NOT NULL UNION ALL SELECT 1 FROM oauth_apps
+       UNION ALL SELECT 1 FROM workspace_oauth_apps
        UNION ALL SELECT 1 FROM workspace_settings WHERE notify_url IS NOT NULL
        UNION ALL SELECT 1 FROM media_store WHERE credentials IS NOT NULL LIMIT 1`,
     ).first();
