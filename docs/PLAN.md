@@ -795,10 +795,12 @@ without a deployment per person. The data model is already there (Phase 3).
       read-only Scheduler section; #21.)
 - [x] PWA: a workspace picker when a user belongs to more than one; notifications say which workspace. (Part 2: the
       header's bottom sheet; pushes carry `?w=` and a title prefix.)
-- [ ] Workspace icon, optional, set in the dashboard; the PWA header, the picker and the notifications show it;
-      the installed app's icon stays the instance's (#141).
-- [ ] Your name, edited in the dashboard, and a display name per workspace, used wherever a person is named
-      (#142).
+- [x] Workspace icon, optional, set in the dashboard; the PWA header, the picker and the notifications show it;
+      the installed app's icon stays the instance's (#34). (Part 3b: a PNG kept in `workspace_icons`, served at
+      `/icon/<hash>.png`; the dashboard's Icon card.)
+- [x] Your name, edited in the app, and a display name per workspace, used wherever a person is named
+      (#35). (Part 3b: `POST /app-api/me/name` and `/me/display-name`, an admin's Edit name for a member; approvals,
+      pauses, drafts, releases and the member list name people as the workspace does.)
 - [x] Notifications per user and workspace (who gets what). (Part 2: five groups, role defaults, `notify_prefs`.)
 - [x] Isolation tests across every surface, including the cron and the media links. (Part 2 covers notifications:
       pushes, groups and switching; part 3a the cron (inbox, store checks) and the media links; #24.)

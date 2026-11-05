@@ -57,7 +57,8 @@ Before finishing a change: `pnpm check && pnpm typecheck && pnpm test` pass.
   no new SQLite-only functions (`unixepoch()`, `json_each`…); timestamps come from the app.
   `packages/core/test/portable-sql.test.ts` fails on new ones.
 - **One source of truth.** The database holds the plan, texts, approvals, accounts and settings; media stays in the
-  media store. Don't add a second place for the same data.
+  media store. Don't add a second place for the same data. A workspace's icon is a setting, kept in the database
+  (`workspace_icons`), not in the media store.
 - **No personal data or secrets.** No real handles, ids, captions, emails, URLs or keys in code, tests or docs: use the
   demo accounts (`demo_travel`, `demo_running`, …) and `example.com`. Secrets go through `wrangler secret put`, never in
   files. `pnpm check-personal` runs the owner's local list.

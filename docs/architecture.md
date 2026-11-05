@@ -12,7 +12,7 @@
 
 | Worker | Entry | Does |
 |---|---|---|
-| `bongsu` | `apps/cloudflare/src/index.ts` | `/app-api/*` (the owner's app, passkey session), `/v1/*` and `/mcp` (agents, API keys), `/m/*` (signed media links Instagram downloads from), `/health`, and the app's static files |
+| `bongsu` | `apps/cloudflare/src/index.ts` | `/app-api/*` (the owner's app, passkey session), `/v1/*` and `/mcp` (agents, API keys), `/m/*` (signed media links Instagram downloads from), `/icon/<hash>.png` (a workspace's icon, public, addressed by its content's hash), `/health`, and the app's static files |
 | `bongsu-cron` | `apps/cloudflare/src/cron.ts` | the scheduled runs only, so each run starts a small bundle and stays inside the free plan's CPU limit |
 
 Both use the same D1 database and the same secrets. The app is built from `packages/web/` into `packages/web/dist` and served by `bongsu`
