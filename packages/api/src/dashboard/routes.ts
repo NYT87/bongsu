@@ -531,7 +531,10 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       else await audit(c, "media_store_save", "drive", { connected: true }, r.userId, null);
       return back({ connected: "drive" }, r.workspaceId ? "settings/media" : "media");
     } catch (e) {
-      return back({ error: (e as Error).message.slice(0, 300) });
+      // a workspace's flow comes back to its Settings (the media page is the instance admins'); before the state is read
+      // the flow is unknown and the error goes where it always went
+      const workspaceId = (e as { workspaceId?: string | null }).workspaceId;
+      return back({ error: (e as Error).message.slice(0, 300) }, workspaceId ? "settings/media" : "media");
     }
   });
 

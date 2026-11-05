@@ -248,51 +248,57 @@ export async function finishDriveConnect(
   nowS: number,
 ) {
   const st = await takeState(env, DRIVE_FLOW, q, browser, nowS);
-  // a workspace's own Drive is for its admins (an instance admin counts as one): re-checked, as finishConnect does
-  if (st.workspaceId) {
-    const where = await sessionWorkspace(env.DB, { userId: st.userId, workspaceId: st.workspaceId });
-    if (where?.workspaceId !== st.workspaceId || where.role !== "admin")
-      throw new ConnectError("only the workspace's admins connect its Google Drive (or it was archived)");
-  }
-  const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL), {
-    workspaceId: st.workspaceId,
-    scope: st.appScope ?? "instance",
-  });
-  const r = await fetcher(GOOGLE_TOKEN, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      code: st.code,
+  // a failure from here on says whose flow it was, so the callback sends the person back to the right page
+  try {
+    // a workspace's own Drive is for its admins (an instance admin counts as one): re-checked, as finishConnect does
+    if (st.workspaceId) {
+      const where = await sessionWorkspace(env.DB, { userId: st.userId, workspaceId: st.workspaceId });
+      if (where?.workspaceId !== st.workspaceId || where.role !== "admin")
+        throw new ConnectError("only the workspace's admins connect its Google Drive (or it was archived)");
+    }
+    const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL), {
+      workspaceId: st.workspaceId,
+      scope: st.appScope ?? "instance",
+    });
+    const r = await fetcher(GOOGLE_TOKEN, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        code: st.code,
+        client_id: app.clientId,
+        client_secret: app.clientSecret,
+        redirect_uri: app.redirectUri,
+        grant_type: "authorization_code",
+        ...(st.verifier ? { code_verifier: st.verifier } : {}),
+      }),
+    });
+    const j = (await r.json().catch(() => ({}))) as {
+      refresh_token?: string;
+      scope?: string;
+      error?: string;
+      error_description?: string;
+    };
+    if (!r.ok)
+      throw new ConnectError(
+        `Google refused the code: ${j.error_description ?? j.error ?? `HTTP ${r.status}`}`.slice(0, 300),
+      );
+    if (!j.refresh_token)
+      throw new ConnectError(
+        "Google returned no refresh token: remove Bongsu's access in your Google account and connect again",
+      );
+    if (j.scope && !j.scope.split(" ").includes(DRIVE_SCOPE))
+      throw new ConnectError("Google didn't grant access to Drive: connect again and allow it");
+    const grant = JSON.stringify({
       client_id: app.clientId,
       client_secret: app.clientSecret,
-      redirect_uri: app.redirectUri,
-      grant_type: "authorization_code",
-      ...(st.verifier ? { code_verifier: st.verifier } : {}),
-    }),
-  });
-  const j = (await r.json().catch(() => ({}))) as {
-    refresh_token?: string;
-    scope?: string;
-    error?: string;
-    error_description?: string;
-  };
-  if (!r.ok)
-    throw new ConnectError(
-      `Google refused the code: ${j.error_description ?? j.error ?? `HTTP ${r.status}`}`.slice(0, 300),
-    );
-  if (!j.refresh_token)
-    throw new ConnectError(
-      "Google returned no refresh token: remove Bongsu's access in your Google account and connect again",
-    );
-  if (j.scope && !j.scope.split(" ").includes(DRIVE_SCOPE))
-    throw new ConnectError("Google didn't grant access to Drive: connect again and allow it");
-  const grant = JSON.stringify({
-    client_id: app.clientId,
-    client_secret: app.clientSecret,
-    refresh_token: j.refresh_token,
-    token_uri: GOOGLE_TOKEN,
-  });
-  await saveStore(env, fetcher, { workspaceId: st.workspaceId }, "drive", {}, grant, st.userId, nowS);
+      refresh_token: j.refresh_token,
+      token_uri: GOOGLE_TOKEN,
+    });
+    await saveStore(env, fetcher, { workspaceId: st.workspaceId }, "drive", {}, grant, st.userId, nowS);
+  } catch (e) {
+    if (e instanceof Error) Object.assign(e, { workspaceId: st.workspaceId });
+    throw e;
+  }
   return { userId: st.userId, workspaceId: st.workspaceId };
 }
 

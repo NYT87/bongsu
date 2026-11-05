@@ -528,6 +528,35 @@ describe("Connect Google Drive for a workspace", () => {
     const back = await driveCallback(`code=g-code&state=${f.url.searchParams.get("state")}`, f.cookie);
     expect(new URL(back.location!).searchParams.get("error")).toBe("the OAuth app changed: start again");
   });
+
+  it("sends a failed flow back to the page of the scope it started from", async () => {
+    await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
+    const ws = await workspace();
+    // Google refuses the code (the PKCE check): a workspace's flow lands on its Settings, the instance's on Media
+    const mine = await start("wadmin", ws);
+    w.googleChallenge = "not-the-challenge";
+    const failed = await driveCallback(`code=g-code&state=${mine.url.searchParams.get("state")}`, mine.cookie);
+    const at = new URL(failed.location!);
+    expect(at.origin + at.pathname).toBe("https://bongsu.test/dashboard/settings/media");
+    expect(at.searchParams.get("error")).toMatch(/Google refused the code/);
+    // the person cancelled at Google, and a creator's finish: also the workspace's page
+    const cancelled = await start("wadmin", ws);
+    const c2 = await driveCallback(
+      `error=access_denied&state=${cancelled.url.searchParams.get("state")}`,
+      cancelled.cookie,
+    );
+    expect(new URL(c2.location!).pathname).toBe("/dashboard/settings/media");
+    const creator = await start("cara", ws);
+    const c3 = await driveCallback(`code=g-code&state=${creator.url.searchParams.get("state")}`, creator.cookie);
+    expect(new URL(c3.location!).pathname).toBe("/dashboard/settings/media");
+    // the instance's own flow stays on the Media page; so does a callback whose state is unknown
+    const url = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
+    w.googleChallenge = "not-the-challenge";
+    const inst = await driveCallback(`code=g-code&state=${url.searchParams.get("state")}`);
+    expect(new URL(inst.location!).pathname).toBe("/dashboard/media");
+    expect(new URL(inst.location!).searchParams.get("error")).toMatch(/Google refused the code/);
+    expect(new URL((await driveCallback("code=g-code&state=nope")).location!).pathname).toBe("/dashboard/media");
+  });
 });
 
 describe("several stores side by side", () => {

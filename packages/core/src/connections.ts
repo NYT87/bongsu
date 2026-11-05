@@ -31,6 +31,8 @@ export class ConnectError extends Error {
      * It only tells the app to suggest the phone's own browser.
      */
     readonly hint?: "browser",
+    /** The workspace the flow was started for, once the state says so (null: the instance's; undefined: not known). */
+    public workspaceId?: string | null,
   ) {
     super(message);
   }
@@ -354,15 +356,17 @@ export async function takeState(env: Env, flow: string, q: CallbackQuery, browse
     }>();
   if (!st || (st.provider !== flow && st.provider !== `${flow}${APP_FLOW}`)) throw new ConnectError(INVALID);
   const back: ConnectBack = st.provider === flow ? "dashboard" : "app";
-  if (st.expires_at < nowS) throw new ConnectError("that took too long: start again", back);
+  if (st.expires_at < nowS) throw new ConnectError("that took too long: start again", back, undefined, st.workspace_id);
   if (q.error)
     throw new ConnectError(
       q.error === "access_denied"
         ? "you cancelled, or didn't allow access"
         : `${flow}: ${q.errorDescription ?? q.error}`,
       back,
+      undefined,
+      st.workspace_id,
     );
-  if (!q.code) throw new ConnectError("the provider sent no code", back);
+  if (!q.code) throw new ConnectError("the provider sent no code", back, undefined, st.workspace_id);
   return {
     userId: st.user_id,
     workspaceId: st.workspace_id,
