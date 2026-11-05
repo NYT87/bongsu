@@ -6,6 +6,7 @@ import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { connectionSecret, listAccounts } from "@bongsu/core/accounts";
+import { removeWorkspaceOAuthApp, saveWorkspaceOAuthApp } from "@bongsu/core/connections";
 import type { Env } from "@bongsu/core/env";
 import { beforeEach, describe, expect, it } from "vitest";
 import { joinDefault, testEnv, UNBOOTSTRAP, World } from "./world";
@@ -84,6 +85,7 @@ beforeEach(async () => {
     [
       ...UNBOOTSTRAP,
       "DELETE FROM oauth_apps",
+      "DELETE FROM workspace_oauth_apps",
       "DELETE FROM oauth_states",
       // what earlier tests connected (testEnv seeds the demo accounts and connections again)
       "DELETE FROM accounts WHERE id NOT IN ('demo_travel', 'demo_running', 'demo_cycling', 'main', 'vlogs')",
@@ -666,5 +668,140 @@ describe("connecting into the workspace the flow started from", () => {
     );
     expect(demoted.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?error=/);
     expect(await workspaceOf("UCours")).toBeNull();
+  });
+});
+
+describe("a workspace's own OAuth apps", () => {
+  const OWN_META = { clientId: "own-meta-id", clientSecret: "own-meta-secret" };
+  const OWN_GOOGLE = { clientId: "own-google.apps.googleusercontent.com", clientSecret: "own-google-secret" };
+  const now = () => Math.floor(Date.now() / 1000);
+  const ownApp = (ws: string, id: string, a: { clientId: string; clientSecret: string }) =>
+    saveWorkspaceOAuthApp(e, ws, id, a.clientId, a.clientSecret, me, now());
+  /** Workspace b (Demo Studio) with a creator, `cara`, and the instance admin as its admin. */
+  const setup = async () => {
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Demo Studio', 0) ON CONFLICT (id) DO UPDATE SET archived_at = NULL",
+      ),
+      env.DB.prepare("INSERT INTO users (id, name, created_at) VALUES ('cara', 'cara', 0)"),
+      env.DB.prepare(
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'cara', 'creator', 0)",
+      ),
+      env.DB.prepare(
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', ?1, 'admin', 0)",
+      ).bind(me),
+    ]);
+    return `bongsu_session=${await createSession(env.DB, now(), { userId: "cara" })}`;
+  };
+  const app = async (appCookie: string, path: string, body: unknown) => {
+    const r = await appRoutes(w.fetch, fake).request(
+      `https://bongsu.test${path}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Cookie: appCookie },
+        body: JSON.stringify(body),
+      },
+      e,
+    );
+    keepCookies(r, false);
+    return { status: r.status, json: (await r.json().catch(() => ({}))) as Record<string, unknown> };
+  };
+  const startIg = async (appCookie: string) => {
+    const r = await app(appCookie, "/app-api/connect/instagram/start", {});
+    expect(r.status).toBe(200);
+    return new URL(r.json.url as string);
+  };
+
+  it("sends the workspace's client id and exchanges with its secret; another workspace uses the instance's", async () => {
+    await call("/admin-api/oauth-apps/meta", META);
+    const cara = await setup();
+    await ownApp("b", "meta", OWN_META);
+    const url = await startIg(cara);
+    expect(url.searchParams.get("client_id")).toBe("own-meta-id");
+    const back = await callback("instagram", { code: "ig-code", state: url.searchParams.get("state")! });
+    expect(back.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?connected=/);
+    expect(w.igCodes[0]).toMatchObject({ client_secret: "own-meta-secret" });
+    expect(
+      await env.DB.prepare("SELECT app_scope FROM oauth_states WHERE provider LIKE 'instagram%'").first<string>(
+        "app_scope",
+      ),
+    ).toBe("workspace");
+
+    // the default workspace has none of its own: the instance's
+    expect((await call("/admin-api/workspaces/default/open", {})).status).toBe(200);
+    const start = await call("/admin-api/connect/instagram/start", {});
+    expect(new URL(start.json.url as string).searchParams.get("client_id")).toBe("meta-app-id");
+    await callback("instagram", {
+      code: "ig-code",
+      state: new URL(start.json.url as string).searchParams.get("state")!,
+    });
+    expect(w.igCodes[1]).toMatchObject({ client_secret: "meta-app-secret" });
+  });
+
+  it("fails when the app the flow started with is gone by the callback", async () => {
+    await call("/admin-api/oauth-apps/meta", META);
+    const cara = await setup();
+    await ownApp("b", "meta", OWN_META);
+    const url = await startIg(cara);
+    await removeWorkspaceOAuthApp(env.DB, "b", "meta");
+    const back = await callback("instagram", { code: "ig-code", state: url.searchParams.get("state")! });
+    expect(back.location).toMatch(/^https:\/\/bongsu\.test\/#\/settings\?error=/);
+    expect(new URLSearchParams(back.location!.split("?")[1]).get("error")).toBe("the OAuth app changed: start again");
+    expect(w.igCodes).toHaveLength(0);
+  });
+
+  it("an instance app removed since the start fails the same way", async () => {
+    await call("/admin-api/oauth-apps/meta", META);
+    const url = new URL((await call("/admin-api/connect/instagram/start", {})).json.url as string);
+    await call("/admin-api/oauth-apps/meta/remove", {});
+    await env.DB.prepare("DELETE FROM oauth_apps").run();
+    const back = await callback("instagram", { code: "ig-code", state: url.searchParams.get("state")! });
+    expect(backParams(back.location).error).toBe("the OAuth app changed: start again");
+  });
+
+  it("a flow started in one workspace finishes in it with its app, whichever workspace the session is in now", async () => {
+    await call("/admin-api/oauth-apps/meta", META);
+    await setup();
+    await ownApp("b", "meta", OWN_META);
+    expect((await call("/admin-api/workspaces/b/open", {})).status).toBe(200);
+    const start = await call("/admin-api/connect/instagram/start", {});
+    const url = new URL(start.json.url as string);
+    expect(url.searchParams.get("client_id")).toBe("own-meta-id");
+    expect((await call("/admin-api/workspaces/default/open", {})).status).toBe(200);
+    const back = await callback("instagram", { code: "ig-code", state: url.searchParams.get("state")! });
+    expect(back.location).toMatch(/connected=/);
+    expect(w.igCodes[0]).toMatchObject({ client_secret: "own-meta-secret" });
+    const conn = await env.DB.prepare("SELECT workspace_id FROM connections").first<string>("workspace_id");
+    expect(conn).toBe("b");
+  });
+
+  it("a YouTube connection keeps refreshing after its workspace app is removed: the grant carries the app", async () => {
+    const cara = await setup();
+    await ownApp("b", "google", OWN_GOOGLE);
+    const start = await app(cara, "/app-api/connect/youtube/start", {});
+    const url = new URL(start.json.url as string);
+    expect(url.searchParams.get("client_id")).toBe("own-google.apps.googleusercontent.com");
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    await callback("youtube", { code: "g-code", state: url.searchParams.get("state")! });
+    expect(w.googleCodes[0]).toMatchObject({ client_secret: "own-google-secret" });
+    await removeWorkspaceOAuthApp(env.DB, "b", "google");
+    const a = (await listAccounts(env.DB, { all: true })).find((x) => x.externalId === "UCours")!;
+    const creds = JSON.parse((await connectionSecret(e, a.connection))!);
+    expect(creds).toMatchObject({ client_id: OWN_GOOGLE.clientId, client_secret: OWN_GOOGLE.clientSecret });
+  });
+
+  it("the app's providers are ready with the workspace's own app, without an instance one", async () => {
+    const cara = await setup();
+    const list = async () => {
+      const r = await appRoutes(w.fetch, fake).request(
+        "https://bongsu.test/app-api/connections",
+        { headers: { Cookie: cara } },
+        e,
+      );
+      return ((await r.json()) as { providers: { provider: string; ready: boolean }[] }).providers;
+    };
+    expect((await list()).find((p) => p.provider === "instagram")?.ready).toBe(false);
+    await ownApp("b", "meta", OWN_META);
+    expect((await list()).find((p) => p.provider === "instagram")?.ready).toBe(true);
   });
 });

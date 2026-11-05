@@ -6,7 +6,7 @@ import { instagramAccounts, listAccounts } from "@bongsu/core/accounts";
 import { calendar } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import { replyToComment } from "@bongsu/core/comments";
-import { ConnectError, startConnect } from "@bongsu/core/connections";
+import { ConnectError, readyAppIds, startConnect } from "@bongsu/core/connections";
 import { LINK_TTL_S } from "@bongsu/core/constants";
 import { dueFrom, getItem, getPosted, isPosted, itemOptions, trialFor, WhenError } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -573,9 +573,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         .bind(ws)
         .all<{ id: string; provider: string; label: string | null; status: string; expires_at: number | null }>();
       const accounts = await listAccounts(c.env.DB, { workspaceId: ws, all: true });
-      const apps = new Set(
-        (await c.env.DB.prepare("SELECT id FROM oauth_apps").all<{ id: string }>()).results.map((x) => x.id),
-      );
+      const apps = await readyAppIds(c.env.DB, ws);
       return {
         connections: r.results.map((x) => ({
           ...x,

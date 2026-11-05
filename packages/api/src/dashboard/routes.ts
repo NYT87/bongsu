@@ -23,6 +23,7 @@ import {
   finishConnect,
   oauthApps,
   pasteConnect,
+  readyAppIds,
   removeConnection,
   removeOAuthApp,
   saveOAuthApp,
@@ -659,7 +660,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
               ws(c),
             )) > 0,
           // a Composio connection needs no app of the owner's
-          oauthApp: connections > 0 || (await count("SELECT COUNT(*) AS n FROM oauth_apps")) > 0,
+          oauthApp: connections > 0 || (await readyAppIds(c.env.DB, ws(c))).size > 0,
           mediaStore: (await count("SELECT COUNT(*) AS n FROM media_store")) > 0,
           connection: connections > 0,
           device:
@@ -1241,7 +1242,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         })),
         kinds: connectSpecs().map((k) => ({ ...k, canPaste: !!providerRegistration(k.provider)?.paste })),
         // the OAuth apps already set: their providers' Connect buttons work
-        appsReady: (await c.env.DB.prepare("SELECT id FROM oauth_apps").all<{ id: string }>()).results.map((r) => r.id),
+        appsReady: [...(await readyAppIds(c.env.DB, ws(c)))],
       };
     }),
   );
@@ -1560,7 +1561,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores/drive/start",
     wrap(async (c) => {
       fresh(c);
-      const flow = await startDriveConnect(c.env, c.get("session").userId, nowS());
+      const flow = await startDriveConnect(c.env, c.get("session").userId, null, nowS());
       c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
       return { url: flow.url };
     }),

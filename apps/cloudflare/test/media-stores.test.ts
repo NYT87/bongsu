@@ -6,6 +6,7 @@ import { createApp } from "@bongsu/api/app";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { clearTokenCache } from "@bongsu/core/clients/google";
+import { removeWorkspaceOAuthApp, saveWorkspaceOAuthApp } from "@bongsu/core/connections";
 import { encryptSecret } from "@bongsu/core/crypto";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -21,6 +22,7 @@ import {
   StoreError,
   saveStore,
   setDefaultStore,
+  startDriveConnect,
   waitingApprovalsIn,
 } from "@bongsu/core/media/manage";
 import { setWorkspaceNtfy } from "@bongsu/core/ntfy";
@@ -96,6 +98,7 @@ beforeEach(async () => {
     [
       ...UNBOOTSTRAP,
       "DELETE FROM oauth_apps",
+      "DELETE FROM workspace_oauth_apps",
       "DELETE FROM oauth_states",
       "DELETE FROM approvals",
       "DELETE FROM drafts",
@@ -458,6 +461,72 @@ describe("Connect Google Drive", () => {
     // the refusals didn't use the state up: in the browser that started it, the flow finishes
     expect((await driveCallback(q, mine)).location).toBe("https://bongsu.test/dashboard/media?connected=drive");
     expect(w.googleCodes).toHaveLength(1);
+  });
+});
+
+describe("Connect Google Drive for a workspace", () => {
+  const OWN = { id: "own-g-app", secret: "own-g-secret" };
+  /** A workspace, with `admin` (an admin) and `cara` (a creator) as members. */
+  async function workspace() {
+    const id = await createWorkspace(env.DB, { name: "Demo Studio", timezone: "UTC", createdBy: "owner" }, 0);
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO users (id, name, created_at) VALUES ('wadmin', 'wadmin', 0)"),
+      env.DB.prepare("INSERT INTO users (id, name, created_at) VALUES ('cara', 'cara', 0)"),
+      env.DB.prepare(
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES (?1, 'wadmin', 'admin', 0)",
+      ).bind(id),
+      env.DB.prepare(
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES (?1, 'cara', 'creator', 0)",
+      ).bind(id),
+    ]);
+    return id;
+  }
+  const start = async (userId: string, ws: string) => {
+    const flow = await startDriveConnect(e, userId, ws, Math.floor(Date.now() / 1000));
+    const url = new URL(flow.url);
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    w.googleGrantScope = "https://www.googleapis.com/auth/drive";
+    return { url, cookie: `bongsu_oauth=${flow.browser}` };
+  };
+
+  it("uses the workspace's Google app and saves the Drive store of that workspace", async () => {
+    await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
+    const ws = await workspace();
+    await saveWorkspaceOAuthApp(e, ws, "google", OWN.id, OWN.secret, "wadmin", 0);
+    w.drivePut(`${(await workspaceSettings(env.DB, ws)).mediaFolder}/inbox/keep.txt`, {
+      md5: "k",
+      mimeType: "text/plain",
+    });
+    const f = await start("wadmin", ws);
+    expect(f.url.searchParams.get("client_id")).toBe(OWN.id);
+    const back = await driveCallback(`code=g-code&state=${f.url.searchParams.get("state")}`, f.cookie);
+    expect(back.location).toBe("https://bongsu.test/dashboard/media?connected=drive");
+    expect(w.googleCodes[0]).toMatchObject({ client_id: OWN.id, client_secret: OWN.secret });
+    const rows = await env.DB.prepare(
+      "SELECT id, workspace_id FROM media_store WHERE kind = 'drive' AND workspace_id IS NOT NULL",
+    ).all();
+    expect(rows.results).toEqual([{ id: `drive-${ws}`, workspace_id: ws }]);
+  });
+
+  it("falls back to the instance's Google app, and refuses a creator finishing the flow", async () => {
+    await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
+    const ws = await workspace();
+    expect((await start("wadmin", ws)).url.searchParams.get("client_id")).toBe("g-app");
+    const f = await start("cara", ws); // started by a creator (or an admin since demoted)
+    const back = await driveCallback(`code=g-code&state=${f.url.searchParams.get("state")}`, f.cookie);
+    expect(new URL(back.location!).searchParams.get("error")).toMatch(/admin/);
+    expect(w.googleCodes).toEqual([]);
+    expect(await env.DB.prepare("SELECT id FROM media_store WHERE id = ?1").bind(`drive-${ws}`).first()).toBeNull();
+  });
+
+  it("fails when the workspace's app was removed since the start", async () => {
+    await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
+    const ws = await workspace();
+    await saveWorkspaceOAuthApp(e, ws, "google", OWN.id, OWN.secret, "wadmin", 0);
+    const f = await start("wadmin", ws);
+    await removeWorkspaceOAuthApp(env.DB, ws, "google");
+    const back = await driveCallback(`code=g-code&state=${f.url.searchParams.get("state")}`, f.cookie);
+    expect(new URL(back.location!).searchParams.get("error")).toBe("the OAuth app changed: start again");
   });
 });
 

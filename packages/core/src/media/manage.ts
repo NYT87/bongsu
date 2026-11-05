@@ -16,7 +16,7 @@ import { decryptSecret, encryptSecret } from "../crypto";
 import type { Env } from "../env";
 import { notifier, notifyInstanceAdmins } from "../notify";
 import { mediaStoreProblem } from "../texts/notifications";
-import { workspaceSettings } from "../workspaces";
+import { sessionWorkspace, workspaceSettings } from "../workspaces";
 import { DRIVE_SCOPE } from "./drive";
 import { mediaPath } from "./folders";
 import { buildStore, offeredKinds, type StoreKind, type StoreScope, storeId, storeRows } from "./index";
@@ -204,10 +204,16 @@ export async function removeStore(env: Env, scope: StoreScope, kind: StoreKind, 
 
 // ---- Connect Google Drive
 
-/** Starts Connect Google Drive: the owner's Google app (the one YouTube uses), scope drive, a refresh token. */
-export async function startDriveConnect(env: Env, userId: string, nowS: number): Promise<StartedFlow> {
+/** Starts Connect Google Drive: the Google app YouTube uses (a workspace's own, else the instance's), scope drive, a
+ *  refresh token. `workspaceId` null connects the instance's Drive store, a workspace's its own. */
+export async function startDriveConnect(
+  env: Env,
+  userId: string,
+  workspaceId: string | null,
+  nowS: number,
+): Promise<StartedFlow> {
   if (!offeredKinds().includes("drive")) throw new StoreError("this server doesn't offer Google Drive");
-  const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL));
+  const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL), { workspaceId });
   return authorizeUrl(
     env,
     {
@@ -218,7 +224,7 @@ export async function startDriveConnect(env: Env, userId: string, nowS: number):
       authorizeParams: { access_type: "offline", prompt: "consent" },
     },
     app,
-    { flow: DRIVE_FLOW, userId, workspaceId: null, connectionId: null, nowS },
+    { flow: DRIVE_FLOW, userId, workspaceId, connectionId: null, nowS },
   );
 }
 
@@ -232,7 +238,16 @@ export async function finishDriveConnect(
   nowS: number,
 ) {
   const st = await takeState(env, DRIVE_FLOW, q, browser, nowS);
-  const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL));
+  // a workspace's own Drive is for its admins (an instance admin counts as one): re-checked, as finishConnect does
+  if (st.workspaceId) {
+    const where = await sessionWorkspace(env.DB, { userId: st.userId, workspaceId: st.workspaceId });
+    if (where?.workspaceId !== st.workspaceId || where.role !== "admin")
+      throw new ConnectError("only the workspace's admins connect its Google Drive (or it was archived)");
+  }
+  const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL), {
+    workspaceId: st.workspaceId,
+    scope: st.appScope ?? "instance",
+  });
   const r = await fetcher(GOOGLE_TOKEN, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -267,7 +282,7 @@ export async function finishDriveConnect(
     refresh_token: j.refresh_token,
     token_uri: GOOGLE_TOKEN,
   });
-  await saveStore(env, fetcher, { workspaceId: null }, "drive", {}, grant, st.userId, nowS);
+  await saveStore(env, fetcher, { workspaceId: st.workspaceId }, "drive", {}, grant, st.userId, nowS);
   return { userId: st.userId };
 }
 
