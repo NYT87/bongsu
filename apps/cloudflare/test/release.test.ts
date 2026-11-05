@@ -8,6 +8,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneToUnix } from "@bongsu/core/formats/time";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
+import { setDisplayName } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { clearPlan, joinDefault, testEnv, UNBOOTSTRAP, World } from "./world";
 
@@ -115,7 +116,25 @@ describe("moveRelease", () => {
       to: "2099-11-06T10:00:00Z",
     });
     expect(w.notifications[0].title).toBe("Release moved: Lisbon Short");
-    expect(w.notifications[0].body).toMatch(/by you$/);
+    // named for everyone it reaches, as the workspace names the mover
+    expect(w.notifications[0].body).toMatch(/by Owner$/);
+  });
+
+  it("the notification names the mover by their name in the workspace, or the key", async () => {
+    const e = await testEnv(env, { NOTIFY_URL: "https://ntfy.test/t" });
+    const f = (i: RequestInfo | URL, r?: RequestInit) => w.fetch(i, r);
+    await setDisplayName(env.DB, "default", "owner", "Ana");
+    try {
+      await moveRelease(e, f, req());
+      expect(w.notifications[0].body).toMatch(/, by Ana$/);
+    } finally {
+      await setDisplayName(env.DB, "default", "owner", null);
+    }
+    await moveRelease(e, f, req({ actor: { kind: "key", id: "k1", name: "planner" } }));
+    expect(w.notifications[1].body).toMatch(/, by planner$/);
+    // no person recorded: never "you" to everyone
+    await moveRelease(e, f, req({ actor: { kind: "owner", userId: null } }));
+    expect(w.notifications[2].body).toMatch(/, by someone$/);
   });
 
   it("a key needs an hour of lead; the owner doesn't", async () => {

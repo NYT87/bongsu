@@ -79,6 +79,8 @@ import { schedulesOff } from "@bongsu/core/schedules";
 import {
   callerZone,
   checkName,
+  memberName,
+  memberNames,
   NameError,
   sessionWorkspace,
   setDisplayName,
@@ -303,10 +305,14 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie"), "dashboard"), nowS(), "dashboard");
       const user = s
-        ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1").bind(s.userId).first()
+        ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1")
+            .bind(s.userId)
+            .first<{ id: string; email: string | null; name: string | null }>()
         : null;
       // what the sidebar shows: the Instance group for instance admins; a creator is pointed at the app
       const where = s && (await sessionWorkspace(c.env.DB, s, { notCreator: true }));
+      // the person as the workspace they're working in names them (their own name outside any)
+      if (user && where) user.name = (await memberName(c.env.DB, user.id, where.workspaceId)) ?? user.name;
       return {
         bootstrapNeeded: !(await bootstrapped(c)),
         setupTokenSet: !!c.env.SETUP_TOKEN,
@@ -843,11 +849,16 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/members",
     wrap(async (c) => {
       const members = await c.env.DB.prepare(
-        `SELECT u.id, u.email, u.name, m.role, u.instance_admin FROM memberships m JOIN users u ON u.id = m.user_id
+        `SELECT u.id, u.email, m.display_name, m.role, u.instance_admin FROM memberships m JOIN users u ON u.id = m.user_id
          WHERE m.workspace_id = ?1 ORDER BY m.role, u.email, u.id`,
       )
         .bind(ws(c))
-        .all<{ id: string; email: string | null; name: string | null; role: string; instance_admin: number }>();
+        .all<{ id: string; email: string | null; display_name: string | null; role: string; instance_admin: number }>();
+      const names = await memberNames(
+        c.env.DB,
+        members.results.map((m) => m.id),
+        ws(c),
+      );
       // who's an instance admin: for the instance admins' "Make instance admin" control only
       const ia = c.get("instanceAdmin");
       const invites = await c.env.DB.prepare(
@@ -860,7 +871,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         members: members.results.map((m) => ({
           userId: m.id,
           email: m.email,
-          name: m.name,
+          // the name shown in this workspace; displayName is the workspace's own (null: the person's name shows)
+          name: names.get(m.id) ?? null,
+          displayName: m.display_name,
           role: m.role,
           ...(ia ? { instanceAdmin: Number(m.instance_admin) === 1 } : {}),
         })),
@@ -1901,7 +1914,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // admins, sign-ins outside any workspace) only to instance admins, on their own (?instance=1)
       const instance = c.req.query("instance") === "1";
       if (instance && !c.get("instanceAdmin")) throw new AdminError(403, "only an instance admin can do this");
-      // who: the person who acted (their name, else their email), when a person did
+      // who: the person who acted, when a person did (their name, else their email; in a workspace's list, as that
+      // workspace names them, below)
       const r = await c.env.DB.prepare(
         `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id, COALESCE(u.name, u.email) AS who
          FROM audit a LEFT JOIN users u ON u.id = a.user_id
@@ -1920,6 +1934,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           user_id: string | null;
           who: string | null;
         }>();
+      // every row here is the session's workspace's (the query's filter), so one workspace names them all
+      if (!instance) {
+        const names = await memberNames(
+          c.env.DB,
+          r.results.flatMap((x) => (x.user_id ? [x.user_id] : [])),
+          ws(c),
+        );
+        for (const x of r.results) if (x.user_id) x.who = names.get(x.user_id) ?? x.who;
+      }
       return { entries: r.results };
     }),
   );

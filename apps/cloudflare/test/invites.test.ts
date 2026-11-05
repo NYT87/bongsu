@@ -12,6 +12,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
 import { setPref } from "@bongsu/core/notify-prefs";
+import { setDisplayName } from "@bongsu/core/workspaces";
 import { beforeEach, describe, expect, it } from "vitest";
 import { testEnv, World } from "./world";
 
@@ -162,6 +163,20 @@ describe("invites", () => {
         { action: "invite_accept", workspace_id: "default" },
       ],
     });
+  });
+
+  it("the mail names the inviter as the invited workspace names them", async () => {
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ada', 'admin', 0)",
+    ).run();
+    await setDisplayName(env.DB, "default", "ada", "Ana");
+    expect(
+      (await (await dash("ada", "default"))("/admin-api/invites", { email: "x1@example.com", role: "editor" })).status,
+    ).toBe(200);
+    expect(
+      (await (await dash("ada", "b"))("/admin-api/invites", { email: "x2@example.com", role: "editor" })).status,
+    ).toBe(200);
+    expect(w.mails.map((m) => m.text.split(" invites you to the workspace ")[0])).toEqual(["Ana", "Ada"]);
   });
 
   it("invites admins and editors to the dashboard, and refuses a bad email, a bad role or a member", async () => {

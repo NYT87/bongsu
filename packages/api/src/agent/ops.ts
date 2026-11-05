@@ -57,7 +57,7 @@ import {
 import { youtubeAnalytics } from "@bongsu/core/providers/youtube";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { jsonList } from "@bongsu/core/sql";
-import { callerZone, workspaceSettings } from "@bongsu/core/workspaces";
+import { callerZone, memberName, memberNames, workspaceSettings } from "@bongsu/core/workspaces";
 import type { Caller } from "./auth";
 
 export class ApiError extends Error {
@@ -143,19 +143,13 @@ export async function audit(c: OpCtx, action: string, target: string | null, det
     .run();
 }
 
-/** Who a person is, to people: their name, else their email. */
-async function personName(c: OpCtx, userId: string): Promise<string> {
-  const u = await c.env.DB.prepare("SELECT name, email FROM users WHERE id = ?1")
-    .bind(userId)
-    .first<{ name: string | null; email: string | null }>();
-  return u?.name || u?.email || "someone";
-}
-
 // ---------------------------------------------------------------- reads
 
 export async function status(c: OpCtx) {
   const tz = await zoneOf(c);
-  const paused = (await pausedState(c.env.DB, c.caller.workspaceId)) !== null;
+  const p = await pausedState(c.env.DB, c.caller.workspaceId);
+  // who paused: the person as the workspace names them now; a key's pause (or one stored before people had ids) its text
+  const pausedBy = p ? ((p.userId ? await memberName(c.env.DB, p.userId, c.caller.workspaceId) : null) ?? p.by) : null;
   const states = await c.env.DB.prepare(
     "SELECT state, dry_run, COUNT(*) AS n FROM jobs WHERE updated_at >= ?1 AND workspace_id = ?2 GROUP BY state, dry_run",
   )
@@ -163,7 +157,8 @@ export async function status(c: OpCtx) {
     .all<{ state: string; dry_run: number; n: number }>();
   return {
     dry_run: c.env.DRY_RUN !== "0",
-    paused,
+    paused: p !== null,
+    paused_by: pausedBy,
     today: zoneDate(c.now, tz),
     timezone: tz,
     jobs_last_7_days: states.results.map((r) => ({ state: r.state, mode: r.dry_run ? "dry" : "live", n: r.n })),
@@ -407,6 +402,7 @@ export async function item(c: OpCtx, key: string) {
           due: stamp(a.dueAt, tz),
           due_at: iso(a.dueAt),
           approved_at: a.approvedAt,
+          approved_by: a.approvedByUser ? await memberName(c.env.DB, a.approvedByUser, c.caller.workspaceId) : null,
           media: a.media.length,
           matches_schedule: a.dueAt !== null && a.dueAt === due,
         }
@@ -603,11 +599,33 @@ export async function notifications(c: OpCtx, opts: { limit?: number } = {}) {
 
 const KINDS = ["reel", "photo", "carousel", "shorts_comment"] as const;
 
+/** Who made each draft: a person (an app upload) as the workspace names them, a key ("key:<id>") by its name. */
+async function draftAuthors(c: OpCtx, rows: { created_by: string; user_id: string | null }[]) {
+  const people = await memberNames(
+    c.env.DB,
+    rows.flatMap((d) => (d.user_id ? [d.user_id] : [])),
+    c.caller.workspaceId,
+  );
+  const keyIds = [
+    ...new Set(rows.flatMap((d) => (!d.user_id && d.created_by.startsWith("key:") ? [d.created_by.slice(4)] : []))),
+  ];
+  const keys = new Map<string, string>();
+  if (keyIds.length) {
+    const k = await c.env.DB.prepare(
+      `SELECT id, name FROM api_keys WHERE id IN ${jsonList(c.env.DB, 1)} AND workspace_id = ?2`,
+    )
+      .bind(JSON.stringify(keyIds), c.caller.workspaceId)
+      .all<{ id: string; name: string }>();
+    for (const x of k.results) keys.set(`key:${x.id}`, x.name);
+  }
+  return { people, keys };
+}
+
 export async function listDrafts(c: OpCtx, opts: { status?: string } = {}) {
   const tz = await zoneOf(c);
   const status = opts.status ?? "draft";
   const r = await c.env.DB.prepare(
-    "SELECT id, kind, account, payload, source, created_by, status, created_at, updated_at FROM drafts WHERE status = ?1 AND workspace_id = ?2 ORDER BY created_at DESC LIMIT 100",
+    "SELECT id, kind, account, payload, source, created_by, user_id, status, created_at, updated_at FROM drafts WHERE status = ?1 AND workspace_id = ?2 ORDER BY created_at DESC LIMIT 100",
   )
     .bind(status, c.caller.workspaceId)
     .all<{
@@ -617,13 +635,16 @@ export async function listDrafts(c: OpCtx, opts: { status?: string } = {}) {
       payload: string;
       source: string;
       created_by: string;
+      user_id: string | null;
       status: string;
       created_at: number;
       updated_at: number;
     }>();
+  const by = await draftAuthors(c, r.results);
   return {
-    drafts: r.results.map((d) => ({
+    drafts: r.results.map(({ user_id, ...d }) => ({
       ...d,
+      by: (user_id ? by.people.get(user_id) : by.keys.get(d.created_by)) ?? null,
       payload: JSON.parse(d.payload),
       created_at: stamp(d.created_at, tz),
       updated_at: stamp(d.updated_at, tz),
@@ -701,7 +722,9 @@ export async function pause(c: OpCtx, reason: string) {
     c.env.DB,
     c.caller.workspaceId,
     reason || "paused",
-    inApp(c) ? await personName(c, c.caller.id) : `API key "${c.caller.name}"`,
+    inApp(c)
+      ? { userId: c.caller.id, text: (await memberName(c.env.DB, c.caller.id, c.caller.workspaceId)) ?? "someone" }
+      : { text: `API key "${c.caller.name}"` },
     c.now,
   );
   if (!set) return { paused: true, already: true };

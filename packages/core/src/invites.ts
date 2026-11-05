@@ -8,6 +8,7 @@ import { sha256Hex } from "./formats/approved";
 import { mailer } from "./mail";
 import type { Role } from "./roles";
 import { inviteMail } from "./texts/invites";
+import { memberName } from "./workspaces";
 
 /** How long an invite link works. */
 export const INVITE_S = 7 * 86400;
@@ -56,15 +57,14 @@ export async function createInvite(
       const ws = await env.DB.prepare("SELECT name FROM workspaces WHERE id = ?1")
         .bind(o.workspaceId)
         .first<{ name: string }>();
-      const by = await env.DB.prepare("SELECT name, email FROM users WHERE id = ?1")
-        .bind(o.invitedBy)
-        .first<{ name: string | null; email: string | null }>();
+      // the inviter as the invited workspace names them
+      const by = await memberName(env.DB, o.invitedBy, o.workspaceId);
       await m.send(
         inviteMail({
           to: email,
           workspace: ws?.name ?? o.workspaceId,
           role: o.role,
-          by: by?.name ?? by?.email ?? "An admin",
+          by: by ?? "An admin",
           url,
           days: INVITE_S / 86400,
         }),

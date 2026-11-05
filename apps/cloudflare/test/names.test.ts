@@ -1,18 +1,30 @@
 // People's names (Phase 13 part 3b): the fallback rule in core (a display name in the workspace, else the person's
-// name, else the email's start) on real SQL, and the three routes that edit them.
-import { env } from "cloudflare:workers";
+// name, else the email's start) on real SQL, the three routes that edit them, and the places that name people.
+import { env, exports } from "cloudflare:workers";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
+import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
+import { sha256Hex } from "@bongsu/core/formats/approved";
 import { addMember } from "@bongsu/core/people";
 import { memberName, memberNames, setDisplayName, setUserName } from "@bongsu/core/workspaces";
-import { beforeEach, describe, expect, it } from "vitest";
-import { testEnv, World } from "./world";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { approve, clearPlan, MD5, planItem, seedReel, testEnv, World } from "./world";
 
 const nowS = () => Math.floor(Date.now() / 1000);
 const USERS = ["amy", "otto", "ina", "pat", "nix", "zed"];
 const LONG = "a".repeat(61);
+// A stand-in authenticator: any passkey of the session's person passes.
+const fake: Verifiers = {
+  registration: (async () => ({ verified: true })) as unknown as Verifiers["registration"],
+  authentication: (async () => ({
+    verified: true,
+    authenticationInfo: { newCounter: 1 },
+  })) as unknown as Verifiers["authentication"],
+};
+const AGENT = "bongsu_namesAgentnamesAgentnamesA";
+const origFetch = globalThis.fetch;
 let w: World;
 let e: Env;
 
@@ -23,7 +35,7 @@ const send = async (
   headers: Record<string, string>,
   body?: unknown,
 ): Promise<{ status: number; json: Json }> => {
-  const app = routes === "app" ? appRoutes(w.fetch) : adminRoutes(w.fetch);
+  const app = routes === "app" ? appRoutes(w.fetch, fake) : adminRoutes(w.fetch, fake);
   const r = await app.request(
     `https://bongsu.test${path}`,
     {
@@ -42,8 +54,18 @@ const as = async (userId: string, workspaceId?: string) => {
   const h = { Cookie: `bongsu_session=${token}` };
   return {
     me: () => send("app", "/app-api/me", h),
+    get: (path: string) => send("app", path, h),
     post: (path: string, body: unknown) => send("app", path, h, body),
   };
+};
+/** The agent API, with the default workspace's key "demo-agent". */
+const agent = async (path: string, body?: unknown): Promise<Json> => {
+  const r = await exports.default.fetch(`https://scheduler.test${path}`, {
+    method: body === undefined ? "GET" : "POST",
+    headers: { Authorization: `Bearer ${AGENT}`, "Content-Type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+  return (await r.json()) as Json;
 };
 /** The same person's dashboard session. */
 const dash = async (userId: string, workspaceId?: string) => {
@@ -59,13 +81,19 @@ const auditRows = (action: string) =>
 
 beforeEach(async () => {
   w = new World();
+  globalThis.fetch = w.fetch; // the agent API's routes use the global fetch
   e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test", RP_ID: "bongsu.test" } as Partial<Env>);
+  await clearPlan();
   const ids = USERS.map((u) => `'${u}'`).join(", ");
   await env.DB.batch(
     [
       "DELETE FROM sessions",
       "DELETE FROM api_keys",
-      "DELETE FROM audit WHERE action IN ('user_name', 'member_name')",
+      "DELETE FROM rate_limits",
+      "DELETE FROM drafts",
+      "DELETE FROM challenges",
+      `DELETE FROM passkeys WHERE user_id IN (${ids})`,
+      "DELETE FROM audit WHERE action IN ('user_name', 'member_name', 'test_named')",
       `DELETE FROM memberships WHERE user_id IN (${ids})`,
       `DELETE FROM users WHERE id IN (${ids})`,
       "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO UPDATE SET archived_at = NULL",
@@ -81,6 +109,14 @@ beforeEach(async () => {
   await addMember(env.DB, "default", "otto", "editor", 0);
   await addMember(env.DB, "b", "amy", "editor", 0);
   await addMember(env.DB, "b", "pat", "admin", 0);
+  await env.DB.prepare(
+    "INSERT INTO api_keys (id, name, key_hash, scopes, workspace_id) VALUES ('k_agent', 'demo-agent', ?1, '[\"read\",\"draft\",\"pause\"]', 'default')",
+  )
+    .bind(await sha256Hex(AGENT))
+    .run();
+});
+afterEach(() => {
+  globalThis.fetch = origFetch;
 });
 
 describe("memberName and memberNames", () => {
@@ -207,5 +243,95 @@ describe("agent keys", () => {
       expect([401, 403], path).toContain(r.status);
     }
     expect(await memberName(env.DB, "otto", "default")).toBe("otto");
+  });
+});
+
+describe("where people are named", () => {
+  it("the members list: the name in that workspace, the raw display name, the email", async () => {
+    await setDisplayName(env.DB, "default", "amy", "Ana");
+    const inA = (await (await dash("amy", "default"))("/admin-api/members", undefined)).json.members as Json[];
+    expect(inA.find((m) => m.userId === "amy")).toMatchObject({
+      name: "Ana",
+      displayName: "Ana",
+      email: "amy@example.com",
+    });
+    expect(inA.find((m) => m.userId === "otto")).toMatchObject({ name: "otto", displayName: null });
+    const inB = (await (await dash("pat", "b"))("/admin-api/members", undefined)).json.members as Json[];
+    expect(inB.find((m) => m.userId === "amy")).toMatchObject({
+      name: "Amy",
+      displayName: null,
+      email: "amy@example.com",
+    });
+  });
+
+  it("the dashboard state: the person as the session's workspace names them", async () => {
+    await setDisplayName(env.DB, "default", "amy", "Ana");
+    const a = (await (await dash("amy", "default"))("/admin-api/state", undefined)).json;
+    expect(a.user).toEqual({ id: "amy", email: "amy@example.com", name: "Ana" });
+    const b = (await (await dash("amy", "b"))("/admin-api/state", undefined)).json;
+    expect(b.user).toMatchObject({ name: "Amy" });
+  });
+
+  it("the audit list: who, as the row's workspace names them; a key's row has none", async () => {
+    await setDisplayName(env.DB, "default", "amy", "Ana");
+    await env.DB.batch(
+      [
+        "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (1, 'user:amy', 'test_named', 'a', '{}', 'amy', 'default')",
+        "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (1, 'user:amy', 'test_named', 'b', '{}', 'amy', 'b')",
+        "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (1, 'key:k_agent', 'test_named', 'k', '{}', NULL, 'default')",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    const rows = async (userId: string, ws: string) =>
+      ((await (await dash(userId, ws))("/admin-api/audit", undefined)).json.entries as Json[])
+        .filter((x) => x.action === "test_named")
+        .map((x) => [x.target, x.who]);
+    expect(await rows("amy", "default")).toEqual([
+      ["k", null],
+      ["a", "Ana"],
+    ]);
+    expect(await rows("pat", "b")).toEqual([["b", "Amy"]]);
+  });
+
+  it("approved by: the approver's name, null without one, and still named once removed", async () => {
+    await setDisplayName(env.DB, "default", "amy", "Ana");
+    await env.DB.prepare(
+      "INSERT INTO passkeys (id, public_key, counter, name, created_at, user_id) VALUES ('amy-key', 'AQID', 0, 'laptop', 0, 'amy')",
+    ).run();
+    const { folder, base } = await seedReel(w, { approve: false });
+    w.drivePut(`UPLOADS/${folder}/exports/shorts/instagram/${base}.mp4`, { md5: MD5, mimeType: "video/mp4" });
+    const key = `reel:20260823_LISBON/${base}`;
+    const amy = await as("amy", "default");
+    const o = await amy.post("/app-api/approve/options", { key });
+    expect(o.status).toBe(200);
+    const v = await amy.post("/app-api/approve/verify", {
+      challengeId: o.json.challengeId,
+      response: { id: "amy-key" },
+    });
+    expect(v.json).toMatchObject({ approved: true });
+    const item = () => agent(`/v1/items/${encodeURIComponent(key)}`);
+    expect((await item()).approval.approved_by).toBe("Ana");
+    // a removed member's approval still names them (by their own name: the display name went with the membership)
+    await env.DB.prepare("DELETE FROM memberships WHERE workspace_id = 'default' AND user_id = 'amy'").run();
+    expect((await item()).approval.approved_by).toBe("Amy");
+    // an approval that recorded no person
+    const other = await planItem({ folder, name: "short2_x", date: "2026-10-21" });
+    await approve(other, { due: "2026-10-21 18:00", caption: "x", comment: null, media: [] });
+    expect((await agent(`/v1/items/${encodeURIComponent(other)}`)).approval).toMatchObject({ approved_by: null });
+  });
+
+  it("drafts: an app upload names its person, an agent's draft its key", async () => {
+    await setDisplayName(env.DB, "default", "amy", "Ana");
+    const vid = w.drivePut("UPLOADS/_uploads/short3_x.mp4", { md5: MD5, mimeType: "video/mp4" });
+    await planItem({ folder: "demo_running/CONTENT/20260201_RUN", name: "short1_x", account: "demo_running" });
+    const amy = await as("amy", "default");
+    const up = await amy.post("/app-api/drafts/new", { files: [vid], project: "20260201_RUN", name: "short3_x" });
+    expect(up.status).toBe(200);
+    const made = await agent("/v1/drafts", { kind: "reel", account: "demo_travel", note: "an idea" });
+    const list = (await agent("/v1/drafts")).drafts as Json[];
+    expect(list.find((d) => d.id === up.json.id)?.by).toBe("Ana");
+    expect(list.find((d) => d.id === made.id)?.by).toBe("demo-agent");
+    // the app's list says the same
+    const app = (await amy.get("/app-api/drafts")).json.drafts as Json[];
+    expect(app.find((d) => d.id === up.json.id)?.by).toBe("Ana");
   });
 });

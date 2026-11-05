@@ -1110,7 +1110,6 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   return app;
 }
 
-/** The session's workspace as the app sees it: who it is and where its files live. */
 /** `you` in GET /app-api/me: the person's own name, the display name in the workspace, and what the workspace shows. */
 const youOf = async (db: Db, userId: string, workspaceId: string | null) => {
   const u = await db.prepare("SELECT name FROM users WHERE id = ?1").bind(userId).first<{ name: string | null }>();
@@ -1127,6 +1126,7 @@ const youOf = async (db: Db, userId: string, workspaceId: string | null) => {
   };
 };
 
+/** The session's workspace as the app sees it: who it is and where its files live. */
 const workspaceOf = async (db: Db, workspaceId: string) => {
   const ref = await workspaceRef(db, workspaceId);
   return ref && { ...ref, mediaFolder: (await workspaceSettings(db, workspaceId)).mediaFolder };
