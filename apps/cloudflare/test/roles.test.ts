@@ -458,6 +458,21 @@ describe("a percent-encoded path", () => {
     ).toBeNull();
   });
 
+  it("dashboard: the Scheduler stays an instance admin's; a workspace's media settings its admins'", async () => {
+    for (const role of ["admin", "editor"]) {
+      const call = await freshAs(role);
+      for (const path of ["/admin-api/scheduler", "/admin-api/%73cheduler", "/admin-api/sch%65duler"]) {
+        const r = await call(path);
+        expect([r.status, r.json], `${role} ${path}`).toEqual([403, instance]);
+      }
+    }
+    const editor = await freshAs("editor");
+    for (const path of ["/admin-api/%73ettings/media", "/admin-api/settings/%6Dedia", "/admin-api/settings/oauth-apps"])
+      expect((await editor(path)).status, path).toBe(403);
+    expect((await (await freshAs("admin"))("/admin-api/%73ettings/media")).status).toBe(200);
+    expect((await (await asInstanceAdmin())("/admin-api/scheduler")).status).toBe(200);
+  });
+
   it("dashboard: an editor still neither manages nor reads members, keys, connections and settings", async () => {
     const editor = await freshAs("editor");
     for (const path of ["/admin-api/%6Dembers/dee", "/admin-api/%6dembers/dee/remove", "/admin-api/%6Beys"]) {

@@ -1,8 +1,8 @@
 // The dashboard's sections (DESIGN.md, Layout). Each gets the instance state and `go` to move to another section.
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
-import { type FormEvent, type ReactNode, useEffect, useState } from "react";
+import { type FormEvent, Fragment, type ReactNode, useEffect, useState } from "react";
 import type { State } from "./App";
-import { api, manages, switchWorkspace, when, withFreshCheck } from "./api";
+import { api, manages, NAVIGATED, switchWorkspace, when, withFreshCheck } from "./api";
 import { GuideLink } from "./docs";
 import { Brand, Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
 
@@ -480,8 +480,6 @@ interface StoreInfo {
   lastError: string | null;
   lastCheckedAt: string | null;
   waitingApprovals: number;
-  /** The workspace that gets the drafts of new projects dropped in its inbox; null: they wait. */
-  inboxWorkspace: string | null;
 }
 const STORE_NAME: Record<string, string> = {
   drive: "Google Drive",
@@ -509,7 +507,7 @@ const storeWhere = (s: StoreInfo) =>
   s.kind === "s3"
     ? `${String(s.settings.bucket ?? "")}${s.settings.prefix ? `/${String(s.settings.prefix)}` : ""} · ${String(s.settings.endpoint ?? "")}`
     : s.kind === "drive"
-      ? "UPLOADS/ in the connected Drive"
+      ? "each workspace's folder in the connected Drive"
       : "the server's media folder";
 
 /** Where the media live: the stores side by side, one default; Drive with its button, a bucket with a form. */
@@ -520,7 +518,6 @@ export function Media({ go }: Props) {
     offered: string[];
     googleApp: boolean;
     encryptionKeySet: boolean;
-    workspaces: { id: string; name: string }[];
   }>("media-stores");
   const { confirm, dialog } = useConfirm();
   const [err, setErr] = useState<string | null>(null);
@@ -582,7 +579,6 @@ export function Media({ go }: Props) {
                       <th>Store</th>
                       <th>Status</th>
                       <th>Checked</th>
-                      <th>Inbox feeds</th>
                       <th className="right">
                         <span className="vh">Actions</span>
                       </th>
@@ -603,31 +599,6 @@ export function Media({ go }: Props) {
                         </td>
                         <td data-label="Checked" className="small nowrap">
                           {s.lastCheckedAt ? when(Date.parse(s.lastCheckedAt) / 1000) : "—"}
-                        </td>
-                        <td data-label="Inbox feeds">
-                          {/* a project a plan has goes to that plan's workspace; this one gets the others */}
-                          <select
-                            aria-label={`The workspace ${STORE_NAME[s.kind]}'s inbox feeds`}
-                            title="Drafts of projects in UPLOADS/inbox that no plan has yet go to this workspace"
-                            value={s.inboxWorkspace ?? ""}
-                            onChange={(e) => {
-                              const id = e.target.value || null;
-                              const name = data.workspaces.find((w) => w.id === id)?.name;
-                              act(
-                                () => api(`media-stores/${s.kind}/inbox`, { workspace: id }),
-                                id
-                                  ? `New projects in ${STORE_NAME[s.kind]}'s inbox go to ${name ?? id} now.`
-                                  : `New projects in ${STORE_NAME[s.kind]}'s inbox wait now.`,
-                              );
-                            }}
-                          >
-                            <option value="">No workspace: they wait</option>
-                            {data.workspaces.map((w) => (
-                              <option key={w.id} value={w.id}>
-                                {w.name}
-                              </option>
-                            ))}
-                          </select>
                         </td>
                         <td className="right nowrap">
                           <button
@@ -692,9 +663,9 @@ export function Media({ go }: Props) {
           {data.offered.includes("drive") && (
             <Card title={has("drive") ? "Google Drive: connect again" : "Add Google Drive"}>
               <p className="muted">
-                Drop files in a folder named UPLOADS in your Drive; Bongsu reads them and moves posted ones to
-                UPLOADS/_posted. It connects with your Google app (the one YouTube uses), which needs this page's
-                redirect URL: <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
+                Drop files in each workspace's folder in your Drive (shown in its Settings → Media); Bongsu reads them
+                and moves posted ones to its _posted folder. It connects with your Google app (the one YouTube uses),
+                which needs this page's redirect URL: <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
               </p>
               <div className="actions">
                 {data.googleApp ? (
@@ -736,7 +707,8 @@ export function Media({ go }: Props) {
           {data.offered.includes("local") && !has("local") && (
             <Card title="Add this server's disk">
               <p className="muted">
-                The media folder of this server (MEDIA_DIR; /media in Docker). Copy files into UPLOADS/inbox there.
+                The media folder of this server (MEDIA_DIR; /media in Docker). Copy files into each workspace's folder
+                there (shown in its Settings → Media), under inbox.
               </p>
               <div className="actions">
                 <button
@@ -760,7 +732,18 @@ export function Media({ go }: Props) {
   );
 }
 
-function S3Form({ saved, onClose, onDone }: { saved?: StoreInfo; onClose: () => void; onDone: () => void }) {
+function S3Form({
+  saved,
+  onClose,
+  onDone,
+  path = "media-stores/s3",
+}: {
+  saved?: Pick<StoreInfo, "settings"> & { hasCredentials?: boolean };
+  onClose: () => void;
+  onDone: () => void;
+  /** The save route: the instance's by default, a workspace's own (`settings/media/stores/s3`) on its Settings. */
+  path?: string;
+}) {
   const init = (k: string, d: string) => String(saved?.settings[k] ?? d);
   const [v, setV] = useState({
     endpoint: init("endpoint", S3_PRESETS.aws.endpoint),
@@ -784,7 +767,7 @@ function S3Form({ saved, onClose, onDone }: { saved?: StoreInfo; onClose: () => 
     setBusy(true);
     setErr(null);
     try {
-      await withFreshCheck(() => api("media-stores/s3", v));
+      await withFreshCheck(() => api(path, v));
       onDone();
     } catch (e) {
       setErr(errorText(e));
@@ -871,6 +854,8 @@ interface OAuthApp {
   id: string;
   clientId: string | null;
   updatedAt: number | null;
+  /** A workspace's list only: the instance has an app of this id too, which a workspace without its own uses. */
+  instance?: boolean;
   providers: { provider: string; label: string; redirectUri: string }[];
 }
 const APP_GUIDE: Record<string, { title: string; idLabel: string; secretLabel: string; docs: string }> = {
@@ -914,9 +899,11 @@ export function OAuthApps(_: Props) {
   );
 }
 
-function AppCard({ app, onChange }: { app: OAuthApp; onChange: () => void }) {
+function AppCard({ app, onChange, base = "oauth-apps" }: { app: OAuthApp; onChange: () => void; base?: string }) {
+  const workspace = base !== "oauth-apps";
   const g = APP_GUIDE[app.id] ?? { title: app.id, idLabel: "Client ID", secretLabel: "Client secret", docs: "" };
-  const [editing, setEditing] = useState(!app.clientId);
+  // a workspace with no app of its own, on an instance that has one: collapsed, the instance's app is in use
+  const [editing, setEditing] = useState(!app.clientId && !(workspace && app.instance));
   const [clientId, setClientId] = useState(app.clientId ?? "");
   const [secret, setSecret] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -930,7 +917,7 @@ function AppCard({ app, onChange }: { app: OAuthApp; onChange: () => void }) {
     setBusy(true);
     setErr(null);
     try {
-      await withFreshCheck(() => api(`oauth-apps/${app.id}`, { clientId, clientSecret: secret }));
+      await withFreshCheck(() => api(`${base}/${app.id}`, { clientId, clientSecret: secret }));
       toast({ ok: true, text: `${g.title} saved.` });
       setSecret("");
       setEditing(false);
@@ -944,12 +931,21 @@ function AppCard({ app, onChange }: { app: OAuthApp; onChange: () => void }) {
   return (
     <Card
       title={g.title}
-      actions={app.clientId ? <Pill status="ok" label="Set" /> : <Pill status="waiting" label="Not set" />}
+      actions={
+        app.clientId ? (
+          <Pill status="ok" label="Set" />
+        ) : workspace && app.instance ? (
+          <Pill status="ok" label="Instance's" />
+        ) : (
+          <Pill status="waiting" label="Not set" />
+        )
+      }
     >
       <p className="muted small">
         Redirect URL{app.providers.length > 1 ? "s" : ""} to register in the app (
         {g.docs ? <GuideLink doc={g.docs}>the setup guide</GuideLink> : "its settings"} shows where):
       </p>
+      {workspace && !app.clientId && !app.instance && <p className="small">The instance has none: add yours.</p>}
       <ul className="redirects">
         {app.providers.map((p) => (
           <li key={p.provider}>
@@ -1000,7 +996,7 @@ function AppCard({ app, onChange }: { app: OAuthApp; onChange: () => void }) {
             )}
           </Field>
           <div className="actions">
-            {app.clientId && (
+            {(app.clientId || (workspace && app.instance)) && (
               <button type="button" onClick={() => setEditing(false)}>
                 Cancel
               </button>
@@ -1010,6 +1006,13 @@ function AppCard({ app, onChange }: { app: OAuthApp; onChange: () => void }) {
             </button>
           </div>
         </form>
+      ) : !app.clientId ? (
+        <div className="row spread">
+          <span className="small muted">Uses the instance's app.</span>
+          <button type="button" onClick={() => setEditing(true)}>
+            Add your own
+          </button>
+        </div>
       ) : (
         <div className="row spread">
           <span className="small">
@@ -1026,14 +1029,15 @@ function AppCard({ app, onChange }: { app: OAuthApp; onChange: () => void }) {
               onClick={() =>
                 confirm({
                   title: `Remove the ${g.title}?`,
-                  detail:
-                    "Connections already made keep working (they carry their own tokens); new ones and reconnects need an app again.",
+                  detail: workspace
+                    ? `Connections already made keep working (they carry their own tokens); new ones and reconnects use ${app.instance ? "the instance's app" : "an app again, and the instance has none"}.`
+                    : "Connections already made keep working (they carry their own tokens); new ones and reconnects need an app again.",
                   verb: "Remove",
                   run: async () => {
-                    await withFreshCheck(() => api(`oauth-apps/${app.id}/remove`, {}));
+                    await withFreshCheck(() => api(`${base}/${app.id}/remove`, {}));
                     toast({ ok: true, text: `${g.title} removed.` });
                     setClientId("");
-                    setEditing(true);
+                    setEditing(!(workspace && app.instance));
                     onChange();
                   },
                 })
@@ -2754,7 +2758,69 @@ function NtfyCard({
   );
 }
 
-export function Settings(_: Props) {
+/** The Settings page's parts: the workspace's own settings, its media folder and stores, its OAuth apps. */
+const SETTINGS_TABS = [
+  ["", "General"],
+  ["media", "Media"],
+  ["apps", "OAuth apps"],
+] as const;
+const settingsTabOf = () => {
+  const t = location.pathname.replace(/^\/dashboard\/?/, "").split("/")[1] ?? "";
+  return SETTINGS_TABS.some(([k]) => k === t) ? t : "";
+};
+
+/** Settings, in parts: /dashboard/settings (General), /settings/media and /settings/apps. The router only reads the
+ *  first path segment, so the part is read here; the Drive callback lands on /settings/media. */
+export function Settings(props: Props) {
+  const [tab, setTab] = useState(settingsTabOf);
+  useEffect(() => {
+    const f = () => setTab(settingsTabOf());
+    addEventListener("popstate", f);
+    addEventListener(NAVIGATED, f);
+    return () => {
+      removeEventListener("popstate", f);
+      removeEventListener(NAVIGATED, f);
+    };
+  }, []);
+  const open = (t: string) => {
+    history.pushState(null, "", `/dashboard/settings${t ? `/${t}` : ""}`);
+    setTab(t);
+  };
+  const intro =
+    tab === "media"
+      ? "Where this workspace's files live: its folder, and the stores it reads them from."
+      : tab === "apps"
+        ? "This workspace's own Meta and Google apps. Without them it uses the instance's."
+        : "Defaults for the workspace. Times are stored in UTC; this zone is how they're shown.";
+  return (
+    <Page title="Settings" intro={intro}>
+      <nav className="subnav" aria-label="Settings">
+        {SETTINGS_TABS.map(([k, label]) => (
+          <a
+            key={k}
+            href={`/dashboard/settings${k ? `/${k}` : ""}`}
+            aria-current={k === tab ? "page" : undefined}
+            onClick={(e) => {
+              e.preventDefault();
+              open(k);
+            }}
+          >
+            {label}
+          </a>
+        ))}
+      </nav>
+      {tab === "media" ? (
+        <WorkspaceMedia onApps={() => open("apps")} />
+      ) : tab === "apps" ? (
+        <WorkspaceApps />
+      ) : (
+        <GeneralSettings {...props} />
+      )}
+    </Page>
+  );
+}
+
+function GeneralSettings(_: Props) {
   const { data, error, reload } = useLoad<{
     name: string;
     timezone: string;
@@ -2789,7 +2855,7 @@ export function Settings(_: Props) {
     }
   };
   return (
-    <Page title="Settings" intro="Defaults for the workspace. Times are stored in UTC; this zone is how they're shown.">
+    <>
       {!data ? (
         <Loading error={error} retry={reload} />
       ) : (
@@ -2851,7 +2917,318 @@ export function Settings(_: Props) {
           </Card>
         </>
       )}
-    </Page>
+    </>
+  );
+}
+
+// ---- Settings: the workspace's own media and OAuth apps
+
+interface OwnStore {
+  id: string;
+  kind: "drive" | "s3";
+  /** The workspace's own store (else the instance's, which it falls back to: read-only here). */
+  own: boolean;
+  default: boolean;
+  status: string;
+  lastError: string | null;
+  lastCheckedAt: string | null;
+  settings: Record<string, unknown>;
+  waitingApprovals: number;
+}
+
+/** The workspace's media: its folder (where everything of it lives, in whichever store), and its own stores beside the
+ *  instance's, which it uses until it makes its own default. */
+function WorkspaceMedia({ onApps }: { onApps: () => void }) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{
+    folder: string;
+    stores: OwnStore[];
+    offered: string[];
+    googleApp: boolean;
+    encryptionKeySet: boolean;
+  }>("settings/media");
+  const { confirm, dialog } = useConfirm();
+  const [err, setErr] = useState<string | null>(null);
+  const [form, setForm] = useState(false);
+  const [folder, setFolder] = useState("");
+  const [folderErr, setFolderErr] = useState<string | null>(null);
+  useEffect(() => {
+    if (data) setFolder(data.folder);
+  }, [data]);
+  // the Drive callback's landing: /dashboard/settings/media?connected=drive (or ?error=…)
+  useEffect(() => {
+    const q = new URLSearchParams(location.search);
+    if (q.has("connected")) toast({ ok: true, text: "Google Drive connected: it's this workspace's media store now." });
+    else if (q.has("error")) toast({ ok: false, text: `Couldn't connect Google Drive: ${q.get("error")}` });
+    else return;
+    history.replaceState(null, "", location.pathname);
+  }, [toast]);
+  const act = async (run: () => Promise<unknown>, done: string) => {
+    setErr(null);
+    try {
+      await run();
+      toast({ ok: true, text: done });
+      reload();
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  const saveFolder = async (e: FormEvent) => {
+    e.preventDefault();
+    if (folder.trim() === data?.folder) return; // aria-disabled doesn't stop a submit
+    setFolderErr(null);
+    try {
+      const r = await api<{ folder: string }>("settings/media/folder", { folder: folder.trim() }, "PUT");
+      toast({ ok: true, text: `The media folder is ${r.folder}.` });
+      reload();
+    } catch (e) {
+      setFolderErr(errorText(e));
+    }
+  };
+  const connectDrive = async () => {
+    setErr(null);
+    try {
+      const r = await withFreshCheck(() => api<{ url: string }>("settings/media/stores/drive/start", {}));
+      location.assign(r.url);
+    } catch (e) {
+      setErr(errorText(e));
+    }
+  };
+  const own = (k: string) => data?.stores.find((s) => s.kind === k && s.own);
+  const where = (s: OwnStore) =>
+    !s.own
+      ? "set up by the instance's admins"
+      : s.kind === "s3"
+        ? `${String(s.settings.bucket ?? "")}${s.settings.prefix ? `/${String(s.settings.prefix)}` : ""} · ${String(s.settings.endpoint ?? "")}`
+        : `${data?.folder ?? ""}/ in the connected Drive`;
+  return (
+    <>
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          {!data.encryptionKeySet && (
+            <p className="banner" role="status">
+              Set the ENCRYPTION_KEY secret first: a store's keys and grants are stored encrypted with it.
+            </p>
+          )}
+          <Card title="Media folder">
+            <form onSubmit={saveFolder}>
+              <Field
+                label="Folder"
+                help="The one folder of the store this workspace's files live in: its inbox, uploads and posted files. Bongsu doesn't move files: move them yourself."
+                error={folderErr}
+              >
+                {(p) => (
+                  <input
+                    {...p}
+                    className="mono"
+                    value={folder}
+                    onChange={(e) => setFolder(e.target.value)}
+                    maxLength={60}
+                    spellCheck={false}
+                    required
+                  />
+                )}
+              </Field>
+              <div className="actions">
+                <button className="primary" type="submit" aria-disabled={folder.trim() === data.folder}>
+                  Save
+                </button>
+              </div>
+            </form>
+          </Card>
+          <Card title="Stores">
+            {data.stores.length === 0 ? (
+              <p className="empty">No media store yet: add one below. Nothing with media can be approved until then.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="stack">
+                  <thead>
+                    <tr>
+                      <th>Store</th>
+                      <th>Status</th>
+                      <th>Checked</th>
+                      <th className="right">
+                        <span className="vh">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.stores.map((s) => (
+                      <tr key={s.id}>
+                        <td>
+                          <div>
+                            {STORE_NAME[s.kind]}{" "}
+                            <span className="muted small">{s.own ? "(yours)" : "(the instance's)"}</span>{" "}
+                            {s.default && <span className="muted small">(default)</span>}
+                          </div>
+                          <div className="muted small">{where(s)}</div>
+                          {s.lastError && <div className="error small">{s.lastError}</div>}
+                        </td>
+                        <td data-label="Status">
+                          <Pill status={s.status} />
+                        </td>
+                        <td data-label="Checked" className="small nowrap">
+                          {s.lastCheckedAt ? when(Date.parse(s.lastCheckedAt) / 1000) : "—"}
+                        </td>
+                        <td className="right nowrap">
+                          {s.own ? (
+                            <>
+                              <button
+                                type="button"
+                                className="link"
+                                onClick={() =>
+                                  act(async () => {
+                                    const r = await withFreshCheck(() =>
+                                      api<{ ok: boolean; error: string | null }>(
+                                        `settings/media/stores/${s.kind}/test`,
+                                        s.kind === "s3" ? s.settings : {},
+                                      ),
+                                    );
+                                    if (!r.ok) throw new Error(`${STORE_NAME[s.kind]} didn't answer: ${r.error}`);
+                                  }, `${STORE_NAME[s.kind]} answers: it can read and write.`)
+                                }
+                              >
+                                Test
+                              </button>
+                              {!s.default && (
+                                <button
+                                  type="button"
+                                  className="link"
+                                  onClick={() =>
+                                    act(
+                                      () => api(`settings/media/stores/${s.kind}/default`, {}),
+                                      `${STORE_NAME[s.kind]} is the default now.`,
+                                    )
+                                  }
+                                >
+                                  Make default
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="link danger"
+                                onClick={() =>
+                                  confirm({
+                                    title: `Remove ${STORE_NAME[s.kind]}?`,
+                                    detail: `Its files stay where they are, but Bongsu can't read them any more${
+                                      s.waitingApprovals
+                                        ? `: ${count(s.waitingApprovals, "waiting approval")} will need approving again`
+                                        : ""
+                                    }.`,
+                                    verb: "Remove",
+                                    run: async () => {
+                                      await withFreshCheck(() => api(`settings/media/stores/${s.kind}/remove`, {}));
+                                      toast({ ok: true, text: `Removed ${STORE_NAME[s.kind]}.` });
+                                      reload();
+                                    },
+                                  })
+                                }
+                              >
+                                Remove
+                              </button>
+                            </>
+                          ) : (
+                            !s.default && (
+                              <button
+                                type="button"
+                                className="link"
+                                onClick={() =>
+                                  act(
+                                    () => api("settings/media/default-instance", {}),
+                                    "The instance's store is the default now.",
+                                  )
+                                }
+                              >
+                                Make default
+                              </button>
+                            )
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+          {data.offered.includes("drive") && (
+            <Card title={own("drive") ? "Google Drive: connect again" : "Add Google Drive"}>
+              <p className="muted">
+                Drop files in {data.folder}/inbox in your Drive; Bongsu reads them and moves posted ones to{" "}
+                {data.folder}/_posted. It connects with a Google app (this workspace's, else the instance's), which
+                needs the redirect URL shown on its OAuth apps tab:{" "}
+                <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
+              </p>
+              <div className="actions">
+                {data.googleApp ? (
+                  <button type="button" className={own("drive") ? "" : "primary"} onClick={connectDrive}>
+                    {own("drive") ? "Connect again" : "Connect Google Drive"}
+                  </button>
+                ) : (
+                  <button type="button" onClick={onApps}>
+                    Add your Google app first
+                  </button>
+                )}
+              </div>
+            </Card>
+          )}
+          {data.offered.includes("s3") && (
+            <Card title={own("s3") ? "S3-compatible bucket: change it" : "Add an S3-compatible bucket"}>
+              <p className="muted">
+                AWS S3, Cloudflare R2, Backblaze B2, MinIO and others. Instagram fetches the files straight from the
+                bucket and the app uploads straight to it: <GuideLink doc="site/docs/s3.md">the bucket guide</GuideLink>{" "}
+                has the keys to make and the CORS rule uploads need.
+              </p>
+              {form ? (
+                <S3Form
+                  path="settings/media/stores/s3"
+                  saved={own("s3") ? { settings: own("s3")?.settings ?? {}, hasCredentials: true } : undefined}
+                  onClose={() => setForm(false)}
+                  onDone={() => {
+                    setForm(false);
+                    toast({ ok: true, text: "The bucket is saved: it answered, reading and writing." });
+                    reload();
+                  }}
+                />
+              ) : (
+                <div className="actions">
+                  <button type="button" className={own("s3") ? "" : "primary"} onClick={() => setForm(true)}>
+                    {own("s3") ? "Change the bucket" : "Add a bucket"}
+                  </button>
+                </div>
+              )}
+            </Card>
+          )}
+        </>
+      )}
+      {dialog}
+    </>
+  );
+}
+
+/** The workspace's own Meta and Google apps (else the instance's are used), with the redirect URLs to register. */
+function WorkspaceApps() {
+  const { data, error, reload } = useLoad<{ apps: OAuthApp[]; encryptionKeySet: boolean }>("settings/oauth-apps");
+  if (!data) return <Loading error={error} retry={reload} />;
+  return (
+    <>
+      {!data.encryptionKeySet && (
+        <p className="notice bad" role="alert">
+          ENCRYPTION_KEY isn't set on the Worker: app secrets and tokens can't be stored until it is (see{" "}
+          <GuideLink doc="deploy-cloudflare">the deploy guide</GuideLink>).
+        </p>
+      )}
+      {data.apps.map((a) => (
+        <AppCard key={a.id} app={a} onChange={reload} base="settings/oauth-apps" />
+      ))}
+    </>
   );
 }
 
@@ -2877,6 +3254,9 @@ export function Workspaces(_: Props) {
   // what the form above the table does: make one, rename one, or add an admin to one
   const [form, setForm] = useState<{ kind: "create" } | { kind: "rename" | "admin"; w: WorkspaceRow } | null>(null);
   const [name, setName] = useState("");
+  // the folder follows the name as it's typed until it's edited by hand
+  const [folder, setFolder] = useState("");
+  const [folderEdited, setFolderEdited] = useState(false);
   const [tz, setTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [adminIsMe, setAdminIsMe] = useState(true);
   const [email, setEmail] = useState("");
@@ -2889,6 +3269,8 @@ export function Workspaces(_: Props) {
     setForm(f);
     setErr(null);
     setName(f && f.kind === "rename" ? f.w.name : "");
+    setFolder("");
+    setFolderEdited(false);
     setEmail("");
     setAdminIsMe(true);
   };
@@ -2901,7 +3283,13 @@ export function Workspaces(_: Props) {
       const to = email.trim().toLowerCase();
       if (form.kind === "create") {
         const r = await withFreshCheck(() =>
-          api<{ invite?: { url: string } }>("workspaces", { name, timezone: tz, admin: adminIsMe ? "me" : to }),
+          api<{ invite?: { url: string } }>("workspaces", {
+            name,
+            timezone: tz,
+            // empty: the server picks, numbering it (demo-studio-2) when another workspace has the name's slug
+            folder: folder.trim(),
+            admin: adminIsMe ? "me" : to,
+          }),
         );
         // with "me" as its admin, the session now works in it; one made for someone else waits in this list
         if (r.invite) setMade({ url: r.invite.url, email: to });
@@ -2966,11 +3354,40 @@ export function Workspaces(_: Props) {
                 label={form.kind === "create" ? "Name" : `New name for ${form.w.name}`}
                 help="Who or what it's for: a brand, a client, a team."
               >
-                {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />}
+                {(p) => (
+                  <input
+                    {...p}
+                    value={name}
+                    onChange={(e) => {
+                      setName(e.target.value);
+                      if (!folderEdited) setFolder(e.target.value.trim() ? folderSlug(e.target.value) : "");
+                    }}
+                    maxLength={80}
+                    required
+                  />
+                )}
               </Field>
             )}
             {form.kind === "create" && (
               <>
+                <Field
+                  label="Media folder"
+                  help="The one folder of the media store its files live in. Filled from the name; change it if you like. It can't be one another workspace uses."
+                >
+                  {(p) => (
+                    <input
+                      {...p}
+                      className="mono"
+                      value={folder}
+                      onChange={(e) => {
+                        setFolder(e.target.value);
+                        setFolderEdited(true);
+                      }}
+                      maxLength={60}
+                      spellCheck={false}
+                    />
+                  )}
+                </Field>
                 <Field
                   label="Time zone"
                   help="How its plan's times are shown and entered. Each person can pick their own."
@@ -3132,8 +3549,106 @@ export function Workspaces(_: Props) {
           </div>
         )}
       </Card>
+      <SchedulerCard />
       {dialog}
     </Page>
+  );
+}
+
+/** The folder name a workspace's name makes: core's `folderSlug` (packages/core/src/media/folders.ts), copied here
+ *  because the dashboard doesn't depend on core. The server checks the name it gets. */
+const folderSlug = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/ /g, "-")
+    .replace(/[^a-z0-9_-]/g, "")
+    .slice(0, 60) || "workspace";
+
+interface Recorded {
+  value: number;
+  at: string;
+}
+interface SchedulerInfo {
+  runs: { name: string; cron: string }[];
+  jobsPerTick: Recorded | null;
+  inboxWorkspacesPerRun: Recorded | null;
+  inboxLast: { at: string; reached: number; total: number; limit: number } | null;
+  schedulesOff: boolean;
+  variables: { jobsPerTick: string; inboxWorkspacesPerRun: string };
+}
+const RUN_NAME: Record<string, string> = {
+  instagram: "Instagram posts and comments",
+  shorts: "YouTube Shorts comments",
+  inbox: "Media inbox scan",
+};
+const at = (iso: string) => when(Date.parse(iso) / 1000);
+
+/** What the scheduler runs and how much it does per run: read-only, from what the runs recorded themselves (the
+ *  limits are variables of the cron Worker or process, which this page can't read). */
+function SchedulerCard() {
+  const { data, error, reload } = useLoad<SchedulerInfo>("scheduler");
+  const limit = (r: Recorded | null, variable: string, what: string) => (
+    <>
+      <dt>{what}</dt>
+      <dd>
+        {r ? (
+          <>
+            <strong>{r.value}</strong> <span className="muted small">as of {at(r.at)} · set by </span>
+            <code>{variable}</code>
+          </>
+        ) : (
+          <span className="muted">
+            not run yet <span className="small">(set by </span>
+            <code className="small">{variable}</code>
+            <span className="small">)</span>
+          </span>
+        )}
+      </dd>
+    </>
+  );
+  return (
+    <Card title="Scheduler">
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          {data.schedulesOff && (
+            <p className="banner" role="status">
+              The schedules are off (<code>SCHEDULES=off</code>): this server only serves, nothing is published, scanned
+              or polled on its own.
+            </p>
+          )}
+          <p className="muted small">
+            Runs on a schedule (UTC). Each run handles a limited amount, so a busy instance catches up over the next
+            runs. Read-only: the limits are set where the scheduler runs.
+          </p>
+          <dl className="facts">
+            {data.runs.map((r) => (
+              <Fragment key={r.name}>
+                <dt>{RUN_NAME[r.name] ?? r.name}</dt>
+                <dd>
+                  <code>{r.cron}</code>
+                </dd>
+              </Fragment>
+            ))}
+            {limit(data.jobsPerTick, data.variables.jobsPerTick, "Jobs per run")}
+            {limit(data.inboxWorkspacesPerRun, data.variables.inboxWorkspacesPerRun, "Workspaces per inbox run")}
+            <dt>Last inbox run</dt>
+            <dd>
+              {data.inboxLast ? (
+                <>
+                  reached {data.inboxLast.reached} of {data.inboxLast.total} workspaces
+                  {data.inboxLast.reached < data.inboxLast.total && "; the others wait for the next run"}{" "}
+                  <span className="muted small">· {at(data.inboxLast.at)}</span>
+                </>
+              ) : (
+                <span className="muted">not run yet</span>
+              )}
+            </dd>
+          </dl>
+        </>
+      )}
+    </Card>
   );
 }
 

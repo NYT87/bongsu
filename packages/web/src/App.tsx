@@ -49,7 +49,7 @@ type Me = {
   /** Signed in, but a member of no workspace (yet, or any more): nothing to show but "ask for an invite". */
   noWorkspace?: boolean;
   /** Where the session works (null: in none), and every workspace the person can open, with their role there. */
-  workspace?: { id: string; name: string } | null;
+  workspace?: { id: string; name: string; mediaFolder: string } | null;
   workspaces?: { id: string; name: string; role: string }[];
 };
 type Status = {
@@ -348,6 +348,8 @@ const useShared = () => useContext(SharedCtx)!;
 const MeCtx = createContext<Me | null>(null);
 /** True once /app-api/me says the workspace has no active account: every list shows the setup note instead. */
 const useNoAccounts = () => useContext(MeCtx)?.accounts === 0;
+/** The workspace's media folder: where its inbox and the app's uploads live. */
+const useMediaFolder = () => useContext(MeCtx)?.workspace?.mediaFolder ?? "UPLOADS";
 /** Whether the signed-in role has a scope, e.g. "reschedule" for moving a YouTube release date. */
 const useCan = (scope: string) => useContext(MeCtx)?.scopes?.includes(scope) ?? false;
 
@@ -3599,6 +3601,7 @@ function NewDraft({
   onDone: (id: string) => void;
   onCancel: () => void;
 }) {
+  const mediaFolder = useMediaFolder();
   const [store, setStore] = useState(stores[0] ?? "");
   const groups = useLoad<{ groups: { channel: string; group: string }[] }>("queue/groups?days=120");
   const [files, setFiles] = useState<File[]>([]);
@@ -3757,7 +3760,7 @@ function NewDraft({
           {busy ? t("draft.uploadingShort") : t("draft.upload")}
         </button>
       </div>
-      <p className="muted small">{t("draft.uploadNote")}</p>
+      <p className="muted small">{t("draft.uploadNote", { folder: mediaFolder })}</p>
     </div>
   );
 }
@@ -3817,6 +3820,7 @@ function ConfirmButton({
 }
 
 function DraftsPage() {
+  const mediaFolder = useMediaFolder();
   const {
     drafts: { data, error, reload, stale, at },
   } = useShared();
@@ -3869,7 +3873,7 @@ function DraftsPage() {
       )}
       {about && (
         <p id="drafts-about" className="notice small">
-          {t("drafts.aboutBefore")} <code>UPLOADS/inbox/&lt;project&gt;/</code> {t("drafts.aboutAfter")}
+          {t("drafts.aboutBefore")} <code>{mediaFolder}/inbox/&lt;project&gt;/</code> {t("drafts.aboutAfter")}
         </p>
       )}
       {adding && (
@@ -4229,9 +4233,9 @@ function VersionInfo() {
 
 /** Where the media are read from: the stores set up in the dashboard, read-only here. */
 function MediaStoresCard() {
-  const { data } = useLoad<{ stores: { kind: string; default: boolean; status: string; where: string | null }[] }>(
-    "media-stores",
-  );
+  const { data } = useLoad<{
+    stores: { id: string; kind: string; own: boolean; default: boolean; status: string; where: string | null }[];
+  }>("media-stores");
   if (!data) return null;
   const name = (k: string) => (k === "drive" || k === "s3" || k === "local" ? t(`store.${k}`) : k);
   return (
@@ -4242,7 +4246,7 @@ function MediaStoresCard() {
       ) : (
         <ul className="small">
           {data.stores.map((s) => (
-            <li key={s.kind}>
+            <li key={s.id}>
               {name(s.kind)}
               {s.where && <code> {s.where}</code>}
               {s.default && <span className="muted"> ({t("settings.mediaDefault")})</span>}

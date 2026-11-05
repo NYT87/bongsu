@@ -7,7 +7,7 @@ describe("/health", () => {
   it("reports the migrated tables, the dry-run setting, no missing secrets and the media stores", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
     await env.DB.prepare(
-      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('s3', 1, '{}', 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, status, updated_at) VALUES ('s3', 's3', 1, '{}', 'ok', 0)",
     ).run();
     const res = await exports.default.fetch("https://scheduler.test/health");
     expect(res.status).toBe(200);
@@ -23,7 +23,7 @@ describe("/health", () => {
   it("needs ENCRYPTION_KEY once a media store keeps credentials", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
     await env.DB.prepare(
-      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', 1, '{}', 'x', 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', 's3', 1, '{}', 'x', 'ok', 0)",
     ).run();
     const r = await createApp(fetch).request(
       "https://scheduler.test/health",
@@ -32,6 +32,21 @@ describe("/health", () => {
     );
     expect(((await r.json()) as { missing_secrets: string[] }).missing_secrets).toContain("ENCRYPTION_KEY");
     await env.DB.prepare("DELETE FROM media_store").run();
+  });
+
+  it("needs ENCRYPTION_KEY once a workspace keeps its own OAuth app", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    await env.DB.prepare("DELETE FROM workspace_oauth_apps").run();
+    await env.DB.prepare(
+      "INSERT INTO workspace_oauth_apps (workspace_id, id, client_id, client_secret, updated_at, updated_by) VALUES ('default', 'google', 'demo-client', 'x', 0, 'u')",
+    ).run();
+    const r = await createApp(fetch).request(
+      "https://scheduler.test/health",
+      {},
+      { ...env, ENCRYPTION_KEY: undefined },
+    );
+    expect(((await r.json()) as { missing_secrets: string[] }).missing_secrets).toContain("ENCRYPTION_KEY");
+    await env.DB.prepare("DELETE FROM workspace_oauth_apps").run();
   });
 
   it("asks for a connection kind's secret only when such a connection exists", async () => {

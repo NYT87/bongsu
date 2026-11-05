@@ -231,4 +231,11 @@ describe("every builder has a group", () => {
       for (const name of names) expect(notes[name as keyof typeof notes].group, name).toBe(group);
     expect(Object.values(expected).flat().sort()).toEqual(Object.keys(notes).sort());
   });
+
+  it("sends a workspace's own broken store to Settings → Media, the instance's to Media", () => {
+    expect(N.mediaStoreProblem("x").mail?.page).toBe("/dashboard/media");
+    const own = N.mediaStoreProblem("x", true);
+    expect(own.mail?.page).toBe("/dashboard/settings/media");
+    expect(own.text).toContain("Settings → Media");
+  });
 });

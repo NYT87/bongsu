@@ -3,7 +3,7 @@
 
 import type { Env } from "@bongsu/core/env";
 import { serveMedia } from "@bongsu/core/media";
-import { mediaStores, storeRows } from "@bongsu/core/media/index";
+import { mediaStoreById, storeRows } from "@bongsu/core/media/index";
 import { tableNames } from "@bongsu/core/sql";
 import { Hono } from "hono";
 import { apiRoutes } from "./agent/routes";
@@ -33,10 +33,11 @@ export function createApp(fetcher: typeof fetch) {
     // anything stored encrypted (credentials, OAuth app secrets, ntfy topics) needs the key to be read back
     const encrypted = await c.env.DB.prepare(
       `SELECT 1 FROM connections WHERE credentials IS NOT NULL UNION ALL SELECT 1 FROM oauth_apps
+       UNION ALL SELECT 1 FROM workspace_oauth_apps
        UNION ALL SELECT 1 FROM workspace_settings WHERE notify_url IS NOT NULL
        UNION ALL SELECT 1 FROM media_store WHERE credentials IS NOT NULL LIMIT 1`,
     ).first();
-    const rows = await storeRows(c.env.DB);
+    const rows = await storeRows(c.env.DB, { workspaceId: null }); // the instance's: a workspace's broken store isn't its health
     const needed = [
       ...SECRETS,
       ...providers.flatMap((p) => SECRETS_FOR[p.provider] ?? []),
@@ -62,7 +63,12 @@ export function createApp(fetcher: typeof fetch) {
   });
 
   app.on(["GET", "HEAD"], "/m/:store/:file", async (c) =>
-    serveMedia(c.req.raw, c.env.MEDIA_SIGNING_KEY, await mediaStores(c.env, fetcher), Math.floor(Date.now() / 1000)),
+    serveMedia(
+      c.req.raw,
+      c.env.MEDIA_SIGNING_KEY,
+      (id) => mediaStoreById(c.env, fetcher, id),
+      Math.floor(Date.now() / 1000),
+    ),
   );
 
   // The agent API: REST /v1 and MCP /mcp, behind API keys (agent/).

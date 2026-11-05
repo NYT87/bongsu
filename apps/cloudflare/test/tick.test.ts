@@ -53,6 +53,17 @@ describe("tick: guards", () => {
     expect(await jobs()).toEqual([]);
   });
 
+  it("records the jobs per tick it ran with, per part", async () => {
+    await env.DB.prepare("DELETE FROM settings WHERE key LIKE 'tick_last:%'").run();
+    const at = Math.floor(AT.getTime() / 1000);
+    await tick(await testEnv(env), { fetch: w.fetch, now: AT });
+    await tick(await testEnv(env, { JOBS_PER_TICK: "7" }), { fetch: w.fetch, now: AT }, "shorts");
+    const last = async (k: string) =>
+      JSON.parse((await env.DB.prepare("SELECT value FROM settings WHERE key = ?1").bind(k).first("value")) as string);
+    expect(await last("tick_last:instagram")).toEqual({ at, jobsPerTick: 4 });
+    expect(await last("tick_last:shorts")).toEqual({ at, jobsPerTick: 7 });
+  });
+
   it("skips a tick while another holds the lock", async () => {
     await env.DB.prepare("INSERT INTO locks VALUES ('tick:instagram', 'other', ?1)")
       .bind(Math.floor(AT.getTime() / 1000) + 100)
@@ -472,11 +483,13 @@ describe("signed media links", () => {
     const now = 1_800_000_000;
     const good = await signedLink("https://s.test", "k", "drive", "abcdefghij12", "mp4", now + 60);
     expect(good).toContain("/m/drive/abcdefghij12.mp4?");
-    const r = await serveMedia(new Request(good), "k", stores, now);
+    const r = await serveMedia(new Request(good), "k", async (id) => stores.get(id), now);
     expect([r.status, r.headers.get("Content-Type"), await r.text()]).toEqual([200, "video/mp4", "VIDEO"]);
-    expect((await serveMedia(new Request(good), "k", stores, now + 61)).status).toBe(403);
-    expect((await serveMedia(new Request(good.replace(/sig=./, "sig=0")), "k", stores, now)).status).toBe(403);
-    expect((await serveMedia(new Request(good), "other-key", stores, now)).status).toBe(403);
+    expect((await serveMedia(new Request(good), "k", async (id) => stores.get(id), now + 61)).status).toBe(403);
+    expect(
+      (await serveMedia(new Request(good.replace(/sig=./, "sig=0")), "k", async (id) => stores.get(id), now)).status,
+    ).toBe(403);
+    expect((await serveMedia(new Request(good), "other-key", async (id) => stores.get(id), now)).status).toBe(403);
   });
 
   it("are signed for their store: the same id under another store is refused", async () => {
@@ -487,10 +500,13 @@ describe("signed media links", () => {
     );
     const now = 1_800_000_000;
     const good = await signedLink("https://s.test", "k", "drive", "abcdefghij12", "mp4", now + 60);
-    expect((await serveMedia(new Request(good.replace("/m/drive/", "/m/local/")), "k", stores, now)).status).toBe(403);
+    expect(
+      (await serveMedia(new Request(good.replace("/m/drive/", "/m/local/")), "k", async (id) => stores.get(id), now))
+        .status,
+    ).toBe(403);
     // a store that isn't set up: not found, even with a valid signature
     const other = await signedLink("https://s.test", "k", "s3", "abcdefghij12", "mp4", now + 60);
-    expect((await serveMedia(new Request(other), "k", stores, now)).status).toBe(404);
+    expect((await serveMedia(new Request(other), "k", async (id) => stores.get(id), now)).status).toBe(404);
   });
 });
 

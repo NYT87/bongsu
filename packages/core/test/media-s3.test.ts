@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { AwsClient } from "aws4fetch";
 import { describe, expect, it } from "vitest";
 import { mediaStoreCases } from "../src/media/conformance";
@@ -21,6 +23,21 @@ function setup(o: { prefix?: string; pathStyle?: boolean } = {}) {
   return { s3, store, root };
 }
 
+describe("s3 paths with dot segments", () => {
+  it("refuses a path that climbs out of its folder: resolve and inside say no, the writers throw", async () => {
+    const { s3, store } = setup();
+    await s3.put("client-b/x/b.jpg", "b", "image/jpeg");
+    expect(await store.resolve("UPLOADS/../client-b/x/b.jpg")).toBeNull();
+    expect(await store.resolve("client-b/x/./b.jpg")).toBeNull();
+    const id = (await store.resolve("client-b/x/b.jpg"))!.id;
+    expect(await store.inside(id, "UPLOADS/..")).toBe(false);
+    await expect(store.ensureFolder("UPLOADS/../client-b")).rejects.toThrow(/not a path inside/);
+    await expect(store.createUpload("a.jpg", "UPLOADS/../client-b", "image/jpeg")).rejects.toThrow(/not a path inside/);
+    await expect(store.move(id, "UPLOADS/..")).rejects.toThrow(/not a path inside/);
+    expect(s3.objects.has("client-b/")).toBe(false);
+  });
+});
+
 for (const variant of [
   { name: "path style", o: { pathStyle: true } },
   { name: "virtual-hosted, under a prefix", o: { pathStyle: false, prefix: "bongsu/" } },
@@ -40,6 +57,29 @@ for (const variant of [
 }
 
 describe("s3 store", () => {
+  it("treats an id with a dot or empty segment as missing: the URL would normalise it out of its folder", async () => {
+    const { s3, store } = setup();
+    await s3.put("client-b/trip/b.jpg", "b-bytes", "image/jpeg");
+    await s3.put("UPLOADS/trip/a.jpg", "a", "image/jpeg");
+    const id = (key: string) => btoa(key).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    for (const key of [
+      "UPLOADS/../client-b/trip/b.jpg",
+      "UPLOADS/./trip/a.jpg",
+      "UPLOADS//trip/a.jpg",
+      "/UPLOADS/trip/a.jpg",
+      "UPLOADS/trip/../../client-b/trip/b.jpg",
+      "UPLOADS/../client-b/trip/",
+    ]) {
+      expect(await store.inside(id(key), "UPLOADS"), key).toBe(false);
+      expect(await store.stat(id(key)), key).toBeNull();
+      expect((await store.stream(id(key))).status, key).toBe(404);
+      await expect(store.publicUrl(id(key), 60), key).rejects.toThrow();
+      await expect(store.move(id(key), "elsewhere"), key).rejects.toThrow();
+      expect(await store.list(id(key)), key).toEqual([]);
+    }
+    expect(await store.inside(id("UPLOADS/trip/a.jpg"), "UPLOADS")).toBe(true);
+  });
+
   it("keeps every key under its prefix, and ids are opaque and URL-safe", async () => {
     const { s3, store } = setup({ prefix: "bongsu" });
     await s3.put("other/secret.mp4", "x", "video/mp4");
@@ -118,6 +158,32 @@ describe("s3 store", () => {
       "UPLOADS/_posted/post/01.jpg",
       "UPLOADS/_posted/post/02.jpg",
     ]);
+  });
+
+  it("doesn't follow a redirect from the endpoint: a signature is for one host, and the target could be private", async () => {
+    // a real server and the runtime's own fetch, so the redirect mode is what decides
+    const hits: string[] = [];
+    const server = createServer((req, res) => {
+      hits.push(req.url ?? "");
+      if (req.url?.startsWith("/private")) return res.writeHead(200).end("<ListBucketResult/>");
+      res.writeHead(302, { Location: "/private/latest/meta-data/" }).end();
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const settings: S3Settings = {
+        endpoint: `http://127.0.0.1:${port}`,
+        region: "auto",
+        bucket: "media",
+        pathStyle: true,
+      };
+      const store = new S3Store(settings, KEYS, (input, init) => fetch(input, init));
+      await expect(store.resolve("UPLOADS")).rejects.toThrow(/redirect \(302\).*not followed/);
+      await expect(store.stream(btoa("UPLOADS/a.jpg").replace(/=+$/, ""))).rejects.toThrow(/redirect/);
+      expect(hits.some((h) => h.startsWith("/private"))).toBe(false);
+    } finally {
+      await new Promise((ok) => server.close(ok));
+    }
   });
 
   it("signs every request (the fake refuses unsigned ones)", async () => {

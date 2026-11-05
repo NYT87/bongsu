@@ -23,11 +23,16 @@ import {
   finishConnect,
   oauthApps,
   pasteConnect,
+  readyAppIds,
   removeConnection,
   removeOAuthApp,
+  removeWorkspaceOAuthApp,
   saveOAuthApp,
+  saveWorkspaceOAuthApp,
   startConnect,
+  workspaceOAuthApps,
 } from "@bongsu/core/connections";
+import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS } from "@bongsu/core/constants";
 import { CryptoError } from "@bongsu/core/crypto";
 import { dueFrom, WhenError, waitingApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -35,6 +40,7 @@ import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { LintRules } from "@bongsu/core/formats/caption-lint";
 import { isTimeZone, utcIso, zoneStamp } from "@bongsu/core/formats/time";
 import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
+import { FolderError } from "@bongsu/core/media/folders";
 import { offeredKinds, STORE_KINDS, type StoreKind, storeRows } from "@bongsu/core/media/index";
 import {
   finishDriveConnect,
@@ -45,9 +51,9 @@ import {
   savedCredentials,
   saveStore,
   setDefaultStore,
-  setInboxWorkspace,
   startDriveConnect,
   testStore,
+  useInstanceDefault,
   waitingApprovalsIn,
 } from "@bongsu/core/media/manage";
 import { NtfyError, postNtfy, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
@@ -69,9 +75,11 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
+import { schedulesOff } from "@bongsu/core/schedules";
 import {
   callerZone,
   sessionWorkspace,
+  setMediaFolder,
   setWorkspaceSettings,
   workspaceRef,
   workspaceSettings,
@@ -133,6 +141,7 @@ const AREAS: Record<string, Area> = {
   workspaces: { instance: true },
   "media-stores": { instance: true },
   "oauth-apps": { instance: true },
+  scheduler: { instance: true },
   "instance-admins": { instance: true },
   verify: { noWorkspace: true },
   passkeys: { noWorkspace: true },
@@ -228,7 +237,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (e instanceof ConnectError) return c.json({ error: e.message }, 400);
       if (e instanceof CryptoError) return c.json({ error: e.message }, 409);
       if (e instanceof NtfyError) return c.json({ error: e.message }, 400);
-      if (e instanceof StoreError) return c.json({ error: e.message }, 400);
+      if (e instanceof StoreError || e instanceof FolderError) return c.json({ error: e.message }, 400);
       if (e instanceof MemberError) return c.json({ error: e.message }, e.status);
       if (e instanceof InstanceAdminError) return c.json({ error: e.message }, e.status);
       if (e instanceof AcceptError) return c.json(e.answer, e.status);
@@ -502,8 +511,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   // who started it and the flow's cookie that it's back in the same browser.
   app.get("/admin-api/media-stores/drive/callback", async (c) => {
     const browser = readOauthCookie(c.req.header("Cookie"));
-    const back = (q: Record<string, string>) =>
-      c.redirect(`${origin(c)}/dashboard/media?${new URLSearchParams(q)}`, 302);
+    const back = (q: Record<string, string>, page = "media") =>
+      c.redirect(`${origin(c)}/dashboard/${page}?${new URLSearchParams(q)}`, 302);
     try {
       c.header("Set-Cookie", oauthCookie("x", callbackPath(driveRedirectUri(c.env.PUBLIC_URL)), 0));
       const r = await finishDriveConnect(
@@ -518,10 +527,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         browser,
         nowS(),
       );
-      await audit(c, "media_store_save", "drive", { connected: true }, r.userId, null);
-      return back({ connected: "drive" });
+      // a workspace's own Drive is that workspace's row and comes back to its Settings, the instance's to the Media page
+      if (r.workspaceId) await audit(c, "workspace_store_set", "drive", { connected: true }, r.userId, r.workspaceId);
+      else await audit(c, "media_store_save", "drive", { connected: true }, r.userId, null);
+      return back({ connected: "drive" }, r.workspaceId ? "settings/media" : "media");
     } catch (e) {
-      return back({ error: (e as Error).message.slice(0, 300) });
+      // a workspace's flow comes back to its Settings (the media page is the instance admins'); before the state is read
+      // the flow is unknown and the error goes where it always went
+      const workspaceId = (e as { workspaceId?: string | null }).workspaceId;
+      return back({ error: (e as Error).message.slice(0, 300) }, workspaceId ? "settings/media" : "media");
     }
   });
 
@@ -660,8 +674,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
               ws(c),
             )) > 0,
           // a Composio connection needs no app of the owner's
-          oauthApp: connections > 0 || (await count("SELECT COUNT(*) AS n FROM oauth_apps")) > 0,
-          mediaStore: (await count("SELECT COUNT(*) AS n FROM media_store")) > 0,
+          oauthApp: connections > 0 || (await readyAppIds(c.env.DB, ws(c))).size > 0,
+          // the instance's own store, the default of every workspace without one; a workspace's bucket doesn't count
+          mediaStore: (await count("SELECT COUNT(*) AS n FROM media_store WHERE workspace_id IS NULL")) > 0,
           connection: connections > 0,
           device:
             (await count(
@@ -1242,7 +1257,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         })),
         kinds: connectSpecs().map((k) => ({ ...k, canPaste: !!providerRegistration(k.provider)?.paste })),
         // the OAuth apps already set: their providers' Connect buttons work
-        appsReady: (await c.env.DB.prepare("SELECT id FROM oauth_apps").all<{ id: string }>()).results.map((r) => r.id),
+        appsReady: [...(await readyAppIds(c.env.DB, ws(c)))],
       };
     }),
   );
@@ -1269,7 +1284,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         .toLowerCase();
       if (admin !== "me" && !EMAIL.test(admin)) throw new AdminError(400, 'the first admin: "me" or an email');
       const me = c.get("session").userId;
-      const id = await createWorkspace(c.env.DB, { name, timezone, createdBy: me }, nowS());
+      // optional: the folder of the media store its files live in (else the name's slug)
+      const folder = typeof b.folder === "string" && b.folder.trim() ? b.folder : undefined;
+      const id = await createWorkspace(c.env.DB, { name, timezone, createdBy: me, mediaFolder: folder }, nowS());
       const invite =
         admin === "me"
           ? null
@@ -1494,7 +1511,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }),
   );
 
-  // ---- media stores: where the media live (core/media/manage.ts). Secrets never go back to the browser.
+  // ---- media stores: where the media live (core/media/manage.ts). Secrets never go back to the browser. These are the
+  // instance's stores; a workspace's own are set up in the app.
+  const INSTANCE = { workspaceId: null };
   const storeKind = (c: C): StoreKind => {
     const k = c.req.param("kind") ?? "";
     if (!(STORE_KINDS as readonly string[]).includes(k)) throw new AdminError(404, `no store kind ${k}`);
@@ -1504,7 +1523,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores",
     wrap(async (c) => ({
       stores: await Promise.all(
-        (await storeRows(c.env.DB)).map(async (r) => ({
+        (await storeRows(c.env.DB, INSTANCE)).map(async (r) => ({
           kind: r.kind,
           default: r.isDefault,
           settings: r.settings,
@@ -1513,17 +1532,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           lastError: r.lastError,
           lastCheckedAt: r.lastCheckedAt ? utcIso(r.lastCheckedAt) : null,
           // what removing it would void
-          waitingApprovals: await waitingApprovalsIn(c.env, r.kind),
-          inboxWorkspace: r.inboxWorkspace,
+          waitingApprovals: await waitingApprovalsIn(c.env, r.id),
         })),
       ),
-      // what an inbox can feed
-      workspaces: (
-        await c.env.DB.prepare("SELECT id, name FROM workspaces WHERE archived_at IS NULL ORDER BY name, id").all<{
-          id: string;
-          name: string;
-        }>()
-      ).results,
       offered: offeredKinds(),
       googleApp: !!(await c.env.DB.prepare("SELECT 1 FROM oauth_apps WHERE id = 'google'").first()),
       encryptionKeySet: !!c.env.ENCRYPTION_KEY,
@@ -1532,7 +1543,10 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   /** The settings and credentials a form sends: S3's from its fields, the saved keys when both are left empty. */
   const storeInput = async (c: C, kind: StoreKind, b: Record<string, unknown>) => {
     if (kind === "s3")
-      return { settings: { ...s3Settings(b) }, credentials: s3Credentials(b) ?? (await savedCredentials(c.env, "s3")) };
+      return {
+        settings: { ...s3Settings(b) },
+        credentials: s3Credentials(b) ?? (await savedCredentials(c.env, INSTANCE, "s3")),
+      };
     if (kind === "local") return { settings: {}, credentials: null };
     throw new AdminError(400, "Google Drive is connected with its button, not a form");
   };
@@ -1541,7 +1555,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const kind = storeKind(c);
       if (kind === "drive") {
-        const creds = await savedCredentials(c.env, "drive");
+        const creds = await savedCredentials(c.env, INSTANCE, "drive");
         if (!creds) throw new AdminError(400, "connect Google Drive first");
         return testStore(c.env, fetcher, "drive", {}, creds);
       }
@@ -1555,7 +1569,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       fresh(c);
       const kind = storeKind(c);
       const { settings, credentials } = await storeInput(c, kind, await body(c));
-      await saveStore(c.env, fetcher, kind, settings, credentials, c.get("session").userId, nowS());
+      await saveStore(c.env, fetcher, INSTANCE, kind, settings, credentials, c.get("session").userId, nowS());
       await audit(c, "media_store_save", kind, kind === "s3" ? { ...settings } : {}, undefined, null);
       return { saved: true };
     }),
@@ -1564,7 +1578,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores/drive/start",
     wrap(async (c) => {
       fresh(c);
-      const flow = await startDriveConnect(c.env, c.get("session").userId, nowS());
+      const flow = await startDriveConnect(c.env, c.get("session").userId, null, nowS());
       c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
       return { url: flow.url };
     }),
@@ -1573,21 +1587,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores/:kind/default",
     wrap(async (c) => {
       const kind = storeKind(c);
-      await setDefaultStore(c.env, kind, nowS());
+      await setDefaultStore(c.env, INSTANCE, kind, nowS());
       await audit(c, "media_store_default", kind, {}, undefined, null);
       return { default: kind };
-    }),
-  );
-  // The workspace that gets the drafts of the projects in this store's inbox that no plan has yet (null: they wait).
-  app.post(
-    "/admin-api/media-stores/:kind/inbox",
-    wrap(async (c) => {
-      const kind = storeKind(c);
-      const w = (await body(c)).workspace;
-      const workspace = typeof w === "string" && w ? w : null;
-      await setInboxWorkspace(c.env, kind, workspace, nowS());
-      await audit(c, "media_store_inbox", kind, { workspace }, undefined, null);
-      return { inboxWorkspace: workspace };
     }),
   );
   app.post(
@@ -1596,9 +1598,210 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       fresh(c);
       const kind = storeKind(c);
       const voided = await waitingApprovalsIn(c.env, kind);
-      await removeStore(c.env, kind, nowS());
+      await removeStore(c.env, INSTANCE, kind, nowS());
       await audit(c, "media_store_remove", kind, { voidedApprovals: voided }, undefined, null);
       return { removed: true, voidedApprovals: voided };
+    }),
+  );
+
+  // ---- a workspace's own media folder, stores and OAuth apps (AREAS: settings, the workspace's admins and the instance
+  // admins). Its own rows only: the instance's stores are listed, read-only, so the admin sees what it falls back to.
+  const OWN_KINDS = STORE_KINDS.filter((k) => k !== "local");
+  const ownKind = (c: C): StoreKind => {
+    const k = c.req.param("kind") ?? "";
+    if (!(OWN_KINDS as readonly string[]).includes(k)) throw new AdminError(404, `no store kind ${k}`);
+    return k as StoreKind;
+  };
+  app.get(
+    "/admin-api/settings/media",
+    wrap(async (c) => {
+      const w = ws(c);
+      const rows = await storeRows(c.env.DB, { workspaceId: w });
+      const effective = rows.find((r) => r.isDefault && r.workspaceId === w) ?? rows.find((r) => r.isDefault);
+      return {
+        folder: (await workspaceSettings(c.env.DB, w)).mediaFolder,
+        stores: await Promise.all(
+          rows.map(async (r) => ({
+            id: r.id,
+            kind: r.kind,
+            own: r.workspaceId === w,
+            // the one files go to when nothing names a store: its own, else the instance's
+            default: r.id === effective?.id,
+            status: r.status,
+            lastError: r.lastError,
+            lastCheckedAt: r.lastCheckedAt ? utcIso(r.lastCheckedAt) : null,
+            // the instance's bucket, endpoint and prefix are the instance admins' to read
+            settings: r.workspaceId === w ? r.settings : {},
+            waitingApprovals: r.workspaceId === w ? await waitingApprovalsIn(c.env, r.id) : 0,
+          })),
+        ),
+        offered: offeredKinds().filter((k) => k !== "local"),
+        googleApp: (await readyAppIds(c.env.DB, w)).has("google"),
+        encryptionKeySet: !!c.env.ENCRYPTION_KEY,
+      };
+    }),
+  );
+  app.put(
+    "/admin-api/settings/media/folder",
+    wrap(async (c) => {
+      const folder = await setMediaFolder(c.env.DB, ws(c), String((await body(c)).folder ?? ""), nowS());
+      await audit(c, "media_folder", folder, { folder });
+      return { folder };
+    }),
+  );
+  /** The settings and keys a workspace's bucket form sends (its saved keys when both are left empty). */
+  const ownStoreInput = async (c: C, kind: StoreKind, b: Record<string, unknown>) => {
+    if (kind !== "s3") throw new AdminError(400, "Google Drive is connected with its button, not a form");
+    return {
+      settings: { ...s3Settings(b, { workspaceId: ws(c) }) },
+      credentials: s3Credentials(b) ?? (await savedCredentials(c.env, { workspaceId: ws(c) }, "s3")),
+    };
+  };
+  app.post(
+    "/admin-api/settings/media/stores/:kind/test",
+    wrap(async (c) => {
+      const kind = ownKind(c);
+      const scope = { workspaceId: ws(c) };
+      if (kind === "drive") {
+        const creds = await savedCredentials(c.env, scope, "drive");
+        if (!creds) throw new AdminError(400, "connect Google Drive first");
+        return testStore(c.env, fetcher, "drive", {}, creds, scope);
+      }
+      // a workspace admin's endpoint, signed requests sent to it: confirmed with a passkey, as saving is
+      fresh(c);
+      const { settings, credentials } = await ownStoreInput(c, kind, await body(c));
+      return testStore(c.env, fetcher, kind, settings, credentials, scope);
+    }),
+  );
+  app.post(
+    "/admin-api/settings/media/stores/drive/start",
+    wrap(async (c) => {
+      fresh(c);
+      const flow = await startDriveConnect(c.env, c.get("session").userId, ws(c), nowS());
+      c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
+      return { url: flow.url };
+    }),
+  );
+  app.post(
+    "/admin-api/settings/media/stores/:kind",
+    wrap(async (c) => {
+      fresh(c);
+      const kind = ownKind(c);
+      const { settings, credentials } = await ownStoreInput(c, kind, await body(c));
+      await saveStore(
+        c.env,
+        fetcher,
+        { workspaceId: ws(c) },
+        kind,
+        settings,
+        credentials,
+        c.get("session").userId,
+        nowS(),
+      );
+      await audit(c, "workspace_store_set", kind, { ...settings });
+      return { saved: true };
+    }),
+  );
+  app.post(
+    "/admin-api/settings/media/stores/:kind/default",
+    wrap(async (c) => {
+      const kind = ownKind(c);
+      await setDefaultStore(c.env, { workspaceId: ws(c) }, kind, nowS());
+      await audit(c, "workspace_store_set", kind, { default: true });
+      return { default: kind };
+    }),
+  );
+  app.post(
+    "/admin-api/settings/media/default-instance",
+    wrap(async (c) => {
+      await useInstanceDefault(c.env, ws(c), nowS());
+      await audit(c, "workspace_store_set", null, { default: "instance" });
+      return { default: null };
+    }),
+  );
+  app.post(
+    "/admin-api/settings/media/stores/:kind/remove",
+    wrap(async (c) => {
+      fresh(c);
+      const kind = ownKind(c);
+      await removeStore(c.env, { workspaceId: ws(c) }, kind, nowS());
+      await audit(c, "workspace_store_remove", kind, {});
+      return { removed: true };
+    }),
+  );
+  app.get(
+    "/admin-api/settings/oauth-apps",
+    wrap(async (c) => ({
+      apps: await workspaceOAuthApps(c.env.DB, ws(c), origin(c)),
+      encryptionKeySet: !!c.env.ENCRYPTION_KEY,
+    })),
+  );
+  app.post(
+    "/admin-api/settings/oauth-apps/:id",
+    wrap(async (c) => {
+      fresh(c);
+      const b = await body(c);
+      const id = c.req.param("id") ?? "";
+      const clientId = String(b.clientId ?? "");
+      await saveWorkspaceOAuthApp(
+        c.env,
+        ws(c),
+        id,
+        clientId,
+        String(b.clientSecret ?? ""),
+        c.get("session").userId,
+        nowS(),
+      );
+      await audit(c, "workspace_oauth_app_set", id, { clientId: clientId.trim() });
+      return { saved: true };
+    }),
+  );
+  app.post(
+    "/admin-api/settings/oauth-apps/:id/remove",
+    wrap(async (c) => {
+      fresh(c);
+      const id = c.req.param("id") ?? "";
+      await removeWorkspaceOAuthApp(c.env.DB, ws(c), id);
+      await audit(c, "workspace_oauth_app_remove", id, {});
+      return { removed: true };
+    }),
+  );
+
+  // ---- the Scheduler page (instance admins: AREAS): when the Workers run and what they were limited by. The limits are
+  // what the cron Worker recorded in its last runs (core/tick.ts, core/inbox.ts), since the variables live on that
+  // Worker, not on this one.
+  const recorded = async <T extends { at: number }>(c: C, key: string): Promise<T | null> => {
+    const r = await c.env.DB.prepare("SELECT value FROM settings WHERE key = ?1").bind(key).first<{ value: string }>();
+    try {
+      return r ? (JSON.parse(r.value) as T) : null;
+    } catch {
+      return null;
+    }
+  };
+  app.get(
+    "/admin-api/scheduler",
+    wrap(async (c) => {
+      const ticks = (
+        await Promise.all(
+          ["instagram", "shorts"].map((p) => recorded<{ at: number; jobsPerTick: number }>(c, `tick_last:${p}`)),
+        )
+      ).filter((t) => t !== null);
+      const tick = ticks.sort((a, b) => b.at - a.at)[0];
+      const inbox = await recorded<{ at: number; reached: number; total: number; limit: number }>(c, "inbox_last");
+      return {
+        runs: [
+          { name: "instagram", cron: CRON_INSTAGRAM },
+          { name: "shorts", cron: CRON_SHORTS },
+          { name: "inbox", cron: CRON_INBOX },
+        ],
+        jobsPerTick: tick ? { value: tick.jobsPerTick, at: utcIso(tick.at) } : null,
+        inboxWorkspacesPerRun: inbox ? { value: inbox.limit, at: utcIso(inbox.at) } : null,
+        inboxLast: inbox
+          ? { at: utcIso(inbox.at), reached: inbox.reached, total: inbox.total, limit: inbox.limit }
+          : null,
+        schedulesOff: schedulesOff(c.env),
+        variables: { jobsPerTick: "JOBS_PER_TICK", inboxWorkspacesPerRun: "INBOX_WORKSPACES_PER_RUN" },
+      };
     }),
   );
 

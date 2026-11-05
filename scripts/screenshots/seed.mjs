@@ -331,7 +331,7 @@ export async function seedDemo(scratchDir, now = new Date()) {
     // creates workspaces), so the demo creates its own `default` workspace and its owner, an instance admin
     db.prepare("INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Demo Studio', ?)").run(nowS);
     db.prepare(
-      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', ?, 8, 'en', ?)",
+      "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, media_folder, updated_at) VALUES ('default', ?, 8, 'en', 'UPLOADS', ?)",
     ).run(ZONE, nowS);
     db.prepare(
       "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', 'owner@example.com', 'Demo Owner', ?, 1)",
@@ -339,10 +339,9 @@ export async function seedDemo(scratchDir, now = new Date()) {
     db.prepare(
       "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'owner', 'admin', ?)",
     ).run(nowS);
-    // the media: the demo folder on the server's disk (MEDIA_DIR), the instance's only store. Its drive inbox lands in
-    // `default`, as migration 0018 sets it on an instance that has that workspace (the demo plants an inbox draft)
+    // the media: the demo folder on the server's disk (MEDIA_DIR), the instance's only store
     db.prepare(
-      "INSERT INTO media_store (kind, is_default, settings, status, updated_at, inbox_workspace) VALUES ('local', 1, '{}', 'ok', ?, 'default')",
+      "INSERT INTO media_store (id, kind, is_default, settings, status, updated_at) VALUES ('local', 'local', 1, '{}', 'ok', ?)",
     ).run(nowS);
 
     // ---- accounts and how they are reached (no credentials: DRY_RUN never publishes, and the YouTube list is cached below)

@@ -1,9 +1,10 @@
 // Workspace isolation (Phase 3): an agent key only sees and changes its own workspace's plan, drafts, jobs and
 // accounts; the scheduler serves every workspace, each in its own time zone.
 import { env, exports } from "cloudflare:workers";
+import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { resolveItem } from "@bongsu/api/pwa/approve";
 import { appRoutes } from "@bongsu/api/pwa/routes";
-import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
+import { createSession, markVerified, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { encryptSecret } from "@bongsu/core/crypto";
 import type { Env } from "@bongsu/core/env";
@@ -543,8 +544,9 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     const a = String(made.json.id);
     const stores = (await as("ina3", "dashboard", "/admin-api/media-stores")).json.stores as { kind: string }[];
     expect(stores.length).toBeGreaterThan(0);
-    const inbox = await send("ina3", "dashboard", `/admin-api/media-stores/${stores[0].kind}/inbox`, { workspace: a });
-    expect(inbox.status).toBe(200);
+    // an instance-level action of the instance admin: its audit row is in no workspace
+    const dflt = await send("ina3", "dashboard", `/admin-api/media-stores/${stores[0].kind}/default`, {});
+    expect(dflt.status).toBe(200);
     const where = async () =>
       (
         await env.DB.prepare("SELECT action, workspace_id FROM audit ORDER BY id").all<{
@@ -555,7 +557,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(await where()).toEqual([
       { action: "workspace_create", workspace_id: null },
       { action: "invite_create", workspace_id: a },
-      { action: "media_store_inbox", workspace_id: null },
+      { action: "media_store_default", workspace_id: null },
     ]);
     // B's admin and editor: none of A's rows, none of the instance's, and no way to ask for them; a device's error
     // in B's app is B's
@@ -580,7 +582,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     const inst = await as("ina3", "dashboard", "/admin-api/audit?instance=1");
     expect(inst.status).toBe(200);
     expect((inst.json.entries as { action: string }[]).map((x) => x.action)).toEqual([
-      "media_store_inbox",
+      "media_store_default",
       "workspace_create",
     ]);
     expect((await as("ina3", "dashboard", "/admin-api/audit")).json).toMatchObject({ noWorkspace: true });
@@ -616,5 +618,76 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
   it("a user in no workspace is turned away", async () => {
     expect((await as("nobody", "dashboard", "/admin-api/accounts")).status).toBe(403);
     expect((await as("nobody", "pwa", "/app-api/status")).status).toBe(403);
+  });
+});
+
+describe("a workspace's media settings", () => {
+  it("an admin of B reads and changes B's folder, stores and OAuth apps, never A's", async () => {
+    const nowS = Math.floor(Date.now() / 1000);
+    const e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test", RP_ID: "bongsu.test" });
+    await env.DB.batch(
+      [
+        "INSERT INTO users (id, name, created_at, instance_admin) VALUES ('bob', 'Bob', 0, 0) ON CONFLICT (id) DO UPDATE SET instance_admin = 0",
+        "DELETE FROM memberships WHERE user_id = 'bob'",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'bob', 'admin', 0)",
+        "DELETE FROM media_store WHERE workspace_id IS NOT NULL",
+        "DELETE FROM workspace_oauth_apps",
+        "UPDATE workspace_settings SET media_folder = 'UPLOADS' WHERE workspace_id = 'default'",
+        "UPDATE workspace_settings SET media_folder = 'shop-files' WHERE workspace_id = 'b'",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    // workspace A has its own bucket and OAuth app
+    await env.DB.prepare(
+      "INSERT INTO media_store (id, kind, workspace_id, is_default, settings, status, updated_at) VALUES ('s3-default', 's3', 'default', 1, '{\"bucket\":\"a-only\"}', 'ok', 0)",
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO workspace_oauth_apps (workspace_id, id, client_id, client_secret, updated_at, updated_by) VALUES ('default', 'google', 'a-client', 'x', 0, 'owner')",
+    ).run();
+    const token = await createSession(env.DB, nowS, { app: "dashboard", userId: "bob" });
+    await markVerified(env.DB, token, nowS);
+    const call = async (path: string, body?: unknown, method?: string) => {
+      const r = await adminRoutes(w.fetch).request(
+        `https://bongsu.test${path}`,
+        {
+          method: method ?? (body === undefined ? "GET" : "POST"),
+          headers: { Cookie: `bongsu_admin=${token}`, "Content-Type": "application/json" },
+          ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        },
+        e,
+      );
+      return { status: r.status, json: (await r.json()) as Record<string, any> };
+    };
+    const media = (await call("/admin-api/settings/media")).json;
+    expect(media.folder).toBe("shop-files");
+    expect((media.stores as { id: string }[]).map((s) => s.id)).not.toContain("s3-default");
+    expect(JSON.stringify(media)).not.toContain("a-only");
+    expect((await call("/admin-api/settings/media/folder", { folder: "UPLOADS" }, "PUT")).status).toBe(400); // A's
+    // A's bucket and OAuth app aren't B's to default, remove or see
+    expect((await call("/admin-api/settings/media/stores/s3/default", {})).status).toBe(400);
+    expect((await call("/admin-api/settings/media/stores/s3/remove", {})).status).toBe(400);
+    expect(
+      ((await call("/admin-api/settings/oauth-apps")).json.apps as { clientId: string | null }[]).map(
+        (a) => a.clientId,
+      ),
+    ).not.toContain("a-client");
+    expect((await call("/admin-api/settings/oauth-apps/google/remove", {})).status).toBe(200);
+    expect((await call("/admin-api/scheduler")).status).toBe(403);
+    expect(
+      await env.DB.prepare("SELECT 1 FROM media_store WHERE id = 's3-default' AND is_default = 1").first(),
+    ).toBeTruthy();
+    expect(
+      await env.DB.prepare("SELECT 1 FROM workspace_oauth_apps WHERE workspace_id = 'default'").first(),
+    ).toBeTruthy();
+    expect(
+      (await call("/admin-api/settings/oauth-apps/google", { clientId: "b-client", clientSecret: "s" })).status,
+    ).toBe(200);
+    expect(
+      await env.DB.prepare("SELECT client_id FROM workspace_oauth_apps WHERE workspace_id = 'b'").first("client_id"),
+    ).toBe("b-client");
+    expect(
+      await env.DB.prepare("SELECT client_id FROM workspace_oauth_apps WHERE workspace_id = 'default'").first(
+        "client_id",
+      ),
+    ).toBe("a-client");
   });
 });

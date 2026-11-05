@@ -475,7 +475,7 @@ export const en = {
   "draft.uploadingShort": "Uploading…",
   "draft.upload": "Upload and create draft",
   "draft.uploadNote":
-    'The files go straight from this device to the media store ("Bongsu app uploads"); the texts can still be edited when scheduling.',
+    "The files go straight from this device to the media store ({folder}/_uploads); the texts can still be edited when scheduling.",
 
   // the Drafts page
   "drafts.refused": "Draft refused.",

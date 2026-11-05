@@ -18,17 +18,20 @@ import { tick } from "./tick";
 /** Every schedule, by its cron expression (UTC). */
 export const SCHEDULES = [CRON_INSTAGRAM, CRON_SHORTS, CRON_INBOX] as const;
 
+/** Whether this instance runs no schedules (Node's SCHEDULES=off); Cloudflare's cron Worker always runs them. */
+export const schedulesOff = (env: Pick<Env, "SCHEDULES">) => env.SCHEDULES === "off";
+
 export async function runSchedule(env: Env, fetcher: typeof fetch, cron: string, at: Date): Promise<void> {
   const deps = { fetch: fetcher, now: at };
   if (cron === CRON_INBOX) {
-    // The inbox in each media store (drafts only: nothing is published), moving posted media aside, the daily digest, the 24 h
+    // The inbox in each workspace's media folder, a few workspaces a run (drafts only: nothing is published), moving posted media aside, the daily digest, the 24 h
     // results and new comments; runs while paused too (none of it publishes).
     const nowS = Math.floor(at.getTime() / 1000),
       holder = crypto.randomUUID();
     if (!(await acquire(env.DB, "inbox", holder, nowS, 600))) return console.log("inbox: locked");
     try {
       console.log(`inbox: ${JSON.stringify(await scanInbox(env, deps))}`);
-      console.log(`cleanup: ${JSON.stringify(await cleanMedia(env, deps))}`); // posted media → UPLOADS/_posted/ (move only)
+      console.log(`cleanup: ${JSON.stringify(await cleanMedia(env, deps))}`); // posted media → <folder>/_posted/ (move only)
       console.log(`digest: ${await dailyDigest(env, deps)}`); // once a day, at the workspace's digest hour
       // Each in its own try: one failing (a Composio or YouTube hiccup) doesn't stop the others.
       for (const [name, run] of [

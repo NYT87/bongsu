@@ -1,13 +1,17 @@
 // Uploads from the app: a new draft made on the Drafts page, its media sent from the browser straight to the media
 // store the owner picks (createUpload: a Drive resumable session, an S3 presigned PUT), so big Reels never pass through
-// the Worker. Files land in the app's own folder in that store, APP_FOLDER.
+// the Worker. Files land in the workspace's own folder in that store, <media_folder>/_uploads (appUploads).
 
 import { instagramAccounts } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
+import { mediaPath } from "@bongsu/core/media/folders";
 import { type MediaStores, mediaStores } from "@bongsu/core/media/index";
+import { assertOwns, MediaError } from "@bongsu/core/media/owns";
 import { isMedia, isVideo } from "@bongsu/core/media/store";
+import { workspaceSettings } from "@bongsu/core/workspaces";
 
-export const APP_FOLDER = "Bongsu app uploads";
+/** Where the app's uploads land: the workspace's folder, `_uploads` (the inbox scan skips `_` folders). */
+export const appUploads = (folder: string) => mediaPath(folder, "_uploads");
 const NAME = /^[A-Za-z0-9_.-]{1,80}$/;
 
 export class UploadError extends Error {
@@ -33,6 +37,7 @@ export async function startUpload(
   env: Env,
   fetcher: typeof fetch,
   b: Record<string, unknown>,
+  workspaceId: string,
 ): Promise<{
   uploadUrl: string;
   method: string;
@@ -46,8 +51,9 @@ export async function startUpload(
     size = Number(b.size);
   if (!name || !isMedia({ mime })) throw new UploadError(400, "only images and videos");
   if (!Number.isFinite(size) || size <= 0 || size > 1024 ** 3) throw new UploadError(400, "size: up to 1 GB");
-  const store = uploadStore(await mediaStores(env, fetcher), b.store);
-  const t = await store.createUpload!(name, APP_FOLDER, mime, env.PUBLIC_URL.replace(/\/$/, ""));
+  const store = uploadStore(await mediaStores(env, fetcher, workspaceId), b.store);
+  const folder = appUploads((await workspaceSettings(env.DB, workspaceId)).mediaFolder);
+  const t = await store.createUpload!(name, folder, mime, env.PUBLIC_URL.replace(/\/$/, ""));
   return {
     uploadUrl: t.url,
     method: t.method,
@@ -73,8 +79,21 @@ export async function draftFromUploads(
     name = String(b.name ?? "").trim();
   if (!NAME.test(project) || !NAME.test(name))
     throw new UploadError(400, "project and name: letters, digits, _ . - only");
-  const store = uploadStore(await mediaStores(env, fetcher), b.store);
-  const folder = await store.resolve(APP_FOLDER);
+  const stores = await mediaStores(env, fetcher, workspaceId);
+  const store = uploadStore(stores, b.store);
+  const mediaFolder = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
+  // the files must be this workspace's, then specifically the app's uploads of it
+  try {
+    await assertOwns(
+      stores,
+      mediaFolder,
+      ids.map((id) => ({ store: store.id, id })),
+    );
+  } catch (e) {
+    if (e instanceof MediaError) throw new UploadError(e.status, e.message);
+    throw e;
+  }
+  const folder = await store.resolve(appUploads(mediaFolder));
   const files: { store: string; id: string; name: string; mime: string; checksum: string }[] = [];
   for (const id of ids) {
     const m = await store.stat(id);

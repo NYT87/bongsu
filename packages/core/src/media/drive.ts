@@ -24,8 +24,10 @@ interface DriveFile {
   trashed?: boolean;
 }
 
-/** Folder path → its folder, per Worker instance (see resolve). */
+/** "<store id>:<folder path>" → its folder, per Worker instance (see resolve). */
 const folderIds = new Map<string, { entry: MediaEntry; until: number }>();
+/** How far up a file's folders are followed. */
+const MAX_DEPTH = 20;
 const FOLDER_TTL_MS = 10 * 60_000;
 export const clearFolderCache = () => folderIds.clear();
 
@@ -46,12 +48,17 @@ export interface DriveStoreOptions {
   fetch: typeof fetch;
   /** Where the folders made for uploads are remembered (settings), so each is created once. */
   db?: Db;
+  /** The store's id ("drive" for the instance's, "drive-<workspace>" for a workspace's own): the folders remembered
+   *  here are per store, since two grants have different folders under the same path. */
+  id?: string;
 }
 
 export class DriveStore implements MediaStore {
-  readonly id = "drive";
+  readonly id: string;
 
-  constructor(private o: DriveStoreOptions) {}
+  constructor(private o: DriveStoreOptions) {
+    this.id = o.id ?? "drive";
+  }
 
   private async auth() {
     return { Authorization: `Bearer ${await refreshToken(this.o.oauth, this.o.fetch)}` };
@@ -99,7 +106,7 @@ export class DriveStore implements MediaStore {
     let start = 0,
       node: MediaEntry | null = null;
     for (let i = parts.length - 1; i > 0; i--) {
-      const hit = folderIds.get(parts.slice(0, i).join("/"));
+      const hit = folderIds.get(`${this.id}:${parts.slice(0, i).join("/")}`);
       if (hit && hit.until > Date.now()) {
         node = hit.entry;
         start = i;
@@ -113,7 +120,8 @@ export class DriveStore implements MediaStore {
   private async walk(parts: string[], start: number, from: MediaEntry | null): Promise<MediaEntry | null> {
     const esc = (s: string) => s.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     const remember = (i: number, e: MediaEntry) => {
-      if (e.folder) folderIds.set(parts.slice(0, i + 1).join("/"), { entry: e, until: Date.now() + FOLDER_TTL_MS });
+      if (e.folder)
+        folderIds.set(`${this.id}:${parts.slice(0, i + 1).join("/")}`, { entry: e, until: Date.now() + FOLDER_TTL_MS });
     };
     let node = from;
     if (start === 0) {
@@ -130,6 +138,34 @@ export class DriveStore implements MediaStore {
       remember(i, node);
     }
     return node;
+  }
+
+  /** What inside() looks up, asked once per store (built per request or cron run): a carousel's files share their
+   *  folders, so checking ten costs ten stats plus the workspace's folder and the folders between once, not a walk
+   *  per file. A failure isn't remembered: the next file asks again. A null (no such folder, no parent) is, for the
+   *  whole run: that fails closed (a file made in the folder meanwhile is refused until the next run), so it stays. */
+  private seen = new Map<string, Promise<unknown>>();
+  private once<T>(key: string, ask: () => Promise<T>): Promise<T> {
+    let p = this.seen.get(key) as Promise<T> | undefined;
+    if (!p) {
+      p = ask();
+      p.catch(() => this.seen.delete(key));
+      this.seen.set(key, p);
+    }
+    return p;
+  }
+
+  async inside(id: string, folderPath: string) {
+    const folder = await this.once(`path:${folderPath}`, () => this.resolve(folderPath));
+    if (!folder?.folder) return false;
+    // up the parents, a bounded number of steps; the file's own stat is always fresh
+    let at = (await this.stat(id))?.parent ?? null;
+    for (let i = 0; i < MAX_DEPTH && at !== null; i++) {
+      if (at === folder.id) return true;
+      const from = at;
+      at = await this.once(`parent:${from}`, async () => (await this.stat(from))?.parent ?? null);
+    }
+    return false;
   }
 
   async list(folderId: string) {
@@ -178,7 +214,7 @@ export class DriveStore implements MediaStore {
 
   /** A top folder of the owner's for uploads, created on first use and remembered in settings. */
   private async ownerFolder(name: string): Promise<string> {
-    const key = `drive_upload_folder:${name}`;
+    const key = `drive_upload_folder:${this.id}:${name}`;
     const hit = await this.o.db
       ?.prepare("SELECT value FROM settings WHERE key = ?1")
       .bind(key)
@@ -200,8 +236,14 @@ export class DriveStore implements MediaStore {
 
   /** A resumable upload session: the browser PUTs the bytes to the URL in chunks; the last answer names the file. */
   async createUpload(name: string, folderPath: string, mime: string, origin: string): Promise<UploadTarget> {
-    if (folderPath.includes("/")) throw new Error("drive uploads go to a top folder of the owner's");
-    const folder = await this.ownerFolder(folderPath);
+    const [top, ...rest] = folderPath.split("/");
+    // The top folder is the owner's (made at the root when missing). Its id is kept from there, not looked up again by
+    // name: Drive's search lags a create, so a first upload would find nothing. What's below it is made as needed.
+    let folder = (await this.resolve(top))?.id ?? (await this.ownerFolder(top));
+    for (const part of rest) {
+      const have = (await this.list(folder)).find((e) => e.folder && e.name === part);
+      folder = have?.id ?? (await this.mkdir(part, folder));
+    }
     const r = await this.o.fetch(`${UPLOAD_API}?uploadType=resumable&fields=id,name,mimeType,md5Checksum,size`, {
       method: "POST",
       // Origin: Google then answers the browser's PUTs to the session URL with CORS headers for the app.

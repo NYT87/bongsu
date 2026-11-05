@@ -24,7 +24,7 @@ as Workers assets.
 |---|---|
 | `*/5 * * * *` | Instagram: create jobs for due approved items, advance up to `JOBS_PER_TICK` jobs: 4 on Cloudflare, 20 on Node (`packages/core/src/tick.ts`) |
 | `2,32 * * * *` | YouTube Shorts comments |
-| `7,22,37,52 * * * *` | Drive inbox scan, moving posted media aside, daily digest, 24 h results, new comments |
+| `7,22,37,52 * * * *` | Inbox scan, per workspace media folder (`<folder>/inbox` in its stores), `INBOX_WORKSPACES_PER_RUN` workspaces at a time: 3 on Cloudflare, 20 on Node (`packages/core/src/inbox.ts`); moving posted media aside, daily digest, 24 h results, new comments |
 
 Each run takes a lock in the database, so two runs never overlap.
 

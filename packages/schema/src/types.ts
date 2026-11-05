@@ -33,6 +33,8 @@ export interface Index {
   name: string;
   columns: readonly string[];
   unique?: boolean;
+  /** On LOWER(column) for each column: a unique index then ignores case. SQLite and Postgres both index expressions. */
+  lower?: boolean;
 }
 
 export interface Table {

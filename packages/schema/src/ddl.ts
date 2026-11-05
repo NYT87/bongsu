@@ -1,6 +1,6 @@
 // What the dialects share: the order tables are created in (a table after the tables it references) and the shape of
 // a CREATE TABLE. Each dialect (sqlite.ts, postgres.ts) supplies its types, defaults and quoting.
-import type { Column, ColumnType, Table, Tables } from "./types";
+import type { Column, ColumnType, Index, Table, Tables } from "./types";
 
 export interface Dialect {
   name: string;
@@ -53,11 +53,14 @@ export function createTable(d: Dialect, name: string, t: Table): string[] {
   if (t.primaryKey) lines.push(`  PRIMARY KEY (${t.primaryKey.map(d.quote).join(", ")})`);
   for (const u of t.unique ?? []) lines.push(`  UNIQUE (${u.map(d.quote).join(", ")})`);
   const out = [`-- ${t.description}\nCREATE TABLE ${d.quote(name)} (\n${lines.join(",\n")}\n);`];
-  for (const ix of t.indexes ?? [])
-    out.push(
-      `CREATE ${ix.unique ? "UNIQUE " : ""}INDEX ${d.quote(ix.name)} ON ${d.quote(name)} (${ix.columns.map(d.quote).join(", ")});`,
-    );
+  for (const ix of t.indexes ?? []) out.push(createIndex(d, name, ix));
   return out;
+}
+
+/** A CREATE INDEX: on the columns, or on LOWER(column) for an index that ignores case. */
+export function createIndex(d: Dialect, table: string, ix: Index): string {
+  const cols = ix.columns.map((c) => (ix.lower ? `LOWER(${d.quote(c)})` : d.quote(c)));
+  return `CREATE ${ix.unique ? "UNIQUE " : ""}INDEX ${d.quote(ix.name)} ON ${d.quote(table)} (${cols.join(", ")});`;
 }
 
 /** The DDL for a fresh database with every table. */

@@ -9,7 +9,7 @@ import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS, NODE_JOBS_PER_TICK } from "@bo
 import { dbCases } from "@bongsu/core/db-conformance";
 import { mediaStoreCases } from "@bongsu/core/media/conformance";
 import { registerStore } from "@bongsu/core/media/index";
-import { runSchedule } from "@bongsu/core/schedules";
+import { runSchedule, schedulesOff } from "@bongsu/core/schedules";
 import { jobsPerTick } from "@bongsu/core/tick";
 import Database from "better-sqlite3";
 import { afterAll, describe, expect, it } from "vitest";
@@ -113,7 +113,7 @@ describe("the HTTP app and the schedules on Node", () => {
   // the server's disk, set up as the store (the dashboard's Media page does this)
   db.sqlite
     .prepare(
-      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, status, updated_at) VALUES ('local', 'local', 1, '{}', 'ok', 0)",
     )
     .run();
   const offline: typeof fetch = async (input) => {
@@ -138,6 +138,11 @@ describe("the HTTP app and the schedules on Node", () => {
   it("advances more jobs a tick than Cloudflare by default, and takes JOBS_PER_TICK", () => {
     expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(NODE_JOBS_PER_TICK);
     expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test", JOBS_PER_TICK: "8" }, db))).toBe(8);
+  });
+
+  it("turns the schedules off with SCHEDULES=off, which the dashboard's Scheduler shows", () => {
+    expect(schedulesOff(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(false);
+    expect(schedulesOff(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db))).toBe(true);
   });
 
   it("answers /health: migrated, local store, nothing missing", async () => {

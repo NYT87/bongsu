@@ -19,9 +19,9 @@ limit only delays the post: the next run carries on without publishing twice.
 
 ## Drafts and the Drive inbox
 
-A file dropped in `UPLOADS/inbox/<project>/` on Drive becomes a draft, with the text of an optional `<name>.txt` as its
+A file dropped in the workspace's folder (shown in its Settings → Media), under `inbox/<project>/`, on Drive becomes a draft, with the text of an optional `<name>.txt` as its
 caption. Agents can propose drafts too. Nothing in Drafts is published until you schedule it and approve it. A day
-after a post goes out, its media moves to `UPLOADS/_posted/`. Bongsu moves media and never deletes it.
+after a post goes out, its media moves to the folder's `_posted/`. Bongsu moves media and never deletes it.
 
 ## Notifications
 

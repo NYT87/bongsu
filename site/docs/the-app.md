@@ -80,7 +80,7 @@ pick. **Schedule** opens the item's page, where you approve it. Nothing in Draft
 
 **New draft** adds one from the phone: choose files, a project, a name and the texts, then **Upload and create
 draft**. The files go from the phone straight to Drive, so the button only appears when uploads are set up (see
-[Google Drive](drive.md)).
+[Google Drive](drive.md)). They land in the workspace's media folder, under `_uploads/`, and the page names the folder to drop files in for the inbox.
 
 ![Drafts](assets/app/drafts-light.png)
 

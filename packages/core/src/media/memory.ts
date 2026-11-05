@@ -7,15 +7,19 @@ interface Node {
   bytes: Uint8Array<ArrayBuffer>;
 }
 
+/** How far up a file's folders are followed (the same bound as Drive's). */
+const MAX_DEPTH = 20;
+
 const sha256 = async (b: Uint8Array<ArrayBuffer>) =>
   [...new Uint8Array(await crypto.subtle.digest("SHA-256", b))].map((x) => x.toString(16).padStart(2, "0")).join("");
 
 export class MemoryStore implements MediaStore {
-  readonly id = "memory";
   private nodes = new Map<string, Node>();
   private n = 0;
   /** Refuse every write, as a store without edit rights would. */
   refuseWrites = false;
+
+  constructor(readonly id = "memory") {}
 
   /** Adds a file at a path (folders created as needed); returns its id. */
   async put(path: string, bytes: string | Uint8Array<ArrayBuffer>, mime: string, modifiedAt = "2026-10-01T00:00:00Z") {
@@ -92,6 +96,17 @@ export class MemoryStore implements MediaStore {
       parent = node.entry.id;
     }
     return node ? this.view(node) : null;
+  }
+
+  async inside(id: string, folderPath: string) {
+    const folder = await this.resolve(folderPath);
+    if (!folder?.folder) return false;
+    let at = this.nodes.get(id)?.parent ?? null;
+    for (let i = 0; i < MAX_DEPTH && at !== null; i++) {
+      if (at === folder.id) return true;
+      at = this.nodes.get(at)?.parent ?? null;
+    }
+    return false;
   }
 
   async list(folderId: string) {

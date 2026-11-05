@@ -31,6 +31,8 @@ export class ConnectError extends Error {
      * It only tells the app to suggest the phone's own browser.
      */
     readonly hint?: "browser",
+    /** The workspace the flow was started for, once the state says so (null: the instance's; undefined: not known). */
+    public workspaceId?: string | null,
   ) {
     super(message);
   }
@@ -72,11 +74,10 @@ export interface StartedFlow {
 
 // ---- OAuth apps
 
-/** Each OAuth app the registered providers use, whether it's set, and the redirect URLs to register in it. */
-export async function oauthApps(db: Db, publicUrl: string) {
-  const rows = await db
-    .prepare("SELECT id, client_id, updated_at FROM oauth_apps")
-    .all<{ id: string; client_id: string; updated_at: number }>();
+type AppScope = "workspace" | "instance";
+
+/** The providers each OAuth app serves, with the redirect URLs to register in it. */
+function appProviders(publicUrl: string) {
   const apps = new Map<string, { providers: { provider: string; label: string; redirectUri: string }[] }>();
   for (const s of connectSpecs()) {
     if (!s.app) continue;
@@ -90,10 +91,51 @@ export async function oauthApps(db: Db, publicUrl: string) {
     label: "Google Drive (media store)",
     redirectUri: driveRedirectUri(publicUrl),
   });
-  return [...apps].map(([id, a]) => {
+  return apps;
+}
+
+/** Each OAuth app the registered providers use, whether it's set, and the redirect URLs to register in it. */
+export async function oauthApps(db: Db, publicUrl: string) {
+  const rows = await db
+    .prepare("SELECT id, client_id, updated_at FROM oauth_apps")
+    .all<{ id: string; client_id: string; updated_at: number }>();
+  return [...appProviders(publicUrl)].map(([id, a]) => {
     const row = rows.results.find((r) => r.id === id);
     return { id, ...a, clientId: row?.client_id ?? null, updatedAt: row?.updated_at ?? null };
   });
+}
+
+/** A workspace's own OAuth apps, in the shape of `oauthApps`, plus whether the instance has one too (the fallback). */
+export async function workspaceOAuthApps(db: Db, workspaceId: string, publicUrl: string) {
+  const own = await db
+    .prepare("SELECT id, client_id, updated_at FROM workspace_oauth_apps WHERE workspace_id = ?1")
+    .bind(workspaceId)
+    .all<{ id: string; client_id: string; updated_at: number }>();
+  const instance = await db.prepare("SELECT id FROM oauth_apps").all<{ id: string }>();
+  return [...appProviders(publicUrl)].map(([id, a]) => {
+    const row = own.results.find((r) => r.id === id);
+    return {
+      id,
+      ...a,
+      clientId: row?.client_id ?? null,
+      updatedAt: row?.updated_at ?? null,
+      instance: instance.results.some((r) => r.id === id),
+    };
+  });
+}
+
+/** The ids of the OAuth apps a workspace's flows can use: the instance's and its own. */
+export async function readyAppIds(db: Db, workspaceId: string): Promise<Set<string>> {
+  const rows = await db
+    .prepare("SELECT id FROM oauth_apps UNION SELECT id FROM workspace_oauth_apps WHERE workspace_id = ?1")
+    .bind(workspaceId)
+    .all<{ id: string }>();
+  return new Set(rows.results.map((r) => r.id));
+}
+
+function checkApp(id: string, clientId: string, clientSecret: string) {
+  if (!connectSpecs().some((s) => s.app === id)) throw new ConnectError(`no provider uses an app called ${id}`);
+  if (!clientId.trim() || !clientSecret.trim()) throw new ConnectError("paste both the client id and the secret");
 }
 
 export async function saveOAuthApp(
@@ -104,8 +146,7 @@ export async function saveOAuthApp(
   userId: string,
   nowS: number,
 ) {
-  if (!connectSpecs().some((s) => s.app === id)) throw new ConnectError(`no provider uses an app called ${id}`);
-  if (!clientId.trim() || !clientSecret.trim()) throw new ConnectError("paste both the client id and the secret");
+  checkApp(id, clientId, clientSecret);
   await env.DB.prepare(
     `INSERT INTO oauth_apps (id, client_id, client_secret, updated_at, updated_by) VALUES (?1, ?2, ?3, ?4, ?5)
      ON CONFLICT (id) DO UPDATE SET client_id = excluded.client_id, client_secret = excluded.client_secret,
@@ -117,26 +158,75 @@ export async function saveOAuthApp(
 
 export const removeOAuthApp = (db: Db, id: string) => db.prepare("DELETE FROM oauth_apps WHERE id = ?1").bind(id).run();
 
-/** The owner's OAuth app (oauth_apps), decrypted, with the redirect URL a flow sends Google or Meta back to. */
-export async function oauthApp(env: Env, appId: string, redirect: string) {
-  const row = await env.DB.prepare("SELECT client_id, client_secret FROM oauth_apps WHERE id = ?1")
-    .bind(appId)
-    .first<{ client_id: string; client_secret: string }>();
-  if (!row)
+/** Sets a workspace's own OAuth app: its flows use it instead of the instance's. */
+export async function saveWorkspaceOAuthApp(
+  env: Env,
+  workspaceId: string,
+  id: string,
+  clientId: string,
+  clientSecret: string,
+  userId: string,
+  nowS: number,
+) {
+  checkApp(id, clientId, clientSecret);
+  await env.DB.prepare(
+    `INSERT INTO workspace_oauth_apps (workspace_id, id, client_id, client_secret, updated_at, updated_by)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+     ON CONFLICT (workspace_id, id) DO UPDATE SET client_id = excluded.client_id,
+       client_secret = excluded.client_secret, updated_at = excluded.updated_at, updated_by = excluded.updated_by`,
+  )
+    .bind(workspaceId, id, clientId.trim(), await encryptSecret(env.ENCRYPTION_KEY, clientSecret.trim()), nowS, userId)
+    .run();
+}
+
+export const removeWorkspaceOAuthApp = (db: Db, workspaceId: string, id: string) =>
+  db.prepare("DELETE FROM workspace_oauth_apps WHERE workspace_id = ?1 AND id = ?2").bind(workspaceId, id).run();
+
+/** An OAuth app, decrypted, with the redirect URL a flow sends Google or Meta back to and whose it is. With no
+ *  `scope` the workspace's own comes first, else the instance's; a finishing flow names the `scope` it started with and
+ *  gets only that one (so a change in between fails it instead of exchanging with another app). `workspaceId: null`
+ *  is the instance (as Drive's instance store). */
+export async function oauthApp(
+  env: Env,
+  appId: string,
+  redirect: string,
+  o: { workspaceId: string | null; scope?: AppScope },
+): Promise<{ clientId: string; clientSecret: string; redirectUri: string; scope: AppScope }> {
+  type Row = { client_id: string; client_secret: string };
+  let row: Row | null = null;
+  let scope: AppScope = "instance";
+  if (o.workspaceId && o.scope !== "instance") {
+    row = await env.DB.prepare(
+      "SELECT client_id, client_secret FROM workspace_oauth_apps WHERE workspace_id = ?1 AND id = ?2",
+    )
+      .bind(o.workspaceId, appId)
+      .first<Row>();
+    scope = "workspace";
+  }
+  if (!row && o.scope !== "workspace") {
+    row = await env.DB.prepare("SELECT client_id, client_secret FROM oauth_apps WHERE id = ?1")
+      .bind(appId)
+      .first<Row>();
+    scope = "instance";
+  }
+  if (!row) {
+    if (o.scope) throw new ConnectError("the OAuth app changed: start again");
     throw new ConnectError(
       `add your ${appId === "meta" ? "Meta" : appId === "google" ? "Google" : appId} app first (OAuth apps)`,
     );
+  }
   return {
     clientId: row.client_id,
     clientSecret: await decryptSecret(env.ENCRYPTION_KEY, row.client_secret),
     redirectUri: redirect,
+    scope,
   };
 }
 
-async function appFor(env: Env, provider: string) {
+async function appFor(env: Env, provider: string, o: { workspaceId: string | null; scope?: AppScope }) {
   const spec = providerRegistration(provider)?.connect;
   if (!spec?.app) throw new ConnectError(`${provider} doesn't connect through an OAuth app`);
-  return oauthApp(env, spec.app, redirectUri(env.PUBLIC_URL, provider));
+  return oauthApp(env, spec.app, redirectUri(env.PUBLIC_URL, provider), o);
 }
 
 // ---- the flow
@@ -151,7 +241,7 @@ export async function startConnect(
   const reg = providerRegistration(provider);
   const spec = reg?.connect;
   if (!reg?.exchange || !spec?.authorizeUrl) throw new ConnectError(`${provider} has no authorization flow`);
-  const app = await appFor(env, provider);
+  const app = await appFor(env, provider, { workspaceId: o.workspaceId });
   if (o.reconnect) {
     const c = await env.DB.prepare("SELECT provider FROM connections WHERE id = ?1 AND workspace_id = ?2")
       .bind(o.reconnect, o.workspaceId)
@@ -170,11 +260,11 @@ export async function startConnect(
 /** Starts any OAuth flow: keeps its state (hashed), its PKCE verifier and the hash of the starting browser's cookie,
  *  single use, for STATE_S; returns the URL to send the browser to and the cookie's value and path. `flow` names what
  *  the callback finishes (a provider, or "media:drive"); `workspaceId` is where it connects into (null: the instance,
- *  as Drive). */
+ *  as Drive); `app.scope` is whose OAuth app it was started with, kept for the callback. */
 export async function authorizeUrl(
   env: Env,
   spec: Pick<ConnectSpec, "authorizeUrl" | "scopes" | "scopeSeparator" | "pkce" | "authorizeParams">,
-  app: { clientId: string; redirectUri: string },
+  app: { clientId: string; redirectUri: string; scope?: AppScope },
   o: { flow: string; userId: string; workspaceId: string | null; connectionId: string | null; nowS: number },
 ): Promise<StartedFlow> {
   await env.DB.prepare("DELETE FROM oauth_states WHERE expires_at < ?1").bind(o.nowS).run(); // flows never finished
@@ -185,8 +275,8 @@ export async function authorizeUrl(
   const browser = random();
   await env.DB.prepare(
     `INSERT INTO oauth_states (state_hash, provider, user_id, workspace_id, verifier, connection_id, created_at,
-       expires_at, browser_hash)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)`,
+       expires_at, browser_hash, app_scope)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
   )
     .bind(
       await sha256Hex(state),
@@ -198,6 +288,7 @@ export async function authorizeUrl(
       o.nowS,
       o.nowS + STATE_S,
       await sha256Hex(browser),
+      app.scope ?? null,
     )
     .run();
   const url = new URL(spec.authorizeUrl ?? "");
@@ -251,7 +342,7 @@ export async function takeState(env: Env, flow: string, q: CallbackQuery, browse
     throw new ConnectError(INVALID, undefined, "browser");
   const st = await env.DB.prepare(
     `UPDATE oauth_states SET used_at = ?1 WHERE state_hash = ?2 AND used_at IS NULL
-     RETURNING provider, user_id, workspace_id, verifier, connection_id, expires_at`,
+     RETURNING provider, user_id, workspace_id, verifier, connection_id, expires_at, app_scope`,
   )
     .bind(nowS, stateHash)
     .first<{
@@ -261,24 +352,28 @@ export async function takeState(env: Env, flow: string, q: CallbackQuery, browse
       verifier: string | null;
       connection_id: string | null;
       expires_at: number;
+      app_scope: AppScope | null;
     }>();
   if (!st || (st.provider !== flow && st.provider !== `${flow}${APP_FLOW}`)) throw new ConnectError(INVALID);
   const back: ConnectBack = st.provider === flow ? "dashboard" : "app";
-  if (st.expires_at < nowS) throw new ConnectError("that took too long: start again", back);
+  if (st.expires_at < nowS) throw new ConnectError("that took too long: start again", back, undefined, st.workspace_id);
   if (q.error)
     throw new ConnectError(
       q.error === "access_denied"
         ? "you cancelled, or didn't allow access"
         : `${flow}: ${q.errorDescription ?? q.error}`,
       back,
+      undefined,
+      st.workspace_id,
     );
-  if (!q.code) throw new ConnectError("the provider sent no code", back);
+  if (!q.code) throw new ConnectError("the provider sent no code", back, undefined, st.workspace_id);
   return {
     userId: st.user_id,
     workspaceId: st.workspace_id,
     back,
     verifier: st.verifier,
     connectionId: st.connection_id,
+    appScope: st.app_scope,
     code: q.code,
   };
 }
@@ -306,7 +401,13 @@ export async function finishConnect(
       throw new ConnectError("you can't connect accounts in that workspace any more (or it was archived)");
     const workspaceId = where.workspaceId;
     const reg = providerRegistration(provider)!;
-    const grant = await reg.exchange!(fetcher, await appFor(env, provider), st.code, st.verifier, nowS);
+    const grant = await reg.exchange!(
+      fetcher,
+      await appFor(env, provider, { workspaceId: st.workspaceId, scope: st.appScope ?? "instance" }),
+      st.code,
+      st.verifier,
+      nowS,
+    );
     return {
       userId: st.userId,
       workspaceId,

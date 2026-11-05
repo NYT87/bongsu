@@ -15,14 +15,16 @@ export class ApiError extends Error {
 }
 
 export const APP_ONLY = "bongsu:app-only";
+/** The dashboard moved to another path (App's `go`): pages that read more of the path than the section follow it. */
+export const NAVIGATED = "bongsu:navigated";
 
 /** Whether this person manages the workspace (its admin, or an instance admin): an editor doesn't see its
  *  connections, agent keys or settings. */
 export const manages = (state: State) => state.instanceAdmin || state.role === "admin";
 
-export async function api<T = Record<string, unknown>>(path: string, body?: unknown): Promise<T> {
+export async function api<T = Record<string, unknown>>(path: string, body?: unknown, method?: "PUT"): Promise<T> {
   const r = await fetch(`/admin-api/${path}`, {
-    method: body === undefined ? "GET" : "POST",
+    method: method ?? (body === undefined ? "GET" : "POST"),
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
     credentials: "same-origin",

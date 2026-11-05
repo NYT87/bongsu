@@ -42,7 +42,8 @@ import {
 import type { Env } from "@bongsu/core/env";
 import { altLines, captionText, comment2Text, commentText } from "@bongsu/core/formats/texts";
 import { shiftDate, utcIso, zoneDate, zoneStamp, zoneToUnix } from "@bongsu/core/formats/time";
-import { defaultKind } from "@bongsu/core/media/index";
+import { mediaStores } from "@bongsu/core/media/index";
+import { assertOwns, MediaError } from "@bongsu/core/media/owns";
 import { dailyGrowth, nearest24h, type Point, type Sample, series } from "@bongsu/core/metrics";
 import { platform, requirePlatform } from "@bongsu/core/platforms/index";
 import {
@@ -56,7 +57,7 @@ import {
 import { youtubeAnalytics } from "@bongsu/core/providers/youtube";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { jsonList } from "@bongsu/core/sql";
-import { callerZone } from "@bongsu/core/workspaces";
+import { callerZone, workspaceSettings } from "@bongsu/core/workspaces";
 import type { Caller } from "./auth";
 
 export class ApiError extends Error {
@@ -339,6 +340,7 @@ export async function exportPlan(c: OpCtx, opts: { texts?: boolean } = {}) {
     ).results.map((p) => [p.item_key, p]),
   );
   const platformOf = new Map((await listAccounts(db, { workspaceId, all: true })).map((a) => [a.id, a.platform]));
+  const folder = (await workspaceSettings(db, workspaceId)).mediaFolder;
   const rows: ExportRow[] = [];
   for (const i of items) {
     const a = approvals.get(i.item_key);
@@ -360,7 +362,7 @@ export async function exportPlan(c: OpCtx, opts: { texts?: boolean } = {}) {
       note: i.note,
     };
     if (opts.texts) {
-      const paths = contentPaths(i);
+      const paths = contentPaths(i, folder);
       const caption = captionText((await readText(db, paths.caption)) ?? "");
       row.caption = caption;
       row.comment = commentText(caption, await readText(db, paths.comment));
@@ -379,7 +381,7 @@ export async function item(c: OpCtx, key: string) {
     throw new ApiError(400, 'key must be "reel:<project>/<base>" or "post:<project>/<post dir>"');
   const i = await getItem(c.env.DB, key, c.caller.workspaceId);
   if (!i) throw new ApiError(404, `${key} isn't planned`);
-  const paths = contentPaths(i);
+  const paths = contentPaths(i, (await workspaceSettings(c.env.DB, c.caller.workspaceId)).mediaFolder);
   const caption = captionText((await readText(c.env.DB, paths.caption)) ?? "");
   const a = (await latestApprovals(c.env.DB, [key])).get(key);
   const due = i.due_at;
@@ -650,11 +652,19 @@ export async function createDraft(c: OpCtx, body: Record<string, unknown>) {
   ]) {
     if (body[k] !== undefined) payload[k] = String(body[k]).slice(0, 5000);
   }
-  // file ids in the instance's default media store, in slide order
+  // file ids in the workspace's default media store, in slide order; each must be in the workspace's media
   if (Array.isArray(body.media)) {
-    const store = await defaultKind(c.env.DB);
+    const stores = await mediaStores(c.env, c.fetch, c.caller.workspaceId);
+    const store = stores.default;
     if (!store) throw new ApiError(400, "no media store is set up: add one in the dashboard (Media)");
-    payload.media = body.media.slice(0, 10).map((m) => ({ store, id: String(m).slice(0, 200) }));
+    const refs = body.media.slice(0, 10).map((m) => ({ store: store.id, id: String(m).slice(0, 200) }));
+    try {
+      await assertOwns(stores, (await workspaceSettings(c.env.DB, c.caller.workspaceId)).mediaFolder, refs);
+    } catch (e) {
+      if (e instanceof MediaError) throw new ApiError(e.status, e.message);
+      throw e;
+    }
+    payload.media = refs;
   }
   if (!payload.caption && !payload.comment && !payload.note)
     throw new ApiError(400, "a draft needs at least a caption, a comment or a note");

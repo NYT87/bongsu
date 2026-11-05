@@ -1020,3 +1020,28 @@ button.link.inline {
     height: 22px;
   }
 }
+
+/* a page's parts (Settings: General, Media, OAuth apps) */
+.subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+.subnav a {
+  padding: 8px 12px;
+  margin-bottom: -1px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 15px;
+}
+.subnav a:hover {
+  color: var(--fg);
+}
+.subnav a[aria-current="page"] {
+  color: var(--accent-ink);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}

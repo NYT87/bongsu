@@ -71,6 +71,17 @@ const b64url = {
 
 /** "a//b/" → "a/b": a logical path without empty segments. */
 const clean = (path: string) => path.split("/").filter(Boolean).join("/");
+/** A path a caller gives (resolve, ensureFolder, move, createUpload): `clean` and then refused, with null, when a
+ *  segment is `.` or `..`, which the URL would normalise to a key outside the folder the path names. */
+const strict = (path: string): string | null => {
+  const rel = clean(path);
+  return rel.split("/").some((x) => x === "." || x === "..") ? null : rel;
+};
+const mustBeInside = (path: string): string => {
+  const rel = strict(path);
+  if (rel === null) throw new Error(`s3: not a path inside the bucket: ${path}`);
+  return rel;
+};
 /** RFC 3986 for one path segment (S3 signs the encoded path). */
 const seg = (s: string) =>
   encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
@@ -104,8 +115,18 @@ interface Listed {
   folders: string[];
 }
 
+/** The key an id names, or null when it isn't one of ours. An id is a caller-chosen base64url key, and a `.` or `..`
+ *  segment (or an empty one) would be normalised away by the URL, reaching a key outside the folder it says it is in:
+ *  such ids count as missing everywhere. A folder's key ends in a slash. */
+function keyOf(id: string): string | null {
+  const rel = b64url.decode(id);
+  if (!rel) return rel;
+  const segs = rel.split("/");
+  if (rel.endsWith("/")) segs.pop();
+  return segs.some((x) => x === "" || x === "." || x === "..") ? null : rel;
+}
+
 export class S3Store implements MediaStore {
-  readonly id = "s3";
   private readonly aws: AwsClient;
   private readonly prefix: string;
 
@@ -113,6 +134,7 @@ export class S3Store implements MediaStore {
     private readonly s: S3Settings,
     credentials: S3Credentials,
     private readonly fetcher: typeof fetch,
+    readonly id = "s3",
   ) {
     this.aws = new AwsClient({
       accessKeyId: credentials.accessKeyId,
@@ -139,8 +161,12 @@ export class S3Store implements MediaStore {
   }
 
   private async send(url: string, init: RequestInit = {}) {
-    // aws4fetch signs; the request goes out through the instance's fetch (the tests' fake world)
-    return this.fetcher(await this.aws.sign(url, init));
+    // aws4fetch signs; the request goes out through the instance's fetch (the tests' fake world). Redirects aren't
+    // followed: a signature is for one host, and a workspace's endpoint could point the server at a private address.
+    const r = await this.fetcher(await this.aws.sign(url, { ...init, redirect: "manual" }));
+    if (String(r.type) === "opaqueredirect" || (r.status >= 300 && r.status < 400))
+      throw new Error(`s3: the endpoint answered with a redirect (${r.status}), not followed; check the endpoint`);
+    return r;
   }
 
   private refused(r: Response, what: string): never {
@@ -227,13 +253,13 @@ export class S3Store implements MediaStore {
   // ---------------------------------------------------------------- the interface
 
   async stat(id: string) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     if (!rel) return null;
     return rel.endsWith("/") ? this.folder(rel) : this.head(rel);
   }
 
   async stream(id: string, range?: string | null) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     if (!rel || rel.endsWith("/")) return new Response("not found", { status: 404 });
     const r = await this.send(this.url(rel), { headers: range ? { Range: range } : {} });
     if (r.status === 404) return new Response("not found", { status: 404 });
@@ -247,13 +273,20 @@ export class S3Store implements MediaStore {
   }
 
   async resolve(path: string) {
-    const rel = clean(path);
+    const rel = strict(path);
     if (!rel) return null;
     return (await this.head(rel)) ?? (await this.folder(`${rel}/`));
   }
 
+  async inside(id: string, folderPath: string) {
+    const rel = keyOf(id);
+    const folder = strict(folderPath);
+    // the key says where it is: the trailing slash keeps "inbox/tr" from matching "inbox/trip"
+    return !!rel && !!folder && rel.startsWith(`${folder}/`) && rel.length > folder.length + 1;
+  }
+
   async list(folderId: string) {
-    const rel = b64url.decode(folderId);
+    const rel = keyOf(folderId);
     if (rel === null || (rel && !rel.endsWith("/"))) return [];
     const l = await this.listing(rel, { delimiter: true, all: true });
     return [
@@ -263,16 +296,16 @@ export class S3Store implements MediaStore {
   }
 
   async ensureFolder(path: string) {
-    const rel = `${clean(path)}/`;
+    const rel = `${mustBeInside(path)}/`;
     const r = await this.send(this.url(rel), { method: "PUT", body: "" });
     if (!r.ok) this.refused(r, `creating ${rel}`);
     return b64url.encode(rel);
   }
 
   async move(id: string, toFolderPath: string) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     if (!rel) throw new Error("s3 move: not an id of this store");
-    const to = `${clean(toFolderPath)}/`;
+    const to = `${mustBeInside(toFolderPath)}/`;
     await this.ensureFolder(to);
     const isFolder = rel.endsWith("/");
     const target = `${to}${baseName(rel)}${isFolder ? "/" : ""}`;
@@ -297,7 +330,7 @@ export class S3Store implements MediaStore {
   }
 
   async publicUrl(id: string, ttlS: number) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     if (!rel) throw new Error("s3: not an id of this store");
     const ttl = Math.max(1, Math.min(Math.floor(ttlS), MAX_TTL_S));
     const req = await this.aws.sign(this.url(rel, { "X-Amz-Expires": String(ttl) }), {
@@ -313,7 +346,7 @@ export class S3Store implements MediaStore {
     const dot = safe.lastIndexOf(".");
     const suffix = crypto.randomUUID().slice(0, 8);
     const file = dot > 0 ? `${safe.slice(0, dot)}-${suffix}${safe.slice(dot)}` : `${safe}-${suffix}`;
-    const rel = `${clean(folderPath)}/${file}`;
+    const rel = `${mustBeInside(folderPath)}/${file}`;
     const req = await this.aws.sign(this.url(rel, { "X-Amz-Expires": String(UPLOAD_TTL_S) }), {
       method: "PUT",
       headers: { "Content-Type": mime },

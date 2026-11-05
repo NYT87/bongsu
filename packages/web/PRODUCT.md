@@ -49,7 +49,7 @@ and it covers both YouTube (Shorts comments) and Instagram in one queue.
 - **Accounts:** a few Instagram accounts (Reels, posts, stories) and YouTube channels (Shorts comments, and moving a scheduled video's release date), configured
   per instance.
 - **Inputs:** plan items in D1 (added through the `bongsu` MCP tools or `/v1`, or in the app), the Drive inbox
-  (`UPLOADS/inbox/<project>/`, becomes a draft within ~25 min), and **New draft** uploads from the device.
+  (the workspace's folder, shown in Settings → Media: `inbox/<project>/`, becomes a draft within ~25 min), and **New draft** uploads from the device.
 - **Rituals:** the daily digest (from the workspace's digest hour), push and ntfy notifications with action buttons, approving from the
   notification or the item page, recording manual posts so they are never posted twice.
 - **Languages in the content:** English, Spanish and Korean captions and comments. The interface is English; its text lives in `src/i18n.ts` (a catalogue per locale, the workspace's locale from `/app-api/me`).
@@ -67,7 +67,7 @@ and it covers both YouTube (Shorts comments) and Instagram in one queue.
 - Publishing is immediate on Instagram's side and can't be undone through the API, so approval and the preview of
   exactly what will go out (media, caption, alt text, comment, account, time) matter more than speed.
 - Cloudflare Workers + D1 on the free plan; media reaches Instagram through signed links to Drive. Posted media moves to
-  `UPLOADS/_posted/` a day later (move only, never deleted).
+  the folder's `_posted/` a day later (move only, never deleted).
 - Stack: React 19 + Vite + TypeScript (`packages/web`), served by the Worker (`apps/cloudflare`) or the Node app. Light and dark themes
   follow the device (`prefers-color-scheme`).
 

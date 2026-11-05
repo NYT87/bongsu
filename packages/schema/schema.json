@@ -727,7 +727,7 @@
       }
     },
     "media_cleanup": {
-      "description": "Media moved aside after publishing (to UPLOADS/_posted/), or refused by the store.",
+      "description": "Media moved aside after publishing (to the workspace folder's `_posted/`), or refused by the store.",
       "columns": {
         "store": {
           "type": "text",
@@ -858,6 +858,14 @@
         "browser_hash": {
           "type": "text",
           "description": "sha256 of the cookie set in the browser that started the flow"
+        },
+        "app_scope": {
+          "type": "text",
+          "values": [
+            "workspace",
+            "instance"
+          ],
+          "description": "whose OAuth app the flow used; NULL: the instance's"
         }
       }
     },
@@ -1505,8 +1513,22 @@
         "paused": {
           "type": "json",
           "description": "{reason, by, at} while the workspace's publishing is paused; NULL: running"
+        },
+        "media_folder": {
+          "type": "text",
+          "description": "the workspace's top folder in the media store; unique, ignoring case"
         }
-      }
+      },
+      "indexes": [
+        {
+          "name": "workspace_settings_media_folder",
+          "columns": [
+            "media_folder"
+          ],
+          "unique": true,
+          "lower": true
+        }
+      ]
     },
     "workspaces": {
       "description": "Separate sets of accounts, each with its own people.",
@@ -1654,17 +1676,27 @@
       ]
     },
     "media_store": {
-      "description": "The instance's media stores, one per kind: settings, encrypted credentials, last check, the default.",
+      "description": "Media stores: the instance's (one per kind) and each workspace's own, settings, encrypted credentials, last check, the default.",
       "columns": {
-        "kind": {
+        "id": {
           "type": "id",
           "primaryKey": true,
+          "description": "drive, s3, local (the instance's); drive-<workspace>, s3-<workspace>"
+        },
+        "kind": {
+          "type": "id",
+          "primaryKey": false,
           "values": [
             "drive",
             "s3",
             "local"
           ],
-          "description": "MediaRef.store"
+          "description": "MediaRef.store's kind",
+          "notNull": true
+        },
+        "workspace_id": {
+          "type": "text",
+          "description": "the workspace it belongs to; NULL: the instance's"
         },
         "is_default": {
           "type": "bool",
@@ -1703,10 +1735,6 @@
         },
         "updated_by": {
           "type": "text"
-        },
-        "inbox_workspace": {
-          "type": "text",
-          "description": "the workspace the inbox feeds for a project no plan has; NULL: none"
         }
       }
     },
@@ -1804,6 +1832,40 @@
         "workspace_id",
         "user_id",
         "grp"
+      ]
+    },
+    "workspace_oauth_apps": {
+      "description": "A workspace's own OAuth apps (Google, Meta), used instead of the instance's for its connections.",
+      "columns": {
+        "workspace_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "id": {
+          "type": "text",
+          "notNull": true,
+          "description": "the provider's app id, as oauth_apps.id"
+        },
+        "client_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "client_secret": {
+          "type": "text",
+          "notNull": true,
+          "description": "encrypted (core/crypto.ts)"
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        },
+        "updated_by": {
+          "type": "text"
+        }
+      },
+      "primaryKey": [
+        "workspace_id",
+        "id"
       ]
     }
   }

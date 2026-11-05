@@ -33,6 +33,12 @@ export class World {
   ytReplies: { parent: string; text: string }[] = [];
   /** Drive list queries made (findPath walks one per path level). */
   driveQueries = 0;
+  /** Drive stats (a file's metadata by id) made. */
+  driveStats = 0;
+  /** Drive's search lags a create: while true, a folder made now isn't found by a search for its name (listing a
+   *  folder's contents still sees it). */
+  driveSearchLag = false;
+  private driveUnsearchable = new Set<string>();
   /** Drive answers every write with 403 (a service account without edit rights). */
   driveRefuses = false;
   drive = new Map<
@@ -218,6 +224,7 @@ export class World {
       const b = (await req.json()) as { name: string; mimeType: string; parents?: string[] };
       const id = `id_new_${b.name.replace(/[^A-Za-z0-9]/g, "")}`;
       this.drive.set(id, { md5: "", mimeType: b.mimeType, name: b.name, parent: b.parents?.[0] });
+      if (this.driveSearchLag) this.driveUnsearchable.add(id);
       return json({ id });
     }
     if (
@@ -238,7 +245,12 @@ export class World {
       const name = /name='([^']+)'/.exec(q)?.[1];
       const parent = /'([^']+)' in parents/.exec(q)?.[1];
       const files = [...this.drive.entries()]
-        .filter(([, f]) => !f.trashed && (parent ? f.parent === parent : !f.parent) && (!name || f.name === name))
+        .filter(
+          ([id, f]) =>
+            !f.trashed &&
+            (parent ? f.parent === parent : !f.parent) &&
+            (!name || (f.name === name && !this.driveUnsearchable.has(id))),
+        )
         .map(([id, f]) => ({
           id,
           name: f.name,
@@ -268,6 +280,7 @@ export class World {
           },
         });
       }
+      this.driveStats++;
       return json({
         id,
         name: f.name,
@@ -551,7 +564,7 @@ export const TEST_S3_SETTINGS = {
 export async function seedS3Store(o: { isDefault?: boolean } = {}, db: Env["DB"] = env.DB) {
   await db
     .prepare(
-      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', ?1, ?2, ?3, 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, credentials, status, updated_at) VALUES ('s3', 's3', ?1, ?2, ?3, 'ok', 0)",
     )
     .bind(
       o.isDefault ? 1 : 0,
@@ -567,7 +580,7 @@ export async function seedMediaStore(db: Env["DB"] = env.DB, key = TEST_ENCRYPTI
   await db.prepare("DELETE FROM media_store").run();
   await db
     .prepare(
-      "INSERT INTO media_store (kind, is_default, settings, credentials, status, updated_at) VALUES ('drive', 1, '{}', ?1, 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, credentials, status, updated_at) VALUES ('drive', 'drive', 1, '{}', ?1, 'ok', 0)",
     )
     .bind(await encryptSecret(key, grant))
     .run();

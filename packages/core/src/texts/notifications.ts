@@ -140,12 +140,16 @@ export const connectionProblem = (text: string): Note => ({
   text,
 });
 export const connectionMailSubject = "Bongsu: a connection needs attention";
-export const mediaStoreProblem = (text: string): Note => ({
+/** `own`: the store is the workspace's own, which its admins fix in Settings → Media (members can't open the instance's page). */
+export const mediaStoreProblem = (text: string, own = false): Note => ({
   group: "problems",
   title: "A media store needs attention",
-  text: `${text}\nIts files can't be read until it's fixed: check it in the dashboard (Media).`,
+  text: `${text}\nIts files can't be read until it's fixed: check it in the dashboard (${own ? "Settings → Media" : "Media"}).`,
   target: "media_stores",
-  mail: { subject: "Bongsu: a media store needs attention", page: "/dashboard/media" },
+  mail: {
+    subject: "Bongsu: a media store needs attention",
+    page: own ? "/dashboard/settings/media" : "/dashboard/media",
+  },
 });
 export const releaseMoved = (title: string, from: string, to: string, by: string): Note => ({
   group: "inbox",

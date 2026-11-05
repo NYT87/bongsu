@@ -106,6 +106,18 @@ export function mediaStoreCases(setup: StoreSetup): { name: string; run: () => P
       },
     },
     {
+      name: "inside tells whether a file is anywhere below a folder, a folder name's prefix not counting",
+      run: async () => {
+        const { store, ids } = await fresh();
+        const mp4 = ids["UPLOADS/inbox/trip/short1.mp4"];
+        check(await store.inside(mp4, "UPLOADS/inbox"), "a file inside the folder, two levels down");
+        check(await store.inside(ids["UPLOADS/inbox/trip/post1/01.jpg"], "UPLOADS/inbox/trip"), "three levels down");
+        check(!(await store.inside(mp4, "UPLOADS/_posted")), "not in a folder it isn't in");
+        check(!(await store.inside(mp4, "UPLOADS/inbox/tr")), "a prefix of a folder's name isn't the folder");
+        check(!(await store.inside(mp4, "OTHER")), "not in a folder that doesn't exist");
+      },
+    },
+    {
       // A store may give a moved file a new id (S3: the id is its key); nothing reads an id after the cleanup's move.
       name: "move takes a folder with its contents",
       run: async () => {

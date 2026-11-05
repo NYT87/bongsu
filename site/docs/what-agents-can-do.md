@@ -39,7 +39,7 @@ What you see of this is in [The phone app](the-app.md#after-a-change) and [How i
 
 ## Drafts
 
-An agent that isn't sure can propose instead of planning: `create_draft` leaves a draft for you, and you schedule it or
+An agent that isn't sure can propose instead of planning: `create_draft` (its file ids are in the key's workspace's default store) leaves a draft for you, and you schedule it or
 refuse it from **Drafts** in the app ([The phone app](the-app.md#drafts)). Nothing in Drafts is published until you
 schedule and approve it. A key can withdraw an open draft with `withdraw_draft`: any open draft of its workspace,
 including ones it didn't create (yours, the inbox's or another key's), never one of another workspace.

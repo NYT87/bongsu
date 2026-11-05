@@ -23,6 +23,7 @@ import { mediaStores } from "@bongsu/core/media/index";
 import { isMedia, isVideo, type MediaEntry } from "@bongsu/core/media/store";
 import { platform } from "@bongsu/core/platforms/index";
 import { type Format, formatLabel } from "@bongsu/core/platforms/types";
+import { workspaceSettings } from "@bongsu/core/workspaces";
 
 export interface Resolved {
   key: string;
@@ -86,8 +87,8 @@ export async function resolveItem(
   if (!/^(reel|post):[^/]+\/[^/]+$/.test(key)) return null;
   const i = await getItem(env.DB, key, workspaceId);
   if (!i) return null;
-  const stores = await mediaStores(env, fetcher);
-  const paths = contentPaths(i);
+  const stores = await mediaStores(env, fetcher, workspaceId);
+  const paths = contentPaths(i, (await workspaceSettings(env.DB, workspaceId)).mediaFolder);
   const problems: string[] = [];
   const db = i.content === "db";
   // The texts (D1, the copy the scheduler posts) and the media (the store) at the same time: the page's Approve waits on this.
@@ -102,7 +103,7 @@ export async function resolveItem(
     if (i.format === "text") return { files: [], node: null, missing: [] }; // a text post has no media
     if (db) {
       // the draft's files, by id, in slide order, each from its own store
-      const refs = await dbMedia(env.DB, paths.media);
+      const refs = await dbMedia(env.DB, paths.media ?? `db:${i.item_key}`);
       const other = refs
         .filter((r) => !stores.for(r))
         .map((r) => `${r.id} is on the ${r.store} store, which isn't set up`);
@@ -117,12 +118,14 @@ export async function resolveItem(
     const store = stores.default;
     if (!store)
       return { files: [], node: null, missing: ["no media store is set up: add one in the dashboard (Media)"] };
-    const node = await store.resolve(paths.media);
+    const node = paths.media ? await store.resolve(paths.media) : null;
     if (!node)
       return {
         files: [],
         node,
-        missing: [`not in the media store yet: ${paths.media} (upload it there, or from the app's inbox)`],
+        missing: [
+          `not in the media store yet: ${paths.media ?? `${i.folder}/${i.name}`} (upload it there, or from the app's inbox)`,
+        ],
       };
     if (paths.single) return { files: [{ ...node, store: store.id }], node, missing: [] };
     return {

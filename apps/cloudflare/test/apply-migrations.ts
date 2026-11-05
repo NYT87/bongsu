@@ -11,7 +11,7 @@ await env.DB.batch([
     "INSERT INTO workspaces (id, name, created_at) VALUES ('default', 'Default', 0) ON CONFLICT DO NOTHING",
   ),
   env.DB.prepare(
-    "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 0) ON CONFLICT DO NOTHING",
+    "INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, media_folder, updated_at) VALUES ('default', 'Asia/Seoul', 8, 'en', 'UPLOADS', 0) ON CONFLICT DO NOTHING",
   ),
   env.DB.prepare(
     "INSERT INTO users (id, email, name, created_at, instance_admin) VALUES ('owner', NULL, 'Owner', 0, 1) ON CONFLICT DO NOTHING",

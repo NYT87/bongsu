@@ -137,6 +137,20 @@ describe("the first run", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces").first("n")).toBe(0);
   });
 
+  it("numbers a folder from the name when none is sent (an emptied field), and refuses a taken one that is sent", async () => {
+    await bootstrap();
+    const folderOf = async (id: string) =>
+      env.DB.prepare("SELECT media_folder FROM workspace_settings WHERE workspace_id = ?1")
+        .bind(id)
+        .first("media_folder");
+    const make = (folder: string) =>
+      call("/admin-api/workspaces", { name: "Demo Studio", timezone: "UTC", admin: "me", folder });
+    expect(await folderOf((await make("")).json.id as string)).toBe("demo-studio");
+    expect(await folderOf((await make("  ")).json.id as string)).toBe("demo-studio-2");
+    const taken = await make("demo-studio");
+    expect([taken.status, taken.json.error]).toEqual([400, "another workspace uses demo-studio"]);
+  });
+
   it("invites someone else as the new workspace's first admin; it waits on the instance admin's Workspaces page", async () => {
     await bootstrap();
     const made = await call("/admin-api/workspaces", {
