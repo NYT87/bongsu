@@ -5,6 +5,7 @@ import type { Db } from "./db";
 import { isTimeZone } from "./formats/time";
 import { checkFolderName, FolderError, folderTaken } from "./media/folders";
 import { isInstanceAdmin, isRole, type Role } from "./roles";
+import { jsonList } from "./sql";
 
 export interface WorkspaceSettings {
   workspaceId: string;
@@ -189,4 +190,65 @@ export async function callerZone(db: Db, workspaceId: string | null, userId?: st
 export async function setUserZone(db: Db, userId: string, timezone: string | null) {
   if (timezone !== null && !isTimeZone(timezone)) throw new Error(`unknown time zone ${timezone}`);
   await db.prepare("UPDATE users SET timezone = ?1 WHERE id = ?2").bind(timezone, userId).run();
+}
+
+/** The longest name a person may give (their own or the one shown in a workspace). */
+export const NAME_MAX = 60;
+
+export class NameError extends Error {}
+
+/** A name from a request: trimmed, 1 to 60 characters; an empty one is null (back to the fallback). */
+export function checkName(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  if (typeof raw !== "string") throw new NameError(`a name is 1 to ${NAME_MAX} characters`);
+  const n = raw.trim();
+  if (n === "") return null;
+  if ([...n].length > NAME_MAX) throw new NameError(`a name is 1 to ${NAME_MAX} characters`);
+  return n;
+}
+
+const localPart = (email: string | null) => (email ? email.split("@")[0] || null : null);
+
+/** What a person is called in a workspace: their display name there, else their own name, else the email's local
+ *  part; null for an unknown user (or one with none of these). Someone who isn't a member is named without the first. */
+export async function memberName(db: Db, userId: string, workspaceId: string): Promise<string | null> {
+  return (await memberNames(db, [userId], workspaceId)).get(userId) ?? null;
+}
+
+/** memberName for a list, in one query; users with no name at all are left out of the map. */
+export async function memberNames(db: Db, userIds: string[], workspaceId: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (userIds.length === 0) return out;
+  const r = await db
+    .prepare(
+      `SELECT u.id, u.name, u.email, m.display_name FROM users u
+       LEFT JOIN memberships m ON m.user_id = u.id AND m.workspace_id = ?2
+       WHERE u.id IN ${jsonList(db, 1)}`,
+    )
+    .bind(JSON.stringify([...new Set(userIds)]), workspaceId)
+    .all<{ id: string; name: string | null; email: string | null; display_name: string | null }>();
+  for (const u of r.results) {
+    const n = u.display_name || u.name || localPart(u.email);
+    if (n) out.set(u.id, n);
+  }
+  return out;
+}
+
+/** A person's own name, everywhere; null goes back to the email's local part. */
+export async function setUserName(db: Db, userId: string, name: string | null) {
+  await db.prepare("UPDATE users SET name = ?1 WHERE id = ?2").bind(name, userId).run();
+}
+
+/** The name shown in one workspace; false when the person isn't a member there. */
+export async function setDisplayName(
+  db: Db,
+  workspaceId: string,
+  userId: string,
+  name: string | null,
+): Promise<boolean> {
+  const r = await db
+    .prepare("UPDATE memberships SET display_name = ?1 WHERE workspace_id = ?2 AND user_id = ?3 RETURNING user_id")
+    .bind(name, workspaceId, userId)
+    .all();
+  return r.results.length > 0;
 }

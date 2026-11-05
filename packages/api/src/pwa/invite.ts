@@ -8,6 +8,7 @@ import { sha256Hex } from "@bongsu/core/formats/approved";
 import { acceptInvite, InviteError, inviteFor } from "@bongsu/core/invites";
 import { createUser, newUserId } from "@bongsu/core/people";
 import type { Role } from "@bongsu/core/roles";
+import { checkName, NameError } from "@bongsu/core/workspaces";
 import {
   authenticationOptions,
   registrationOptions,
@@ -68,10 +69,13 @@ export async function invitePreview(
 export async function inviteOptions(env: Env, token: string, name: unknown, nowS: number, only: readonly Role[]) {
   const i = await usable(env, token, nowS, only);
   const invite = await sha256Hex(token);
-  const display =
-    String(name ?? "")
-      .trim()
-      .slice(0, 80) || null;
+  let display: string | null;
+  try {
+    display = checkName(name);
+  } catch (e) {
+    if (e instanceof NameError) throw new AcceptError(400, { error: e.message });
+    throw e;
+  }
   // a fresh id even when the email has an account (then this ceremony fails at verify): nothing of theirs is listed
   const id = newUserId();
   const register = await registrationOptions(

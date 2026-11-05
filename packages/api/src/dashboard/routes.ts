@@ -78,7 +78,10 @@ import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
 import { schedulesOff } from "@bongsu/core/schedules";
 import {
   callerZone,
+  checkName,
+  NameError,
   sessionWorkspace,
+  setDisplayName,
   setMediaFolder,
   setWorkspaceSettings,
   workspaceRef,
@@ -179,6 +182,16 @@ class AdminError extends Error {
     super(message);
   }
 }
+
+/** A person's name from a request (empty: none), or a 400. */
+const personName = (v: unknown) => {
+  try {
+    return checkName(v ?? "");
+  } catch (e) {
+    if (e instanceof NameError) throw new AdminError(400, e.message);
+    throw e;
+  }
+};
 
 /** "ABCD-EFGH": unambiguous letters and digits (no 0/O, 1/I). */
 const code = (n: number) => {
@@ -326,10 +339,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const email = String(b.email ?? "")
         .trim()
         .toLowerCase();
-      const name =
-        String(b.name ?? "")
-          .trim()
-          .slice(0, 80) || null;
+      const name = personName(b.name);
       if (!EMAIL.test(email)) throw new AdminError(400, "enter an email address");
       // the first person is an instance admin, made when their passkey is (verify): the id is handed out now, since
       // the passkey names its user
@@ -915,6 +925,18 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       await setRole(c.env.DB, ws(c), userId, role, { instanceAdmin: c.get("instanceAdmin") }, nowS());
       await audit(c, "member_role", `user:${userId}`, { role });
       return { userId, role };
+    }),
+  );
+  // The name this workspace shows for a member (their own name stays theirs): the workspace's admins', like the rest
+  // of the members page. Another workspace's people are a 404.
+  app.post(
+    "/admin-api/members/:userId/name",
+    wrap(async (c) => {
+      const userId = c.req.param("userId") ?? "";
+      const name = personName((await body(c)).name);
+      if (!(await setDisplayName(c.env.DB, ws(c), userId, name))) throw new AdminError(404, "not a member here");
+      await audit(c, "member_name", `user:${userId}`, { name });
+      return { userId, displayName: name };
     }),
   );
   app.post(
