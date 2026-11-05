@@ -113,7 +113,7 @@ describe("the HTTP app and the schedules on Node", () => {
   // the server's disk, set up as the store (the dashboard's Media page does this)
   db.sqlite
     .prepare(
-      "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",
+      "INSERT INTO media_store (id, kind, is_default, settings, status, updated_at) VALUES ('local', 'local', 1, '{}', 'ok', 0)",
     )
     .run();
   const offline: typeof fetch = async (input) => {

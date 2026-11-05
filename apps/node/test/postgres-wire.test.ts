@@ -42,7 +42,7 @@ describe("postgres.js against a Postgres server", () => {
     );
     await new PostgresDb(driver)
       .prepare(
-        "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('local', 1, '{}', 'ok', 0)",
+        "INSERT INTO media_store (id, kind, is_default, settings, status, updated_at) VALUES ('local', 'local', 1, '{}', 'ok', 0)",
       )
       .run();
     const r = await createApp(fetch).request("/health", {}, env);
