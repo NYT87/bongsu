@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { AwsClient } from "aws4fetch";
 import { describe, expect, it } from "vitest";
 import { mediaStoreCases } from "../src/media/conformance";
@@ -156,6 +158,32 @@ describe("s3 store", () => {
       "UPLOADS/_posted/post/01.jpg",
       "UPLOADS/_posted/post/02.jpg",
     ]);
+  });
+
+  it("doesn't follow a redirect from the endpoint: a signature is for one host, and the target could be private", async () => {
+    // a real server and the runtime's own fetch, so the redirect mode is what decides
+    const hits: string[] = [];
+    const server = createServer((req, res) => {
+      hits.push(req.url ?? "");
+      if (req.url?.startsWith("/private")) return res.writeHead(200).end("<ListBucketResult/>");
+      res.writeHead(302, { Location: "/private/latest/meta-data/" }).end();
+    });
+    await new Promise<void>((ok) => server.listen(0, "127.0.0.1", ok));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const settings: S3Settings = {
+        endpoint: `http://127.0.0.1:${port}`,
+        region: "auto",
+        bucket: "media",
+        pathStyle: true,
+      };
+      const store = new S3Store(settings, KEYS, (input, init) => fetch(input, init));
+      await expect(store.resolve("UPLOADS")).rejects.toThrow(/redirect \(302\).*not followed/);
+      await expect(store.stream(btoa("UPLOADS/a.jpg").replace(/=+$/, ""))).rejects.toThrow(/redirect/);
+      expect(hits.some((h) => h.startsWith("/private"))).toBe(false);
+    } finally {
+      await new Promise((ok) => server.close(ok));
+    }
   });
 
   it("signs every request (the fake refuses unsigned ones)", async () => {

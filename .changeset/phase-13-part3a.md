@@ -16,7 +16,8 @@ A media folder, media stores and OAuth apps per workspace (Phase 13, part 3a).
 - **Stores.** Besides the instance's, a workspace's admins add their own S3 bucket or Google Drive in Settings → Media.
   A workspace's default is its own store if it has one, else the instance's. A file reference must be in the caller's
   workspace (its own store, or inside its folder in an instance store), else it's refused with "not in this
-  workspace's media". S3 ids and paths with `.`, `..` or empty segments are refused. A broken store of a workspace
+  workspace's media". S3 ids and paths with `.`, `..` or empty segments are refused, and a redirect from an S3
+  endpoint is an error, never followed. A broken store of a workspace
   is told to that workspace and links to Settings → Media. Agent API `create_draft` file ids are in the key's
   workspace's default store.
 - **OAuth apps.** A workspace can set its own Meta and Google apps in Settings → OAuth apps; a connection uses it if

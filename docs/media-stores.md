@@ -138,7 +138,9 @@ checksum is the ETag. `publicUrl` presigns a GET (at most seven days); `createUp
 browser need a CORS rule on the bucket ([s3.md](../site/docs/s3.md)). A workspace's own bucket (`s3Settings` with its
 scope, checked again in `testStore`) must be at a public `https:` name: no IP literal, `localhost`, one-label or
 `.local`/`.internal`/`.lan` name, since Test and save send signed requests there for a workspace admin (its Test asks
-for a fresh passkey too). A name that resolves to a private address isn't caught (no DNS lookup in core).
+for a fresh passkey too). A name that resolves to a private address isn't caught (no DNS lookup in core). Redirects
+are never followed (`redirect: "manual"` in `send()`, a 3xx is an error), so a public endpoint can't bounce the
+server to a private one either.
 
 Tests: `FakeS3` (`media/fake-s3.ts`) answers the requests from a map and checks each is signed for its key; the same
 suite against a real server runs when `S3_TEST_ENDPOINT` is set (with `S3_TEST_BUCKET`, `S3_TEST_KEY`,
