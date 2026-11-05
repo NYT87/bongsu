@@ -13,7 +13,7 @@ import type { Db } from "@bongsu/core/db";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneDate, zoneStamp } from "@bongsu/core/formats/time";
-import { iconHashes, iconUrl } from "@bongsu/core/icon";
+import { withIconUrls } from "@bongsu/core/icon";
 import { mediaUrl } from "@bongsu/core/media";
 import { defaultIds, mediaStores, storeRows } from "@bongsu/core/media/index";
 import { isVideo, type MediaStore } from "@bongsu/core/media/store";
@@ -131,17 +131,6 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return { id: s.userId, name: `${s.userId} (app)`, scopes, workspaceId: where.workspaceId, userId: s.userId };
   };
   const origin = (c: C) => c.env.PUBLIC_URL.replace(/\/$/, "");
-  /** `workspace` and `workspaces` with each one's `iconUrl` (null without one): one query for all of them. */
-  const withIcons = async <W extends { id: string }, L extends { id: string }>(
-    c: C,
-    workspace: W | null,
-    workspaces: L[],
-  ) => {
-    const ids = [...new Set([...(workspace ? [workspace.id] : []), ...workspaces.map((w) => w.id)])];
-    const hashes = await iconHashes(c.env.DB, ids);
-    const add = <T extends { id: string }>(w: T) => ({ ...w, iconUrl: iconUrl(origin(c), hashes.get(w.id)) });
-    return { workspace: workspace && add(workspace), workspaces: workspaces.map(add) };
-  };
   const body = async (c: C) => {
     try {
       return (await c.req.json()) as Record<string, unknown>;
@@ -234,8 +223,9 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       // the text the app shows (packages/web/src/i18n.ts): the workspace's, English for someone not signed in
       locale: caller ? (await workspaceSettings(c.env.DB, caller.workspaceId)).locale : "en",
       // where the session works, and the picker's list (creators included: the app is theirs)
-      ...(await withIcons(
-        c,
+      ...(await withIconUrls(
+        c.env.DB,
+        origin(c),
         caller ? await workspaceOf(c.env.DB, caller.workspaceId) : null,
         s ? await workspacesOf(c.env.DB, s.userId) : [],
       )),

@@ -1,6 +1,7 @@
 // Setting a workspace's icon in the dashboard (Phase 13 part 3b): admins only, in their own workspace, checked as a
 // PNG, shown in the dashboard's state and settings and in the app's `me`. The push side is in push.test.ts.
 import { env } from "cloudflare:workers";
+import { createApp } from "@bongsu/api/app";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
@@ -21,7 +22,9 @@ const fake: Verifiers = {
 let w: World;
 let e: Env;
 
-type Json = Record<string, any>;
+type Ref = { id: string; iconUrl: string | null };
+/** The fields of the answers these tests read. */
+type Json = { error?: string; iconUrl?: string | null; workspace: Ref; workspaces: Ref[] };
 /** A person's dashboard session, in `workspaceId` when given. */
 const dash = async (userId: string, workspaceId?: string) => {
   const token = await createSession(env.DB, nowS(), { app: "dashboard", userId });
@@ -86,14 +89,14 @@ describe("PUT and DELETE /admin-api/settings/icon", () => {
     const put = await putIcon(h, bytes);
     expect(put.status).toBe(200);
     expect(put.json.iconUrl).toMatch(/^https:\/\/bongsu\.test\/icon\/[0-9a-f]{64}\.png$/);
-    const res = await createAppFetch(put.json.iconUrl);
+    const res = await createApp(w.fetch).request(put.json.iconUrl ?? "", {}, e);
     expect(res.status).toBe(200);
     expect(new Uint8Array(await res.arrayBuffer())).toEqual(bytes);
     expect((await call("GET", "/admin-api/settings", h)).json.iconUrl).toBe(put.json.iconUrl);
     const state = (await call("GET", "/admin-api/state", h)).json;
     expect(state.workspace.iconUrl).toBe(put.json.iconUrl);
-    expect(state.workspaces.find((x: Json) => x.id === "default").iconUrl).toBe(put.json.iconUrl);
-    expect(state.workspaces.find((x: Json) => x.id === "b").iconUrl).toBeNull();
+    expect(state.workspaces.find((x) => x.id === "default")?.iconUrl).toBe(put.json.iconUrl);
+    expect(state.workspaces.find((x) => x.id === "b")?.iconUrl).toBeNull();
     expect((await auditRows("workspace_icon_set")).results).toEqual([{ workspace_id: "default", user_id: "amy" }]);
   });
 
@@ -134,6 +137,7 @@ describe("PUT and DELETE /admin-api/settings/icon", () => {
     const h = await dash("amy", "default");
     await putIcon(h, png(256));
     await call("DELETE", "/admin-api/settings/icon", h);
+    expect((await call("GET", "/admin-api/settings", h)).json.iconUrl).toBeNull();
     const b = await dash("pat", "b");
     expect((await call("GET", "/admin-api/settings", b)).json.iconUrl).toMatch(/\/icon\/[0-9a-f]{64}\.png$/);
   });
@@ -144,17 +148,11 @@ describe("the app's me", () => {
     const a = await setIcon(env.DB, "default", png(256), 1);
     const m = await me("amy", "default");
     expect(m.workspace.iconUrl).toBe(`https://bongsu.test/icon/${a}.png`);
-    const list = Object.fromEntries(m.workspaces.map((x: Json) => [x.id, x.iconUrl]));
+    const list = Object.fromEntries(m.workspaces.map((x) => [x.id, x.iconUrl]));
     expect(list).toEqual({ default: `https://bongsu.test/icon/${a}.png`, b: null });
     const b = await setIcon(env.DB, "b", png(256, 5), 2);
     const inB = await me("amy", "b");
     expect(inB.workspace.iconUrl).toBe(`https://bongsu.test/icon/${b}.png`);
-    expect(inB.workspaces.find((x: Json) => x.id === "b").iconUrl).toBe(`https://bongsu.test/icon/${b}.png`);
+    expect(inB.workspaces.find((x) => x.id === "b")?.iconUrl).toBe(`https://bongsu.test/icon/${b}.png`);
   });
 });
-
-/** GETs a URL the API answered, through the whole app (the route is public). */
-async function createAppFetch(url: string) {
-  const { createApp } = await import("@bongsu/api/app");
-  return createApp(w.fetch).request(url, {}, e);
-}

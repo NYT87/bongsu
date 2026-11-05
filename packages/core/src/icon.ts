@@ -6,7 +6,8 @@ import type { Db } from "./db";
 
 export class IconError extends Error {}
 
-const MAX_BYTES = 204_800;
+/** The most an icon may weigh (the dashboard refuses a bigger body before reading it as a PNG). */
+export const ICON_MAX_BYTES = 204_800;
 const SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const IHDR = [0x49, 0x48, 0x44, 0x52];
 const MIN_PX = 192;
@@ -16,7 +17,7 @@ const u32 = (b: Uint8Array, at: number) => new DataView(b.buffer, b.byteOffset, 
 
 /** Throws an IconError saying why the bytes can't be an icon; else the icon's width (it is square). */
 export function checkIcon(bytes: Uint8Array): { width: number } {
-  if (bytes.length > MAX_BYTES) throw new IconError("the icon is over 200 KB");
+  if (bytes.length > ICON_MAX_BYTES) throw new IconError("the icon is over 200 KB");
   const isPng =
     bytes.length >= 24 && SIGNATURE.every((v, i) => bytes[i] === v) && IHDR.every((v, i) => bytes[12 + i] === v);
   if (!isPng) throw new IconError("the icon must be a PNG");
@@ -92,4 +93,17 @@ export async function iconByHash(db: Db, hash: string): Promise<Uint8Array | nul
 /** The icon's absolute URL (pushes need it absolute), or null without an icon. */
 export function iconUrl(publicUrl: string, hash: string | undefined | null): string | null {
   return hash ? `${publicUrl}/icon/${hash}.png` : null;
+}
+
+/** `workspace` and `workspaces` with each one's `iconUrl` (null without one), from one query for all of them. */
+export async function withIconUrls<W extends { id: string }, L extends { id: string }>(
+  db: Db,
+  publicUrl: string,
+  workspace: W | null,
+  workspaces: L[],
+) {
+  const ids = [...new Set([...(workspace ? [workspace.id] : []), ...workspaces.map((w) => w.id)])];
+  const hashes = await iconHashes(db, ids);
+  const add = <T extends { id: string }>(w: T) => ({ ...w, iconUrl: iconUrl(publicUrl, hashes.get(w.id)) });
+  return { workspace: workspace && add(workspace), workspaces: workspaces.map(add) };
 }
