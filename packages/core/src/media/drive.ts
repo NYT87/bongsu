@@ -220,10 +220,14 @@ export class DriveStore implements MediaStore {
 
   /** A resumable upload session: the browser PUTs the bytes to the URL in chunks; the last answer names the file. */
   async createUpload(name: string, folderPath: string, mime: string, origin: string): Promise<UploadTarget> {
-    const [top] = folderPath.split("/");
-    // the top folder is the owner's (made at the root when missing); what's below it is made as needed
-    if (folderPath.includes("/") && !(await this.resolve(top))) await this.ownerFolder(top);
-    const folder = folderPath.includes("/") ? await this.ensureFolder(folderPath) : await this.ownerFolder(folderPath);
+    const [top, ...rest] = folderPath.split("/");
+    // The top folder is the owner's (made at the root when missing). Its id is kept from there, not looked up again by
+    // name: Drive's search lags a create, so a first upload would find nothing. What's below it is made as needed.
+    let folder = (await this.resolve(top))?.id ?? (await this.ownerFolder(top));
+    for (const part of rest) {
+      const have = (await this.list(folder)).find((e) => e.folder && e.name === part);
+      folder = have?.id ?? (await this.mkdir(part, folder));
+    }
     const r = await this.o.fetch(`${UPLOAD_API}?uploadType=resumable&fields=id,name,mimeType,md5Checksum,size`, {
       method: "POST",
       // Origin: Google then answers the browser's PUTs to the session URL with CORS headers for the app.

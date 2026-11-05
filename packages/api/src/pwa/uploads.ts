@@ -6,6 +6,7 @@ import { instagramAccounts } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
 import { mediaPath } from "@bongsu/core/media/folders";
 import { type MediaStores, mediaStores } from "@bongsu/core/media/index";
+import { assertOwns, MediaError } from "@bongsu/core/media/owns";
 import { isMedia, isVideo } from "@bongsu/core/media/store";
 import { workspaceSettings } from "@bongsu/core/workspaces";
 
@@ -78,8 +79,21 @@ export async function draftFromUploads(
     name = String(b.name ?? "").trim();
   if (!NAME.test(project) || !NAME.test(name))
     throw new UploadError(400, "project and name: letters, digits, _ . - only");
-  const store = uploadStore(await mediaStores(env, fetcher, workspaceId), b.store);
-  const folder = await store.resolve(appUploads((await workspaceSettings(env.DB, workspaceId)).mediaFolder));
+  const stores = await mediaStores(env, fetcher, workspaceId);
+  const store = uploadStore(stores, b.store);
+  const mediaFolder = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
+  // the files must be this workspace's, then specifically the app's uploads of it
+  try {
+    await assertOwns(
+      stores,
+      mediaFolder,
+      ids.map((id) => ({ store: store.id, id })),
+    );
+  } catch (e) {
+    if (e instanceof MediaError) throw new UploadError(e.status, e.message);
+    throw e;
+  }
+  const folder = await store.resolve(appUploads(mediaFolder));
   const files: { store: string; id: string; name: string; mime: string; checksum: string }[] = [];
   for (const id of ids) {
     const m = await store.stat(id);

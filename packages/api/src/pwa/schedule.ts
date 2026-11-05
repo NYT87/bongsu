@@ -14,7 +14,10 @@ import {
   WhenError,
 } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
+import { mediaStores } from "@bongsu/core/media/index";
+import { assertOwns, MediaError } from "@bongsu/core/media/owns";
 import type { Format } from "@bongsu/core/platforms/types";
+import { workspaceSettings } from "@bongsu/core/workspaces";
 
 export class ScheduleError extends Error {
   constructor(
@@ -41,6 +44,7 @@ interface DraftRow {
 /** `tz`: the owner's zone, which the date and time are on. */
 export async function scheduleDraft(
   env: Env,
+  fetcher: typeof fetch,
   id: string,
   b: Record<string, unknown>,
   nowS: number,
@@ -66,6 +70,17 @@ export async function scheduleDraft(
     .map((m) => ({ store: String(m.store), id: String(m.id) }));
   if (!media.length) throw new ScheduleError(400, "the draft has no media files to publish");
   if (media.length > 10) throw new ScheduleError(400, "a carousel takes 10 media at most");
+  // A last check: a draft's payload may predate the checks when it was made, or come from a path that skipped them.
+  try {
+    await assertOwns(
+      await mediaStores(env, fetcher, workspaceId),
+      (await workspaceSettings(env.DB, workspaceId)).mediaFolder,
+      media,
+    );
+  } catch (e) {
+    if (e instanceof MediaError) throw new ScheduleError(e.status, e.message);
+    throw e;
+  }
 
   const account = String(b.account ?? d.account);
   const ids = (await instagramAccounts(env.DB, workspaceId)).map((a) => a.id);

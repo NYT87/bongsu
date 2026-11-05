@@ -122,7 +122,14 @@ export class MediaStores {
     readonly errors: Map<string, string> = new Map(),
     /** The instance's default, for when the workspace's own default can't be built. */
     private readonly fallbackId: string | null = null,
+    /** The ids of the stores that belong to the workspace (not the instance's). */
+    private readonly ownIds: ReadonlySet<string> = new Set(),
   ) {}
+
+  /** Whether the store is the workspace's own: everything in it is the workspace's. */
+  isOwn(id: string): boolean {
+    return this.ownIds.has(id);
+  }
 
   get all(): MediaStore[] {
     return [...this.byId.values()];
@@ -163,7 +170,8 @@ export async function mediaStores(
     }
   }
   const defaults = defaultIds(rows, workspaceId);
-  return new MediaStores(built, defaults.effective, errors, defaults.instance);
+  const own = new Set(rows.filter((r) => r.workspaceId !== null).map((r) => r.id));
+  return new MediaStores(built, defaults.effective, errors, defaults.instance, own);
 }
 
 /** Which row is the default: the workspace's own when it has one, else the instance's (null: none marked). */

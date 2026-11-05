@@ -502,7 +502,16 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   app.post(
     "/app-api/drafts/:id/schedule",
     owned(async (c) =>
-      scheduleDraft(c.env, c.req.param("id") ?? "", await body(c), nowS(), await zone(c), me(c).workspaceId, userOf(c)),
+      scheduleDraft(
+        c.env,
+        fetcher,
+        c.req.param("id") ?? "",
+        await body(c),
+        nowS(),
+        await zone(c),
+        me(c).workspaceId,
+        userOf(c),
+      ),
     ),
   );
   // Uploads from the app: the store's upload target per file (the browser sends the bytes straight to it), then the draft.
