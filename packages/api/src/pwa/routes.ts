@@ -29,6 +29,7 @@ import {
   callerZone,
   checkName,
   FALLBACK_ZONE,
+  localPart,
   memberName,
   memberNamesIn,
   NameError,
@@ -1140,7 +1141,7 @@ const youOf = async (db: Db, userId: string, workspaceId: string | null) => {
     : null;
   return {
     name: u?.name ?? null,
-    emailName: u?.email ? u.email.split("@")[0] || null : null,
+    emailName: localPart(u?.email ?? null),
     displayName: m?.display_name ?? null,
     shownAs: workspaceId ? await memberName(db, userId, workspaceId) : null,
   };

@@ -207,7 +207,7 @@ export function checkName(raw: unknown): string | null {
   return n;
 }
 
-const localPart = (email: string | null) => (email ? email.split("@")[0] || null : null);
+export const localPart = (email: string | null) => (email ? email.split("@")[0] || null : null);
 
 /** What a person is called in a workspace: their display name there, else their own name, else the email's local
  *  part; null for an unknown user (or one with none of these). Someone who isn't a member is named without the first. */

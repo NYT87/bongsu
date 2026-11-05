@@ -902,7 +902,7 @@ function WorkspaceSheet({ me, onClose, onSwitched }: { me: Me; onClose: () => vo
                 <WsIcon url={w.iconUrl} />
                 <span className="clip">
                   {w.name}
-                  {w.shownAs && w.shownAs !== me.you?.name && (
+                  {w.shownAs && w.shownAs !== (me.you?.name ?? me.you?.emailName) && (
                     <span className="muted small ws-as">{t("workspace.shownAs", { name: w.shownAs })}</span>
                   )}
                 </span>
@@ -4490,7 +4490,7 @@ function unblockHelp(): string {
 }
 
 /** Your name everywhere, and the name this workspace shows for you (empty clears either). Each field saves alone. */
-function YouCard({ me, onSaved }: { me: Me; onSaved: () => void }) {
+function YouCard({ me, onRefresh }: { me: Me; onRefresh: () => void }) {
   const you = me.you;
   const [name, setName] = useState(you?.name ?? "");
   const [shown, setShown] = useState(you?.displayName ?? "");
@@ -4507,7 +4507,7 @@ function YouCard({ me, onSaved }: { me: Me; onSaved: () => void }) {
     try {
       await api(`me/${field}`, { name: value.trim() });
       setMsg({ field, text: t("you.saved"), ok: true });
-      onSaved();
+      onRefresh();
     } catch (e) {
       setMsg({ field, text: (e as Error).message, ok: false });
     }
@@ -4529,7 +4529,7 @@ function YouCard({ me, onSaved }: { me: Me; onSaved: () => void }) {
         {busy === id ? t("common.saving") : t("you.save")}
       </button>
       {msg?.field === id && (
-        <p className={`notice small ${msg.ok ? "ok" : "bad"}`} role="status">
+        <p className={`notice small ${msg.ok ? "ok" : "bad"}`} role={msg.ok ? "status" : "alert"}>
           {msg.text}
         </p>
       )}
@@ -4607,7 +4607,7 @@ function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   };
   return (
     <section>
-      <YouCard me={me} onSaved={onSignOut} />
+      <YouCard me={me} onRefresh={onSignOut} />
       <div className="card">
         <h2>{t("settings.publishing")}</h2>
         {status.data?.paused ? (
