@@ -172,22 +172,50 @@ describe("the Drive inbox", () => {
     expect(d[1].payload.files[0].checksum).toBe("bb");
   });
 
+  // the workspace's own bucket is the fake one under a prefix, so it doesn't show the instance's objects
+  const OWN = { ...TEST_S3_SETTINGS, prefix: "own/" };
+  const ownWorkspace = async (e: Awaited<ReturnType<typeof testEnv>>, name: string) => {
+    const id = await createWorkspace(env.DB, { name, timezone: "UTC", createdBy: "owner" }, 0);
+    await saveStore(e, w.fetch, { workspaceId: id }, "s3", OWN, JSON.stringify(TEST_S3_KEYS), "owner", 0);
+    return { id, folder: (await workspaceSettings(env.DB, id)).mediaFolder };
+  };
+  const later = () => new Date(Date.now() + 3600_000); // the bucket stamps real time
+
   it("scans a workspace's own store as well as the instance's", async () => {
     const e = await testEnv(env);
     await seedS3Store();
-    const id = await createWorkspace(env.DB, { name: "Inbox Own", timezone: "UTC", createdBy: "owner" }, 0);
-    await saveStore(e, w.fetch, { workspaceId: id }, "s3", TEST_S3_SETTINGS, JSON.stringify(TEST_S3_KEYS), "owner", 0);
-    const folder = (await workspaceSettings(env.DB, id)).mediaFolder;
-    await w.s3.put(`${folder}/inbox/trip/own.mp4`, "video", "video/mp4");
+    const { id, folder } = await ownWorkspace(e, "Inbox Own");
+    await w.s3.put(`own/${folder}/inbox/trip/own.mp4`, "video", "video/mp4");
     w.drivePut(`${folder}/inbox/trip/ondrive.mp4`, { md5: "d", mimeType: "video/mp4", modified: OLD });
-    const r = await scanInbox(e, { fetch: w.fetch, now: new Date(Date.now() + 3600_000) }); // the bucket stamps real time
-    // the fake bucket is shared by the instance's store and the workspace's own, so it shows through both
-    expect(r.drafted.sort()).toEqual(["trip/ondrive", "trip/own", "trip/own"]);
+    const r = await scanInbox(e, { fetch: w.fetch, now: later() });
+    expect(r.drafted.sort()).toEqual(["trip/ondrive", "trip/own"]);
     expect((await drafts()).map((d) => [d.workspace_id, d.payload.media[0].store]).sort()).toEqual([
       [id, "drive"],
-      [id, "s3"],
       [id, `s3-${id}`],
     ]);
+  });
+
+  it("keeps a workspace on the instance's store apart from one with its own store", async () => {
+    const e = await testEnv(env);
+    await seedS3Store();
+    await workspace("a1"); // on the instance's store, in its folder a1
+    const b = await ownWorkspace(e, "Inbox B");
+    await w.s3.put("a1/inbox/trip/a.mp4", "A's video", "video/mp4");
+    await w.s3.put(`own/${b.folder}/inbox/trip/a.mp4`, "B's longer video", "video/mp4");
+    await scanInbox(e, { fetch: w.fetch, now: later() });
+    const d = await drafts();
+    expect(
+      d.map((x) => [x.workspace_id, x.payload.title, x.payload.media.map((m: { store: string }) => m.store)]),
+    ).toEqual(
+      expect.arrayContaining([
+        ["a1", "trip/a", ["s3"]],
+        [b.id, "trip/a", [`s3-${b.id}`]],
+      ]),
+    );
+    expect(d).toHaveLength(2); // neither drafts into the other, nor twice
+    const of = (ws: string) => d.find((x) => x.workspace_id === ws)!.payload.files[0];
+    expect(of("a1").checksum).toBeTruthy();
+    expect(of("a1").checksum).not.toBe(of(b.id).checksum);
   });
 
   describe("the budget", () => {
