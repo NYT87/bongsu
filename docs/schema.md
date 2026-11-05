@@ -200,6 +200,7 @@ Proposed posts (from agents, the app, the Drive inbox) waiting to be scheduled o
 | `created_at` | timestamp | no | now |  |
 | `updated_at` | timestamp | no | now |  |
 | `workspace_id` | text | no | "default" |  |
+| `user_id` | text | yes |  | the person who made it (app uploads); NULL for an agent key's |
 
 Index `drafts_workspace`: (workspace_id, status).
 Index `drafts_status_created`: (status, created_at).
@@ -317,6 +318,7 @@ Who belongs to which workspace, and with what role.
 | `user_id` | id | no |  | primary key; → `users.id` |
 | `role` | text: admin / editor / creator | no |  |  |
 | `created_at` | timestamp | no |  |  |
+| `display_name` | text | yes |  | the name people in this workspace see; NULL: the person's name |
 
 Primary key: (workspace_id, user_id).
 
@@ -614,6 +616,20 @@ People: the first one owns the instance. Email identifies them; passkeys sign th
 | `created_at` | timestamp | no |  |  |
 | `timezone` | text | yes |  |  |
 | `instance_admin` | bool | no | 0 | runs the instance: workspaces, media stores, OAuth apps |
+
+## `workspace_icons`
+
+A workspace's icon: a PNG (base64), its SHA-256 and when it was set; no row, no icon.
+
+| Column | Type | Null | Default | Notes |
+|---|---|---|---|---|
+| `workspace_id` | text | no |  | primary key |
+| `png` | text | no |  |  |
+| `hash` | text | no |  |  |
+| `updated_at` | timestamp | no |  |  |
+
+Primary key: (workspace_id).
+Index `workspace_icons_hash`: (hash).
 
 ## `workspace_oauth_apps`
 

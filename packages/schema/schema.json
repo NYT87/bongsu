@@ -563,6 +563,10 @@
           "type": "text",
           "notNull": true,
           "default": "default"
+        },
+        "user_id": {
+          "type": "text",
+          "description": "the person who made it (app uploads); NULL for an agent key's"
         }
       },
       "indexes": [
@@ -786,6 +790,10 @@
         "created_at": {
           "type": "timestamp",
           "notNull": true
+        },
+        "display_name": {
+          "type": "text",
+          "description": "the name people in this workspace see; NULL: the person's name"
         }
       },
       "primaryKey": [
@@ -1866,6 +1874,38 @@
       "primaryKey": [
         "workspace_id",
         "id"
+      ]
+    },
+    "workspace_icons": {
+      "description": "A workspace's icon: a PNG (base64), its SHA-256 and when it was set; no row, no icon.",
+      "columns": {
+        "workspace_id": {
+          "type": "text",
+          "notNull": true
+        },
+        "png": {
+          "type": "text",
+          "notNull": true
+        },
+        "hash": {
+          "type": "text",
+          "notNull": true
+        },
+        "updated_at": {
+          "type": "timestamp",
+          "notNull": true
+        }
+      },
+      "primaryKey": [
+        "workspace_id"
+      ],
+      "indexes": [
+        {
+          "name": "workspace_icons_hash",
+          "columns": [
+            "hash"
+          ]
+        }
       ]
     }
   }
