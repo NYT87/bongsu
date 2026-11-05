@@ -142,7 +142,8 @@ export class DriveStore implements MediaStore {
 
   /** What inside() looks up, asked once per store (built per request or cron run): a carousel's files share their
    *  folders, so checking ten costs ten stats plus the workspace's folder and the folders between once, not a walk
-   *  per file. A failure isn't remembered: the next file asks again. */
+   *  per file. A failure isn't remembered: the next file asks again. A null (no such folder, no parent) is, for the
+   *  whole run: that fails closed (a file made in the folder meanwhile is refused until the next run), so it stays. */
   private seen = new Map<string, Promise<unknown>>();
   private once<T>(key: string, ask: () => Promise<T>): Promise<T> {
     let p = this.seen.get(key) as Promise<T> | undefined;
