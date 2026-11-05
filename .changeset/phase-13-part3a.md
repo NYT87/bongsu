@@ -27,7 +27,8 @@ A media folder, media stores and OAuth apps per workspace (Phase 13, part 3a).
   the Media page is gone.
 - **Scheduler.** The Workspaces page has a read-only Scheduler section for instance admins: the three runs and
   their times, `JOBS_PER_TICK`, `INBOX_WORKSPACES_PER_RUN` and the last inbox run. Making the schedule tunable is #64.
-- **Dashboard.** Settings has General, Media and OAuth apps tabs (`/dashboard/settings`, `/settings/media`,
+- **Dashboard.** Get started's media step needs an instance store (a workspace's own bucket doesn't count).
+  Settings has General, Media and OAuth apps tabs (`/dashboard/settings`, `/settings/media`,
   `/settings/apps`).
 
 Updating an existing instance (the migrations run on their own):

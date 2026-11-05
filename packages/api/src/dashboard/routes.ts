@@ -674,7 +674,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
             )) > 0,
           // a Composio connection needs no app of the owner's
           oauthApp: connections > 0 || (await readyAppIds(c.env.DB, ws(c))).size > 0,
-          mediaStore: (await count("SELECT COUNT(*) AS n FROM media_store")) > 0,
+          // the instance's own store, the default of every workspace without one; a workspace's bucket doesn't count
+          mediaStore: (await count("SELECT COUNT(*) AS n FROM media_store WHERE workspace_id IS NULL")) > 0,
           connection: connections > 0,
           device:
             (await count(

@@ -215,6 +215,11 @@ describe("signed in", () => {
     )
       .bind(me)
       .run();
+    // a workspace's own bucket isn't the instance's: the other workspaces would still have no store
+    await env.DB.prepare(
+      "INSERT INTO media_store (id, kind, workspace_id, is_default, settings, status, updated_at) VALUES ('s3-default', 's3', 'default', 1, '{}', 'ok', 0)",
+    ).run();
+    expect((await setup()).mediaStore).toBe(false);
     await env.DB.prepare(
       "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('s3', 1, '{}', 'ok', 0)",
     ).run();
