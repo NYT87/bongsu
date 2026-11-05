@@ -140,14 +140,29 @@ export class DriveStore implements MediaStore {
     return node;
   }
 
+  /** What inside() looks up, asked once per store (built per request or cron run): a carousel's files share their
+   *  folders, so checking ten costs ten stats plus the workspace's folder and the folders between once, not a walk
+   *  per file. A failure isn't remembered: the next file asks again. */
+  private seen = new Map<string, Promise<unknown>>();
+  private once<T>(key: string, ask: () => Promise<T>): Promise<T> {
+    let p = this.seen.get(key) as Promise<T> | undefined;
+    if (!p) {
+      p = ask();
+      p.catch(() => this.seen.delete(key));
+      this.seen.set(key, p);
+    }
+    return p;
+  }
+
   async inside(id: string, folderPath: string) {
-    const folder = await this.resolve(folderPath);
+    const folder = await this.once(`path:${folderPath}`, () => this.resolve(folderPath));
     if (!folder?.folder) return false;
-    // up the parents, a bounded number of steps (a deep tree costs a request each)
+    // up the parents, a bounded number of steps; the file's own stat is always fresh
     let at = (await this.stat(id))?.parent ?? null;
     for (let i = 0; i < MAX_DEPTH && at !== null; i++) {
       if (at === folder.id) return true;
-      at = (await this.stat(at))?.parent ?? null;
+      const from = at;
+      at = await this.once(`parent:${from}`, async () => (await this.stat(from))?.parent ?? null);
     }
     return false;
   }

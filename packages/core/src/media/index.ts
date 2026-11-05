@@ -38,6 +38,8 @@ export interface StoreRow {
 /** The rows of a scope: none given, every row; `{workspaceId: null}`, the instance's; a workspace, the instance's
  *  plus its own (what it can use). */
 export async function storeRows(db: Db, scope?: StoreScope): Promise<StoreRow[]> {
+  // "" would read as the instance's scope below (it isn't bound): a caller's bug, not a scope
+  if (scope?.workspaceId === "") throw new Error("storeRows: an empty workspace id");
   const where =
     scope === undefined
       ? ""
@@ -143,6 +145,7 @@ export class MediaStores {
   }
   /** Where nothing names a store: plan items given by path, drafts from the agent API, the upload page's choice. */
   get default(): MediaStore | null {
+    // none marked (or neither can be built): the first store by id
     return (this.defaultId && this.get(this.defaultId)) || this.get(this.fallbackId ?? "") || this.all[0] || null;
   }
   /** The stores the app can upload to. */

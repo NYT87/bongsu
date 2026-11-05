@@ -41,11 +41,21 @@ export async function ownsRef(
   }
 }
 
-/** Throws MediaError(400) unless every reference is the workspace's. */
+/** At most this many references are checked at once. */
+const AT_ONCE = 10;
+
+/** Throws MediaError(400) unless every reference is the workspace's. The first is checked alone, so the folder and
+ *  the parents it finds are remembered (DriveStore) before the rest are checked together: a carousel's files then
+ *  cost a request each, and its timeout isn't ten walks end to end. */
 export async function assertOwns(
   stores: MediaStores,
   folder: string,
   refs: Pick<MediaRef, "store" | "id">[],
 ): Promise<void> {
-  for (const r of refs) if (!(await ownsRef(stores, folder, r))) throw new MediaError(400, NOT_OURS);
+  const [first, ...rest] = refs;
+  if (first && !(await ownsRef(stores, folder, first))) throw new MediaError(400, NOT_OURS);
+  for (let i = 0; i < rest.length; i += AT_ONCE) {
+    const ok = await Promise.all(rest.slice(i, i + AT_ONCE).map((r) => ownsRef(stores, folder, r)));
+    if (ok.includes(false)) throw new MediaError(400, NOT_OURS);
+  }
 }

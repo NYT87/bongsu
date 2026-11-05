@@ -13,8 +13,8 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { scanInbox } from "@bongsu/core/inbox";
 import { type Mail, registerMailer } from "@bongsu/core/mail";
-import { DriveStore } from "@bongsu/core/media/drive";
-import { mediaStores, storeRows } from "@bongsu/core/media/index";
+import { clearFolderCache, DriveStore } from "@bongsu/core/media/drive";
+import { MediaStores, mediaStores, storeRows } from "@bongsu/core/media/index";
 import {
   CHECK_EVERY_S,
   checkStores,
@@ -25,6 +25,7 @@ import {
   startDriveConnect,
   waitingApprovalsIn,
 } from "@bongsu/core/media/manage";
+import { assertOwns, NOT_OURS, ownsRef } from "@bongsu/core/media/owns";
 import { setWorkspaceNtfy } from "@bongsu/core/ntfy";
 import { createWorkspace } from "@bongsu/core/people";
 import { workspaceSettings } from "@bongsu/core/workspaces";
@@ -212,6 +213,10 @@ describe("stores scoped by workspace", () => {
     await saveStore(e, w.fetch, { workspaceId: id }, "s3", SAVE.settings, SAVE.keys, "owner", 0);
     return id;
   }
+
+  it("refuses an empty workspace id rather than reading it as the instance's scope", async () => {
+    await expect(storeRows(env.DB, { workspaceId: "" })).rejects.toThrow(/empty workspace id/);
+  });
   const ids = async (workspaceId?: string | null) => (await mediaStores(e, w.fetch, workspaceId)).all.map((s) => s.id);
 
   it("loads a workspace's own store beside the instance's of the same kind, each workspace seeing only its own", async () => {
@@ -374,6 +379,26 @@ describe("stores scoped by workspace", () => {
     expect((await two.stat("other_inbox"))?.parent).toBe("other_uploads");
     expect(await two.inside("other_inbox", "UPLOADS")).toBe(true);
     expect(await one.inside("other_inbox", "UPLOADS")).toBe(false);
+  });
+
+  it("checks a carousel's files with one stat each: their folders are walked once, and a file outside still fails", async () => {
+    const ids = Array.from({ length: 10 }, (_, i) =>
+      w.drivePut(`UPLOADS/inbox/demo_travel/post1/${String(i + 1).padStart(2, "0")}.jpg`, {
+        md5: "m",
+        mimeType: "image/jpeg",
+      }),
+    );
+    const outside = w.drivePut("ELSEWHERE/inbox/demo_travel/post1/01.jpg", { md5: "m", mimeType: "image/jpeg" });
+    const store = new DriveStore({ oauth: TEST_DRIVE_GRANT, fetch: w.fetch, id: "drive" });
+    const stores = new MediaStores(new Map([["drive", store]]), "drive");
+    const refs = ids.map((id) => ({ store: "drive", id }));
+    clearFolderCache();
+    w.driveQueries = w.driveStats = 0;
+    await assertOwns(stores, "UPLOADS", refs);
+    // the folder found once, ten files, and post1, demo_travel, inbox once: not four stats a file
+    expect(w.driveQueries + w.driveStats).toBeLessThanOrEqual(14);
+    await expect(assertOwns(stores, "UPLOADS", [...refs, { store: "drive", id: outside }])).rejects.toThrow(NOT_OURS);
+    expect(await ownsRef(stores, "UPLOADS", { store: "drive", id: outside })).toBe(false);
   });
 });
 

@@ -33,6 +33,8 @@ export class World {
   ytReplies: { parent: string; text: string }[] = [];
   /** Drive list queries made (findPath walks one per path level). */
   driveQueries = 0;
+  /** Drive stats (a file's metadata by id) made. */
+  driveStats = 0;
   /** Drive's search lags a create: while true, a folder made now isn't found by a search for its name (listing a
    *  folder's contents still sees it). */
   driveSearchLag = false;
@@ -278,6 +280,7 @@ export class World {
           },
         });
       }
+      this.driveStats++;
       return json({
         id,
         name: f.name,
