@@ -348,9 +348,9 @@ const useShared = () => useContext(SharedCtx)!;
 const MeCtx = createContext<Me | null>(null);
 /** True once /app-api/me says the workspace has no active account: every list shows the setup note instead. */
 const useNoAccounts = () => useContext(MeCtx)?.accounts === 0;
-/** Whether the signed-in role has a scope, e.g. "reschedule" for moving a YouTube release date. */
 /** The workspace's media folder: where its inbox and the app's uploads live. */
 const useMediaFolder = () => useContext(MeCtx)?.workspace?.mediaFolder ?? "UPLOADS";
+/** Whether the signed-in role has a scope, e.g. "reschedule" for moving a YouTube release date. */
 const useCan = (scope: string) => useContext(MeCtx)?.scopes?.includes(scope) ?? false;
 
 /** What an empty list says once accounts exist: where posts come from. */

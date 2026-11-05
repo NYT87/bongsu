@@ -345,6 +345,7 @@ export async function checkStores(
   }
   if (instance.length) await notifyInstanceAdmins(env, deps.fetch, mediaStoreProblem(instance.join("\n")), nowS);
   const notify = notifier(env, deps.fetch, nowS);
-  for (const [workspaceId, lines] of byWorkspace) await notify.send(mediaStoreProblem(lines.join("\n")), workspaceId);
+  for (const [workspaceId, lines] of byWorkspace)
+    await notify.send(mediaStoreProblem(lines.join("\n"), true), workspaceId);
   return out;
 }
