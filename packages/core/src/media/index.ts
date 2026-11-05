@@ -76,15 +76,6 @@ export async function storeRows(db: Db, scope?: StoreScope): Promise<StoreRow[]>
   }));
 }
 
-/** The instance's default store's kind without building any store (null when none is set up): where agents' file ids
- *  are. */
-export async function defaultKind(db: Db): Promise<StoreKind | null> {
-  const r = await db
-    .prepare("SELECT kind FROM media_store WHERE workspace_id IS NULL ORDER BY is_default DESC, id LIMIT 1")
-    .first<{ kind: StoreKind }>();
-  return r?.kind ?? null;
-}
-
 /** Stores a runtime offers (the Node app registers "local", a directory on the server, MEDIA_DIR): they live outside
  *  core so the Workers bundle never imports Node-only code, and the dashboard only lets you pick one that's offered. */
 const registered = new Map<string, (env: Env, fetcher: typeof fetch) => MediaStore>();
