@@ -623,7 +623,7 @@ A workspace's icon: a PNG (base64), its SHA-256 and when it was set; no row, no 
 
 | Column | Type | Null | Default | Notes |
 |---|---|---|---|---|
-| `workspace_id` | text | no |  | primary key |
+| `workspace_id` | id | no |  | primary key; → `workspaces.id` |
 | `png` | text | no |  |  |
 | `hash` | text | no |  |  |
 | `updated_at` | timestamp | no |  |  |

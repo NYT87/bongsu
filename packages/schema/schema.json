@@ -1880,8 +1880,9 @@
       "description": "A workspace's icon: a PNG (base64), its SHA-256 and when it was set; no row, no icon.",
       "columns": {
         "workspace_id": {
-          "type": "text",
-          "notNull": true
+          "type": "id",
+          "notNull": true,
+          "references": "workspaces.id"
         },
         "png": {
           "type": "text",

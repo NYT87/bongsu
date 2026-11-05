@@ -2,7 +2,7 @@
 
 -- A workspace's icon: a PNG (base64), its SHA-256 and when it was set; no row, no icon.
 CREATE TABLE "workspace_icons" (
-  "workspace_id" TEXT NOT NULL,
+  "workspace_id" TEXT NOT NULL REFERENCES "workspaces" ("id"),
   "png" TEXT NOT NULL,
   "hash" TEXT NOT NULL,
   "updated_at" BIGINT NOT NULL,

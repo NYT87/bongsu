@@ -9,7 +9,7 @@ export const steps: Step[] = [
     table: {
       description: "A workspace's icon: a PNG (base64), its SHA-256 and when it was set; no row, no icon.",
       columns: {
-        workspace_id: { type: "text", notNull: true },
+        workspace_id: { type: "id", notNull: true, references: "workspaces.id" },
         png: { type: "text", notNull: true },
         hash: { type: "text", notNull: true },
         updated_at: { type: "timestamp", notNull: true },
