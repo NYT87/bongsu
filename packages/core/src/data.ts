@@ -14,7 +14,7 @@ import {
   zoneStamp,
   zoneToUnix,
 } from "./formats/time";
-import { mediaPath } from "./media/folders";
+import { FolderError, mediaPath } from "./media/folders";
 import type { Format } from "./platforms/types";
 import { jsonList } from "./sql";
 
@@ -142,10 +142,21 @@ export function dueFrom(
   return s;
 }
 
+/** An item's media path under the workspace's folder, or null when its folder or name would climb out of it ("..") or
+ *  has an empty segment: such an item has no media, it counts as missing. */
+function safePath(folder: string, rest: string): string | null {
+  try {
+    return mediaPath(folder, rest);
+  } catch (e) {
+    if (e instanceof FolderError) return null;
+    throw e;
+  }
+}
+
 /** Where an item's content lives. The texts are always in D1, in the item's own columns ("db:<field>:<key>", read
  *  with readText): the scheduler reads nothing from the repo. A repo item's texts are copied there
  *  from its files by an importer (examples/repo-importer); `files` names those files. The media: a
- *  'db' item's media references ("db:<key>", dbMedia), else its path in the media store under the workspace's media `folder`. */
+ *  'db' item's media references ("db:<key>", dbMedia), else its path in the media store under the workspace's media `folder` (null when the path isn't inside it). */
 export function contentPaths(i: Pick<PlanItem, "item_key" | "format" | "folder" | "name" | "content">, folder: string) {
   const key = i.item_key;
   const video = i.format === "video";
@@ -167,7 +178,7 @@ export function contentPaths(i: Pick<PlanItem, "item_key" | "format" | "folder" 
         comment2: `${d}/${i.name}.comment2.txt`,
         alt: null as string | null,
       },
-      media: mediaPath(folder, `${i.folder}/exports/shorts/instagram/${i.name}.mp4`),
+      media: safePath(folder, `${i.folder}/exports/shorts/instagram/${i.name}.mp4`),
       single: true,
     };
   }
@@ -180,7 +191,7 @@ export function contentPaths(i: Pick<PlanItem, "item_key" | "format" | "folder" 
       comment2: `channels/${dir}/comment2.txt`,
       alt: `channels/${dir}/alt.txt` as string | null,
     },
-    media: mediaPath(folder, dir),
+    media: safePath(folder, dir),
     single: false,
   };
 }

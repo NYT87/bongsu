@@ -101,6 +101,17 @@ describe("an item by path", () => {
     expect(found?.problems.join()).not.toContain("not in the media store");
   });
 
+  it("counts an item whose folder is '..' as missing, never another workspace's file", async () => {
+    // inserted directly: the API's name rule lets ".." through, and B's folder is "client-b", A's is UPLOADS
+    await w.s3.put("exports/shorts/instagram/short1_b.mp4", "the bucket's root", "video/mp4"); // where "client-b/../" lands
+    const key = await planItem({ folder: "..", name: "short1_b", date: "2026-11-01", workspaceId: B });
+    const r = await resolveItem(e, w.fetch, key, "UTC", B);
+    expect(r?.media).toEqual([]);
+    expect(r?.problems.join()).toContain("not in the media store yet");
+    const a = await resolveItem(e, w.fetch, key, "UTC", "default");
+    expect(a?.media ?? []).toEqual([]);
+  });
+
   it("follows a renamed folder: files left in the old one are no longer found", async () => {
     const key = await planItem({ folder: FOLDER, name: "short1_b", date: "2026-11-01", workspaceId: B });
     await w.s3.put(`client-b/${mp4("short1_b")}`, "B's", "video/mp4");

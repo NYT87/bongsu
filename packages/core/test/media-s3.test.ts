@@ -21,6 +21,21 @@ function setup(o: { prefix?: string; pathStyle?: boolean } = {}) {
   return { s3, store, root };
 }
 
+describe("s3 paths with dot segments", () => {
+  it("refuses a path that climbs out of its folder: resolve and inside say no, the writers throw", async () => {
+    const { s3, store } = setup();
+    await s3.put("client-b/x/b.jpg", "b", "image/jpeg");
+    expect(await store.resolve("UPLOADS/../client-b/x/b.jpg")).toBeNull();
+    expect(await store.resolve("client-b/x/./b.jpg")).toBeNull();
+    const id = (await store.resolve("client-b/x/b.jpg"))!.id;
+    expect(await store.inside(id, "UPLOADS/..")).toBe(false);
+    await expect(store.ensureFolder("UPLOADS/../client-b")).rejects.toThrow(/not a path inside/);
+    await expect(store.createUpload("a.jpg", "UPLOADS/../client-b", "image/jpeg")).rejects.toThrow(/not a path inside/);
+    await expect(store.move(id, "UPLOADS/..")).rejects.toThrow(/not a path inside/);
+    expect(s3.objects.has("client-b/")).toBe(false);
+  });
+});
+
 for (const variant of [
   { name: "path style", o: { pathStyle: true } },
   { name: "virtual-hosted, under a prefix", o: { pathStyle: false, prefix: "bongsu/" } },

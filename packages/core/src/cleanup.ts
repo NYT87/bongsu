@@ -75,7 +75,7 @@ export async function cleanMedia(
         store = stores.default;
         const i = await getItem(env.DB, item_key, workspace_id);
         const paths = i ? contentPaths(i, folder) : null;
-        const node = store && paths?.single ? await store.resolve(paths.media) : null;
+        const node = store && paths?.single && paths.media ? await store.resolve(paths.media) : null;
         ids = node ? [node.id] : [];
       }
       if (!store || !ids.length) {

@@ -7,6 +7,11 @@ describe("mediaPath", () => {
     expect(mediaPath("demo-studio")).toBe("demo-studio");
     expect(mediaPath("demo-studio", "/inbox")).toBe("demo-studio/inbox");
   });
+  it("refuses a path that climbs out of the folder, or has an empty segment", () => {
+    for (const rest of ["../client-b/x", "a/../../b", "..", ".", "a/./b", "a//b"])
+      expect(() => mediaPath("UPLOADS", rest)).toThrow(FolderError);
+    expect(mediaPath("UPLOADS", "a..b/.hidden")).toBe("UPLOADS/a..b/.hidden");
+  });
 });
 
 describe("folderSlug", () => {

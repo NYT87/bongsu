@@ -8,9 +8,12 @@ export class FolderError extends Error {}
 const MAX = 60;
 const ALLOWED = /^[A-Za-z0-9_ -]+$/;
 
-/** `<folder>` or `<folder>/<rest>`: a path inside a workspace's folder, `rest` without a leading slash. */
+/** `<folder>` or `<folder>/<rest>`: a path inside a workspace's folder. `rest` may start or end with a slash; an
+ *  empty, `.` or `..` segment in it throws (plan data builds these paths, and `..` would climb out of the folder). */
 export const mediaPath = (folder: string, rest = ""): string => {
-  const r = rest.replace(/^\/+/, "");
+  const r = rest.replace(/^\/+|\/+$/g, "");
+  if (r && r.split("/").some((x) => x === "" || x === "." || x === ".."))
+    throw new FolderError(`not a path inside the folder: ${rest}`);
   return r ? `${folder}/${r}` : folder;
 };
 

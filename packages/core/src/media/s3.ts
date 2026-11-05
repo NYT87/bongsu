@@ -71,6 +71,17 @@ const b64url = {
 
 /** "a//b/" → "a/b": a logical path without empty segments. */
 const clean = (path: string) => path.split("/").filter(Boolean).join("/");
+/** A path a caller gives (resolve, ensureFolder, move, createUpload): `clean` and then refused, with null, when a
+ *  segment is `.` or `..`, which the URL would normalise to a key outside the folder the path names. */
+const strict = (path: string): string | null => {
+  const rel = clean(path);
+  return rel.split("/").some((x) => x === "." || x === "..") ? null : rel;
+};
+const mustBeInside = (path: string): string => {
+  const rel = strict(path);
+  if (rel === null) throw new Error(`s3: not a path inside the bucket: ${path}`);
+  return rel;
+};
 /** RFC 3986 for one path segment (S3 signs the encoded path). */
 const seg = (s: string) =>
   encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
@@ -258,14 +269,14 @@ export class S3Store implements MediaStore {
   }
 
   async resolve(path: string) {
-    const rel = clean(path);
+    const rel = strict(path);
     if (!rel) return null;
     return (await this.head(rel)) ?? (await this.folder(`${rel}/`));
   }
 
   async inside(id: string, folderPath: string) {
     const rel = keyOf(id);
-    const folder = clean(folderPath);
+    const folder = strict(folderPath);
     // the key says where it is: the trailing slash keeps "inbox/tr" from matching "inbox/trip"
     return !!rel && !!folder && rel.startsWith(`${folder}/`) && rel.length > folder.length + 1;
   }
@@ -281,7 +292,7 @@ export class S3Store implements MediaStore {
   }
 
   async ensureFolder(path: string) {
-    const rel = `${clean(path)}/`;
+    const rel = `${mustBeInside(path)}/`;
     const r = await this.send(this.url(rel), { method: "PUT", body: "" });
     if (!r.ok) this.refused(r, `creating ${rel}`);
     return b64url.encode(rel);
@@ -290,7 +301,7 @@ export class S3Store implements MediaStore {
   async move(id: string, toFolderPath: string) {
     const rel = keyOf(id);
     if (!rel) throw new Error("s3 move: not an id of this store");
-    const to = `${clean(toFolderPath)}/`;
+    const to = `${mustBeInside(toFolderPath)}/`;
     await this.ensureFolder(to);
     const isFolder = rel.endsWith("/");
     const target = `${to}${baseName(rel)}${isFolder ? "/" : ""}`;
@@ -331,7 +342,7 @@ export class S3Store implements MediaStore {
     const dot = safe.lastIndexOf(".");
     const suffix = crypto.randomUUID().slice(0, 8);
     const file = dot > 0 ? `${safe.slice(0, dot)}-${suffix}${safe.slice(dot)}` : `${safe}-${suffix}`;
-    const rel = `${clean(folderPath)}/${file}`;
+    const rel = `${mustBeInside(folderPath)}/${file}`;
     const req = await this.aws.sign(this.url(rel, { "X-Amz-Expires": String(UPLOAD_TTL_S) }), {
       method: "PUT",
       headers: { "Content-Type": mime },
