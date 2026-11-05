@@ -2,7 +2,7 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, Fragment, type ReactNode, useEffect, useState } from "react";
 import type { State } from "./App";
-import { api, apiFile, manages, NAVIGATED, switchWorkspace, when, withFreshCheck } from "./api";
+import { api, apiFile, manages, NAVIGATED, STATE_STALE, switchWorkspace, when, withFreshCheck } from "./api";
 import { GuideLink } from "./docs";
 import { Brand, Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
 
@@ -2150,8 +2150,8 @@ export function Members({ state }: Props) {
       await api(`members/${encodeURIComponent(m.userId)}/name`, { name: draft });
       setEditing(null);
       reload();
-    } catch (e) {
-      setNameErr(errorText(e));
+    } catch (error) {
+      setNameErr(errorText(error));
     }
   };
   const me = state.user?.id;
@@ -2910,6 +2910,7 @@ function GeneralSettings(_: Props) {
     try {
       await api("settings", { name, timezone: tz, digestHour: hour });
       toast({ ok: true, text: "Settings saved." });
+      dispatchEvent(new Event(STATE_STALE));
       reload();
     } catch (e) {
       setErr(errorText(e));
@@ -2994,6 +2995,7 @@ function IconCard({ iconUrl, onChange }: { iconUrl: string | null; onChange: () 
     try {
       await call();
       toast({ ok: true, text: done });
+      dispatchEvent(new Event(STATE_STALE));
       onChange();
     } catch (e) {
       setErr(errorText(e));

@@ -2,7 +2,7 @@
 // page. Paths live under /dashboard/ (the Worker serves index.html for each).
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, useCallback, useEffect, useState } from "react";
-import { APP_ONLY, api, manages, NAVIGATED, switchWorkspace } from "./api";
+import { APP_ONLY, api, manages, NAVIGATED, STATE_STALE, switchWorkspace } from "./api";
 import { Guide, GuideLink } from "./docs";
 import {
   AcceptInvite,
@@ -103,6 +103,10 @@ export function App() {
       .catch((e: Error) => setError(e.message));
   }, []);
   useEffect(load, [load]);
+  useEffect(() => {
+    addEventListener(STATE_STALE, load);
+    return () => removeEventListener(STATE_STALE, load);
+  }, [load]);
   useEffect(() => {
     const f = () => {
       setSection(sectionOf());

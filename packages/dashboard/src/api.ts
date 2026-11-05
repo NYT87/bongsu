@@ -22,35 +22,27 @@ export const NAVIGATED = "bongsu:navigated";
  *  connections, agent keys or settings. */
 export const manages = (state: State) => state.instanceAdmin || state.role === "admin";
 
-export async function api<T = Record<string, unknown>>(
-  path: string,
-  body?: unknown,
-  method?: "PUT" | "DELETE",
-): Promise<T> {
-  const r = await fetch(`/admin-api/${path}`, {
-    method: method ?? (body === undefined ? "GET" : "POST"),
-    headers: body === undefined ? {} : { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    credentials: "same-origin",
-  });
+/** Something the sidebar shows changed (the workspace's name or icon): App loads the state again. */
+export const STATE_STALE = "bongsu:state-stale";
+
+async function request<T>(path: string, init: { method: string; headers: Record<string, string>; body?: BodyInit }) {
+  const r = await fetch(`/admin-api/${path}`, { ...init, credentials: "same-origin" });
   const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
   if (r.status === 403 && data.app === true) dispatchEvent(new Event(APP_ONLY));
   if (!r.ok) throw new ApiError(r.status, String(data.error ?? r.statusText), data);
   return data as T;
 }
 
-/** Sends a file as the raw body (the workspace icon): the content type is the file's own. */
-export async function apiFile<T = Record<string, unknown>>(path: string, file: File, method: "PUT"): Promise<T> {
-  const r = await fetch(`/admin-api/${path}`, {
-    method,
-    headers: { "Content-Type": file.type },
-    body: file,
-    credentials: "same-origin",
+export const api = <T = Record<string, unknown>>(path: string, body?: unknown, method?: "PUT" | "DELETE") =>
+  request<T>(path, {
+    method: method ?? (body === undefined ? "GET" : "POST"),
+    headers: body === undefined ? {} : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
-  const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!r.ok) throw new ApiError(r.status, String(data.error ?? r.statusText), data);
-  return data as T;
-}
+
+/** Sends a file as the raw body (the workspace icon): the content type is the file's own. */
+export const apiFile = <T = Record<string, unknown>>(path: string, file: File, method: "PUT") =>
+  request<T>(path, { method, headers: { "Content-Type": file.type }, body: file });
 
 /** Opens a workspace in this session (the server refuses one the person can't open). */
 export const switchWorkspace = (id: string) => api("session/workspace", { id });
