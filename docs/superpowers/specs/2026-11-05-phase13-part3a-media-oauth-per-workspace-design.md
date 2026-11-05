@@ -101,6 +101,10 @@ itself under the folder) get signed.
 - **Settings → OAuth apps** (workspace admins), new: the workspace's own Meta and Google apps, with the redirect URLs
   to register in them, Save and Remove. Without one, the page says the workspace uses the instance's (or that the
   instance has none).
+- **Scheduler** (instance admins, read-only), a section on the Workspaces page: the three runs with their times
+  (`SCHEDULES`), `JOBS_PER_TICK` and `INBOX_WORKSPACES_PER_RUN` as in effect, whether the schedules are off, and the
+  last inbox run ("reached 3 of 7 workspaces; the others wait for the next run"). Each limit says which variable sets
+  it. Nothing here is editable. Served by `GET /admin-api/scheduler` (instance admins only).
 - **Creating a workspace** (setup wizard, Workspaces page): the folder is filled from the name and can be edited.
 - Audit rows: `media_folder`, `workspace_store_set`, `workspace_store_remove`, `workspace_oauth_app_set`,
   `workspace_oauth_app_remove`.
@@ -123,8 +127,14 @@ routes): `GET`/`PUT /settings/media-folder`, `GET /workspace/stores`, `PUT`/`DEL
   drafts go to the workspace it was found under. `inbox_workspace` and its lookup are removed. A project with no
   planned items starts on the workspace's first Instagram account, as today.
 - **Budget:** the scan keeps the free tier's 50 subrequests in mind. It takes workspaces in turn from a cursor in
-  `settings` (`inbox_cursor`), and stops once its budget (a constant in `constants.ts`) is spent, so many workspaces
-  never run over the limit. The inbox folder id cache becomes per store and folder (`inbox_folder:<store>:<folder>`).
+  `settings` (`inbox_cursor`) and scans at most `INBOX_WORKSPACES_PER_RUN` of them per run, so many workspaces never
+  run over the limit. The inbox folder id cache becomes per store and folder (`inbox_folder:<store>:<folder>`).
+- **`INBOX_WORKSPACES_PER_RUN`** follows `JOBS_PER_TICK`: a constant default per runtime (small on Cloudflare, larger
+  on Node, in `constants.ts`), overridden by the variable of that name, clamped to a maximum. It is set where the
+  instance is deployed (wrangler variables, the Docker environment), never in the dashboard: the right value depends
+  on the hosting plan, and a wrong one fails the run quietly.
+- **The last inbox run** is recorded in `settings` (`inbox_last`: when, workspaces reached, workspaces waiting), so the
+  dashboard can show when the budget was too small.
 - **`inbox_seen`** stays keyed by (store, file): a file is in exactly one workspace's folder.
 - **Cleanup:** posted media moves to `<folder>/_posted/` in its own store; the item's workspace gives the folder.
 - **Broken-store notice:** an instance store's goes to the instance admins (as today); a workspace's own store's goes
@@ -174,6 +184,8 @@ another store, a workspace's own store); the default store per workspace.
   store are refused; A's own files are accepted.
 - **`/m` (#24):** a link for A's file serves it; a forged, expired or other-store signature is refused; no route in A
   hands out a link for B's file.
+- **Scheduler:** `GET /admin-api/scheduler` answers the limits in effect (default, variable, clamped) and the last
+  inbox run; workspace admins, editors and creators get 403.
 - **Stores and apps:** add, test, default, remove (refused while in use) for a workspace's own store; the dashboard
   routes refuse editors and creators; a workspace's OAuth app is used for a flow started in it, the instance's
   otherwise; a removed app mid-flow fails cleanly.
@@ -186,6 +198,9 @@ another store, a workspace's own store); the default store per workspace.
 - `docs/media-stores.md`: folders, stores per workspace, references and the check.
 - `site/docs`: the dashboard's Media and Settings pages, the app's inbox text.
 - The agent API docs: file ids belong to the key's workspace.
+- The deploy docs (Cloudflare and Docker): `INBOX_WORKSPACES_PER_RUN` beside `JOBS_PER_TICK`.
+- `apps/cloudflare/wrangler.cron.toml`: the triggers' comment points at `core/constants.ts` (it still names the deleted
+  `src/config.ts`).
 - `docs/PLAN.md`: tick #21 and #24.
 - A changeset (minor) for `core`, `api`, `web`, `dashboard`, `cloudflare`, `node` and `schema`.
 
@@ -194,3 +209,5 @@ another store, a workspace's own store); the default store per workspace.
 - The workspace icon (#34) and names (#35): part 3b.
 - Moving files when a folder or a default store changes.
 - A `local` store per workspace.
+- Tunable schedules (when each run happens, the other runs' per-run limits, renaming "inbox" to "upkeep"): its own
+  issue, #64.
