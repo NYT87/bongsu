@@ -28,7 +28,7 @@ const origFetch = globalThis.fetch;
 let w: World;
 let e: Env;
 
-type Json = Record<string, any>;
+type Json = Record<string, unknown>;
 const send = async (
   routes: "app" | "admin",
   path: string,
@@ -332,7 +332,7 @@ describe("where people are named", () => {
     });
     expect(v.json).toMatchObject({ approved: true });
     const item = () => agent(`/v1/items/${encodeURIComponent(key)}`);
-    expect((await item()).approval.approved_by).toBe("Ana");
+    expect(((await item()).approval as Json).approved_by).toBe("Ana");
     // the app's item page says the same
     const ina = await as("ina", "default");
     const appItem = async (k: string) =>
@@ -340,7 +340,7 @@ describe("where people are named", () => {
     expect(await appItem(key)).toMatchObject({ by: "Ana", matches: true });
     // a removed member's approval still names them (by their own name: the display name went with the membership)
     await env.DB.prepare("DELETE FROM memberships WHERE workspace_id = 'default' AND user_id = 'amy'").run();
-    expect((await item()).approval.approved_by).toBe("Amy");
+    expect(((await item()).approval as Json).approved_by).toBe("Amy");
     expect(await appItem(key)).toMatchObject({ by: "Amy" });
     // an approval that recorded no person
     const other = await planItem({ folder, name: "short2_x", date: "2026-10-21" });

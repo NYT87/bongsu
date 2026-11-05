@@ -132,6 +132,14 @@ describe("PUT and DELETE /admin-api/settings/icon", () => {
     expect((await auditRows("workspace_icon_remove")).results).toEqual([{ workspace_id: "default", user_id: "amy" }]);
   });
 
+  it("removing when there is no icon answers iconUrl null and writes no audit row", async () => {
+    const h = await dash("amy", "default");
+    const del = await call("DELETE", "/admin-api/settings/icon", h);
+    expect(del.status).toBe(200);
+    expect(del.json.iconUrl).toBeNull();
+    expect((await auditRows("workspace_icon_remove")).results).toEqual([]);
+  });
+
   it("acts only on the session's workspace", async () => {
     await setIcon(env.DB, "b", png(256, 3), 1);
     const h = await dash("amy", "default");

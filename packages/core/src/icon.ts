@@ -64,10 +64,11 @@ export async function setIcon(db: Db, workspaceId: string, bytes: Uint8Array, no
 
 /** Whether the workspace had an icon. */
 export async function removeIcon(db: Db, workspaceId: string): Promise<boolean> {
-  const had = await db.prepare("SELECT 1 AS x FROM workspace_icons WHERE workspace_id = ?1").bind(workspaceId).first();
-  if (!had) return false;
-  await db.prepare("DELETE FROM workspace_icons WHERE workspace_id = ?1").bind(workspaceId).run();
-  return true;
+  const gone = await db
+    .prepare("DELETE FROM workspace_icons WHERE workspace_id = ?1 RETURNING workspace_id")
+    .bind(workspaceId)
+    .first();
+  return !!gone;
 }
 
 /** The icon hash of each of the workspaces that has one. */

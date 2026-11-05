@@ -2149,6 +2149,7 @@ export function Members({ state }: Props) {
     try {
       await api(`members/${encodeURIComponent(m.userId)}/name`, { name: draft });
       setEditing(null);
+      if (m.userId === me) dispatchEvent(new Event(STATE_STALE)); // the sidebar shows this name too
       reload();
     } catch (error) {
       setNameErr(errorText(error));

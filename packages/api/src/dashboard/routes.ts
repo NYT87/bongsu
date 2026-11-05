@@ -1889,6 +1889,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   app.put(
     "/admin-api/settings/icon",
     wrap(async (c) => {
+      // refused before the body is read when it says how big it is
+      const declared = Number(c.req.header("content-length"));
+      if (declared > ICON_MAX_BYTES) throw new AdminError(400, "the icon is over 200 KB");
       const bytes = new Uint8Array(await c.req.arrayBuffer());
       // refused before it is looked at; checkIcon says the same for a direct caller
       if (bytes.length > ICON_MAX_BYTES) throw new AdminError(400, "the icon is over 200 KB");
@@ -1905,8 +1908,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   app.delete(
     "/admin-api/settings/icon",
     wrap(async (c) => {
-      await removeIcon(c.env.DB, ws(c));
-      await audit(c, "workspace_icon_remove", null, {});
+      if (await removeIcon(c.env.DB, ws(c))) await audit(c, "workspace_icon_remove", null, {});
       return { iconUrl: null };
     }),
   );
