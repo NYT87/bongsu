@@ -127,7 +127,10 @@ describe("seedDemo", () => {
       rows(db, "SELECT role FROM memberships WHERE workspace_id = 'default' AND user_id = 'owner'")[0].role,
       "admin",
     );
-    assert.equal(rows(db, "SELECT media_folder FROM workspace_settings WHERE workspace_id = 'default'")[0].media_folder, "UPLOADS");
+    assert.equal(
+      rows(db, "SELECT media_folder FROM workspace_settings WHERE workspace_id = 'default'")[0].media_folder,
+      "UPLOADS",
+    );
     assert.deepEqual(rows(db, "SELECT id, workspace_id FROM media_store"), [{ id: "local", workspace_id: null }]);
     assert.equal(count(db, "api_keys", "name = 'claude-code'"), 1);
     assert.equal(count(db, "api_keys", "user_id = 'owner'"), 1);
