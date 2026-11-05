@@ -2974,9 +2974,10 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
   };
   const saveFolder = async (e: FormEvent) => {
     e.preventDefault();
+    if (folder.trim() === data?.folder) return; // aria-disabled doesn't stop a submit
     setFolderErr(null);
     try {
-      const r = await api<{ folder: string }>("settings/media/folder", { folder }, "PUT");
+      const r = await api<{ folder: string }>("settings/media/folder", { folder: folder.trim() }, "PUT");
       toast({ ok: true, text: `The media folder is ${r.folder}.` });
       reload();
     } catch (e) {
