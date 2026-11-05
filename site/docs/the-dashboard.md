@@ -185,8 +185,8 @@ back as it was (posts that came due meanwhile go out only within the catch-up wi
 an admin ask for your passkey again.
 
 **Scheduler** is a read-only section for instance admins: the three runs and their times, `JOBS_PER_TICK` and
-`INBOX_WORKSPACES_PER_RUN` as the cron last recorded them, and when the inbox last ran. They are set where the instance
-is deployed ([Configuration](configuration.md)); making the schedule tunable is tracked in issue #64.
+`INBOX_WORKSPACES_PER_RUN` as the cron last recorded them, when the inbox last ran, and a notice when the schedules
+are off (`SCHEDULES=off` on Node). They are set where the instance is deployed ([Configuration](configuration.md)); making the schedule tunable is tracked in issue #64.
 
 ## Settings
 

@@ -3572,6 +3572,7 @@ interface SchedulerInfo {
   jobsPerTick: Recorded | null;
   inboxWorkspacesPerRun: Recorded | null;
   inboxLast: { at: string; reached: number; total: number; limit: number } | null;
+  schedulesOff: boolean;
   variables: { jobsPerTick: string; inboxWorkspacesPerRun: string };
 }
 const RUN_NAME: Record<string, string> = {
@@ -3610,6 +3611,12 @@ function SchedulerCard() {
         <Loading error={error} retry={reload} />
       ) : (
         <>
+          {data.schedulesOff && (
+            <p className="banner" role="status">
+              The schedules are off (<code>SCHEDULES=off</code>): this server only serves, nothing is published, scanned
+              or polled on its own.
+            </p>
+          )}
           <p className="muted small">
             Runs on a schedule (UTC). Each run handles a limited amount, so a busy instance catches up over the next
             runs. Read-only: the limits are set where the scheduler runs.

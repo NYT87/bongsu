@@ -75,6 +75,7 @@ import { describePlatform } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
+import { schedulesOff } from "@bongsu/core/schedules";
 import {
   callerZone,
   sessionWorkspace,
@@ -1798,6 +1799,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         inboxLast: inbox
           ? { at: utcIso(inbox.at), reached: inbox.reached, total: inbox.total, limit: inbox.limit }
           : null,
+        schedulesOff: schedulesOff(c.env),
         variables: { jobsPerTick: "JOBS_PER_TICK", inboxWorkspacesPerRun: "INBOX_WORKSPACES_PER_RUN" },
       };
     }),

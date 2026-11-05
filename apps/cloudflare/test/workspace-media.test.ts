@@ -379,6 +379,7 @@ describe("the Scheduler page", () => {
       jobsPerTick: null,
       inboxWorkspacesPerRun: null,
       inboxLast: null,
+      schedulesOff: false,
       variables: { jobsPerTick: "JOBS_PER_TICK", inboxWorkspacesPerRun: "INBOX_WORKSPACES_PER_RUN" },
     });
     const cron = await testEnv(env, { JOBS_PER_TICK: "3", INBOX_WORKSPACES_PER_RUN: "1" });
@@ -391,6 +392,11 @@ describe("the Scheduler page", () => {
     expect(j.inboxWorkspacesPerRun).toEqual({ value: 1, at });
     expect(j.inboxLast).toMatchObject({ at, reached: 1, limit: 1 });
     expect(j.inboxLast.total).toBeGreaterThanOrEqual(2);
+  });
+
+  it("says when the schedules are off (Node's SCHEDULES=off): nothing runs on its own then", async () => {
+    e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test", RP_ID: "bongsu.test", SCHEDULES: "off" });
+    expect((await (await as("ina"))("/admin-api/scheduler")).json.schedulesOff).toBe(true);
   });
 
   it("a workspace admin, an editor and a creator are refused", async () => {

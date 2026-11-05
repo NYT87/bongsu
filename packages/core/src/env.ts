@@ -43,4 +43,6 @@ export interface Env {
   JOBS_PER_TICK?: string;
   /** Workspaces the inbox run scans per run (constants.ts INBOX_WORKSPACES_PER_RUN): unset, 3 on Cloudflare and 20 on Node. */
   INBOX_WORKSPACES_PER_RUN?: string;
+  /** "off" on Node: the server only serves, nothing runs on a schedule (a replica, a demo). Never set on Cloudflare. */
+  SCHEDULES?: string;
 }

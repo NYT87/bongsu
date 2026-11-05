@@ -18,6 +18,9 @@ import { tick } from "./tick";
 /** Every schedule, by its cron expression (UTC). */
 export const SCHEDULES = [CRON_INSTAGRAM, CRON_SHORTS, CRON_INBOX] as const;
 
+/** Whether this instance runs no schedules (Node's SCHEDULES=off); Cloudflare's cron Worker always runs them. */
+export const schedulesOff = (env: Pick<Env, "SCHEDULES">) => env.SCHEDULES === "off";
+
 export async function runSchedule(env: Env, fetcher: typeof fetch, cron: string, at: Date): Promise<void> {
   const deps = { fetch: fetcher, now: at };
   if (cron === CRON_INBOX) {

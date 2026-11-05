@@ -13,7 +13,7 @@ import type { Db } from "@bongsu/core/db";
 import { registerMailer } from "@bongsu/core/mail";
 import { registerStore } from "@bongsu/core/media/index";
 import { PostgresDb } from "@bongsu/core/postgres";
-import { runSchedule, SCHEDULES } from "@bongsu/core/schedules";
+import { runSchedule, SCHEDULES, schedulesOff } from "@bongsu/core/schedules";
 import { exportData, importData, TransferError } from "@bongsu/schema/transfer";
 import { serve } from "@hono/node-server";
 import cron from "node-cron";
@@ -130,7 +130,7 @@ async function main() {
   // The schedules, in UTC like Cloudflare's cron. Each run is awaited by the shutdown below.
   const running = new Set<Promise<void>>();
   // SCHEDULES=off: serve only (a replica, a demo that must neither publish nor poll any platform)
-  const off = vars.SCHEDULES === "off";
+  const off = schedulesOff(env);
   if (off) console.log("bongsu: schedules off");
   const tasks = (off ? [] : SCHEDULES).map((expr) =>
     cron.schedule(
