@@ -1,5 +1,125 @@
 # @bongsu/dashboard
 
+## 0.5.0
+
+### Minor Changes
+
+- 3d22c04: Switching workspaces and notifications per person (Phase 13, part 2).
+  
+  - **Switching.** Someone who can open more than one workspace switches in the dashboard's sidebar and in the app's
+    header, which opens a bottom sheet. The two session routes are `POST /admin-api/session/workspace` and
+    `POST /app-api/session/workspace` (a session cookie only: agent keys can't switch); `state` and `me` now carry
+    `workspace` and `workspaces`. `POST /admin-api/workspaces/:id/open` stays as an alias until the next minor version.
+  - **Pushes for every workspace.** A device's subscription belongs to its person and gets the notifications of every
+    workspace they're a member of. Links carry `?w=<id>` and open in that workspace; a person no longer in it sees
+    "You're no longer in that workspace." Tags are `<workspace>:<target>`, and when you can open more than one workspace
+    the title starts with `Workspace name · `. Instance admins get pushes only from the workspaces they're members of
+    (and the prefix, since they can open them all).
+  - **Notification groups.** Five groups per person and workspace: **Needs you**, **Problems**, **Published and
+    results**, **New drafts and comments** and **Daily digest**, set in the app's Settings → Notifications. Admins and
+    creators get all five by default; editors get all but **Needs you**. Setting a group back to its default follows the
+    role again. The workspace's ntfy topic and the audit log still get everything. Removing a member deletes their
+    settings for that workspace, and their devices stop getting its pushes.
+  
+  Updating an existing instance (migration 0021 runs on its own):
+  
+  - Existing devices now get pushes from every workspace their person is in, not only the one they subscribed in.
+  - Editors no longer get `needs_you` pushes (posts held past their time, and Shorts comments waiting for a working
+    connection) by default; an editor who wants them turns **Needs you** on in Settings → Notifications.
+  - The Workspaces page's **Open** still works; the sidebar's switcher does the same for anyone in several workspaces.
+- aa8968a: A media folder, media stores and OAuth apps per workspace (Phase 13, part 3a).
+  
+  - **Media folder.** Each workspace has its own: the slug of the workspace's name (`demo-travel`) for one created since, `UPLOADS` for a workspace
+    kept from before this release, editable by its admins in Settings → Media (Bongsu never moves files). Inside it: `inbox/<project>/`,
+    `<project>/…`, `_posted/`, and the app's uploads in `_uploads/` (they were a top folder, "Bongsu app uploads").
+  - **Stores.** Besides the instance's, a workspace's admins add their own S3 bucket or Google Drive in Settings → Media.
+    A workspace's default is its own store if it has one, else the instance's. A file reference must be in the caller's
+    workspace (its own store, or inside its folder in an instance store), else it's refused with "not in this
+    workspace's media". S3 ids and paths with `.`, `..` or empty segments are refused, and a redirect from an S3
+    endpoint is an error, never followed. A broken store of a workspace
+    is told to that workspace and links to Settings → Media. Agent API `create_draft` file ids are in the key's
+    workspace's default store.
+  - **OAuth apps.** A workspace can set its own Meta and Google apps in Settings → OAuth apps; a connection uses it if
+    set, else the instance's, and keeps the one it started with. The redirect URLs are the same.
+  - **Inbox.** Scans each workspace's `<folder>/inbox` in its stores, at most `INBOX_WORKSPACES_PER_RUN` workspaces per
+    run, in turn (default 3 on Cloudflare, 20 on Node, at most 100; set at deploy time). The "inbox workspace" picker on
+    the Media page is gone.
+  - **Scheduler.** The Workspaces page has a read-only Scheduler section for instance admins: the three runs and
+    their times, `JOBS_PER_TICK`, `INBOX_WORKSPACES_PER_RUN`, the last inbox run, and whether the schedules are off
+    (`SCHEDULES=off` on Node). Making the schedule tunable is #64.
+  - **Dashboard.** Get started's media step needs an instance store (a workspace's own bucket doesn't count).
+    Settings has General, Media and OAuth apps tabs (`/dashboard/settings`, `/settings/media`,
+    `/settings/apps`).
+  
+  Updating an existing instance (the migrations run on their own):
+  
+  - Nothing moves: a workspace kept from before this release keeps `UPLOADS`, and the app's uploads from before stay in "Bongsu app uploads"
+    where they are; new uploads go to `_uploads/`.
+  - New workspaces get a folder named from their name: create it in the store (or change it in Settings → Media) before
+    dropping files in its inbox.
+  - The inbox workspace chosen on a store is no longer used: each workspace's inbox goes to that workspace.
+  - Optionally set `INBOX_WORKSPACES_PER_RUN` (in `[vars]` of `wrangler.cron.toml`, or `.env` on Node).
+- 6348d13: A workspace icon, and people's names per workspace (Phase 13, part 3b).
+  
+  - **Icon.** A workspace's admins set an optional icon in the dashboard's Settings: a square PNG, 192 to 1024 pixels,
+    at most 200 KB (`PUT` and `DELETE /admin-api/settings/icon`). It shows beside the workspace's name in the dashboard's
+    sidebar, in the app's header and workspace picker, and in its push notifications. It is served, public, at `/icon/<hash>.png`.
+    The installed app's icon stays the instance's. `iconUrl` is now part of `state`, `me` and the settings.
+  - **Names.** You set your own name in the app's Settings → You, and a name each workspace shows for you
+    (`POST /app-api/me/name` and `/app-api/me/display-name`); an admin can edit a member's name for their workspace
+    (`POST /admin-api/members/:userId/name`). Approvals ("Approved by"), pauses ("Paused by"), drafts, moved releases, the
+    member list and the audit log name people this way. Agents see `paused_by`, `approval.approved_by` and each draft's
+    `by`.
+  
+  Updating an existing instance (migration 0023 runs on its own): nothing to do. No workspace has an icon and nobody has
+  a display name until someone sets one; people are shown by their name, else the start of their email, as before.
+- c6add56: People, roles, invites and workspaces (Phase 13, part 1).
+  
+  - **Roles.** A person is an **admin**, an **editor** or a **creator** in each workspace, and the instance has **instance
+    admins**. Admins run their workspace (connections, accounts, keys, settings, members); editors work on the plan,
+    texts and drafts and read the rest, with no approving, pausing or connecting; creators use the app, where they plan,
+    approve, pause, resume and connect their own accounts, and are pointed there when they sign in to the dashboard.
+    Instance admins also get an **Instance** group: Workspaces, Media and OAuth apps.
+  - **First run.** The setup token makes an instance admin, a user who belongs to no workspace, and the dashboard asks
+    for the first workspace (a name, its time zone, its first admin: you or an email). Nothing lands in a workspace nobody
+    chose: an inbox draft goes to the workspace whose plan has its project, else to the store's new **Inbox feeds**
+    workspace (dashboard, Media), else it waits; a broken store is told to the instance admins.
+  - **Members and invites.** A workspace's admins invite people by email with a role: a one-time link for 7 days, always
+    shown to copy and emailed when a mailer is set. Admins and editors join in the dashboard, creators in the app, with
+    a new passkey or the one they have. Admins change roles and remove members (cut off at once, and the invites they
+    sent as an admin revoked); a workspace always keeps one admin. Instance admins make a member an instance admin, or
+    stop them being one, from Members.
+  - **Workspaces page.** Instance admins list, create, rename, archive and restore workspaces, add an admin and open one
+    to work in it. An archived workspace stops completely (nothing publishes, keys and members are refused, no digest,
+    no comments or metrics read). A workspace's own admins rename it in Settings. An instance admin in no workspace
+    lands on the Instance pages.
+  - **Audit.** A workspace's log shows only its own rows, each naming the person who acted, in the app as in the
+    dashboard; instance admins also read the instance's (new workspaces, media stores, OAuth apps, instance admins).
+  - **Connect from the app.** Admins and creators connect Instagram and YouTube from the app's Settings with the
+    instance's OAuth apps; a connection lands in the workspace the flow started from.
+  - **Connect flows stay in their browser.** Every OAuth flow (Instagram and YouTube from the dashboard or the app,
+    Connect Google Drive) sets a short-lived cookie in the browser that started it, and the callback finishes it only in
+    that browser: a provider link sent to someone else can no longer connect their account into your workspace. A flow
+    someone started before the update is refused; start it again.
+  - **Pause per workspace.** **Pause this workspace** and **Resume with passkey** act on one workspace; the others go on
+    publishing. An agent key's `pause_scheduler` pauses its own workspace, and `get_status` and the digest say so.
+  
+  Updating an existing instance (migrations 0018, 0019 and 0020 run on their own):
+  
+  - Roles are converted: `owner` becomes `admin`, `approver` becomes `creator` and `viewer` becomes `editor`. People who
+    were owners also become instance admins, so they keep Media, OAuth apps and the new Workspaces page; make anyone
+    else an instance admin (**Make instance admin** in Members) only if they should have them.
+  - Existing `approver`s become creators and so use the app, not the dashboard; if one needs the dashboard, change their
+    role to editor or admin in Members.
+  - The `default` workspace stays (it has your data), and so does its first admin. A fresh instance has no `default`
+    workspace and no `owner` user: its first user is the one who signs up with the setup token.
+  - The old instance-wide pause moves to the `default` workspace; any other workspace is not paused.
+  - Each media store keeps feeding `default` from its inbox (**Inbox feeds**), as before; change it in the dashboard,
+    Media, if another workspace should receive them.
+  - Signed-in sessions keep working and open the person's first workspace. A person who belongs to several workspaces
+    works in the first until a switcher arrives; an instance admin opens another from the Workspaces page.
+  - Agent keys and CLI tokens are unchanged, except that a CLI token carries its person's new role.
+
 ## 0.4.0
 
 ### Minor Changes
