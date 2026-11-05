@@ -3085,9 +3085,11 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
                                 className="link"
                                 onClick={() =>
                                   act(async () => {
-                                    const r = await api<{ ok: boolean; error: string | null }>(
-                                      `settings/media/stores/${s.kind}/test`,
-                                      s.kind === "s3" ? s.settings : {},
+                                    const r = await withFreshCheck(() =>
+                                      api<{ ok: boolean; error: string | null }>(
+                                        `settings/media/stores/${s.kind}/test`,
+                                        s.kind === "s3" ? s.settings : {},
+                                      ),
                                     );
                                     if (!r.ok) throw new Error(`${STORE_NAME[s.kind]} didn't answer: ${r.error}`);
                                   }, `${STORE_NAME[s.kind]} answers: it can read and write.`)

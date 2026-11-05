@@ -33,8 +33,26 @@ export class StoreError extends Error {}
 
 // ---- what the dashboard sends
 
-/** An S3 store's settings from the form, checked: nothing else is kept. */
-export function s3Settings(b: Record<string, unknown>): S3Settings {
+/** Names only a private network resolves (or this machine): a workspace's bucket isn't at one. */
+const PRIVATE_NAME = /(^|\.)(localhost|local|internal|lan|localdomain|home\.arpa)$/;
+
+/** Why a workspace's bucket can't be at this host, or null. A workspace admin's Test and save make the server send
+ *  signed requests there and report how they went, so they only reach a public name over https: not an IP address
+ *  (the URL parser writes every IPv4 form as dotted quads, IPv6 in brackets), not localhost, not a one-label or
+ *  private network's name. The instance admins run the server, so their endpoints aren't limited. */
+function workspaceEndpointProblem(u: URL): string | null {
+  const host = u.hostname.toLowerCase().replace(/\.$/, "");
+  if (u.protocol !== "https:") return "a workspace's bucket is reached over https://";
+  if (host.startsWith("[") || /^\d+(\.\d+){3}$/.test(host))
+    return "a workspace's bucket is reached by its name, not an IP address";
+  if (!host.includes(".") || PRIVATE_NAME.test(host))
+    return "a workspace's bucket is at a public address, not localhost or a private network's name";
+  return null;
+}
+
+/** An S3 store's settings from the form, checked: nothing else is kept. A workspace's own (`scope`) is only reached
+ *  at a public https address (workspaceEndpointProblem). */
+export function s3Settings(b: Record<string, unknown>, scope: StoreScope = { workspaceId: null }): S3Settings {
   const endpoint = String(b.endpoint ?? "").trim();
   let u: URL;
   try {
@@ -46,6 +64,8 @@ export function s3Settings(b: Record<string, unknown>): S3Settings {
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") throw new StoreError("the endpoint starts with https://");
   if (u.search || u.hash || u.username) throw new StoreError("the endpoint is the service's address only");
+  const problem = scope.workspaceId === null ? null : workspaceEndpointProblem(u);
+  if (problem) throw new StoreError(problem);
   const bucket = String(b.bucket ?? "").trim();
   if (!/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/.test(bucket))
     throw new StoreError("the bucket name: 3–63 lowercase letters, digits, dots and dashes");
@@ -70,13 +90,21 @@ export function s3Credentials(b: Record<string, unknown>): string | null {
 
 // ---- testing, saving, removing
 
-/** The folder a scope's stores are tested in: the workspace's own media folder, UPLOADS for the instance's. */
-async function testFolder(env: Env, scope: StoreScope): Promise<string> {
-  return scope.workspaceId === null ? "UPLOADS" : (await workspaceSettings(env.DB, scope.workspaceId)).mediaFolder;
+/** The folder a scope's stores are tested in: the workspace's own media folder; for the instance's, the first
+ *  active workspace's, as checkStores does (null when there is none: nothing is made). */
+async function testFolder(env: Env, scope: StoreScope): Promise<string | null> {
+  const ws =
+    scope.workspaceId ??
+    (
+      await env.DB.prepare("SELECT id FROM workspaces WHERE archived_at IS NULL ORDER BY id LIMIT 1").first<{
+        id: string;
+      }>()
+    )?.id;
+  return ws ? (await workspaceSettings(env.DB, ws)).mediaFolder : null;
 }
 
 /** What Test does with settings before they're saved: find (or make) <folder>/inbox, so reading and writing both
- *  work. */
+ *  work. With no workspace to test in, the store is only built (it isn't asked for a folder nobody uses). */
 export async function testStore(
   env: Env,
   fetcher: typeof fetch,
@@ -86,8 +114,12 @@ export async function testStore(
   scope: StoreScope = { workspaceId: null },
 ): Promise<{ ok: boolean; error: string | null }> {
   try {
+    // checked again here, whoever calls: the routes do, but a workspace's bucket must never reach a private address
+    if (kind === "s3" && scope.workspaceId !== null) s3Settings(settings, scope);
     const store = buildStore(env, fetcher, kind, settings, credentials, storeId(kind, scope.workspaceId));
-    const inbox = mediaPath(await testFolder(env, scope), "inbox");
+    const folder = await testFolder(env, scope);
+    if (folder === null) return { ok: true, error: null };
+    const inbox = mediaPath(folder, "inbox");
     if (!(await store.resolve(inbox))) await store.ensureFolder(inbox);
     if (!(await store.resolve(inbox))) return { ok: false, error: `${inbox} can't be found after making it` };
     return { ok: true, error: null };

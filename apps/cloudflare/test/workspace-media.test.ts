@@ -176,12 +176,60 @@ describe("a workspace's media settings", () => {
     ]);
   });
 
+  it("a workspace's bucket is only reached at a public https address; the instance's endpoints aren't limited", async () => {
+    const amy = await as("amy", "admin");
+    const refused: [string, RegExp][] = [
+      ["http://s3.test", /https:/],
+      ["https://127.0.0.1", /not an IP address/],
+      ["https://2130706433", /not an IP address/], // 127.0.0.1 written as one number
+      ["https://[::1]", /not an IP address/],
+      ["https://[::ffff:10.0.0.5]", /not an IP address/],
+      ["https://10.0.0.5:9000", /not an IP address/],
+      ["https://169.254.169.254", /not an IP address/],
+      ["https://localhost", /public address/],
+      ["https://minio.localhost", /public address/],
+      ["https://minio", /public address/],
+      ["https://bucket.internal", /public address/],
+      ["https://nas.local.", /public address/],
+    ];
+    for (const [endpoint, why] of refused)
+      for (const p of ["stores/s3/test", "stores/s3"]) {
+        const r = await amy(`/admin-api/settings/media/${p}`, { ...S3_FORM, endpoint });
+        expect(r.status, `${p} ${endpoint}`).toBe(400);
+        expect(r.json.error, `${p} ${endpoint}`).toMatch(why);
+      }
+    expect(await env.DB.prepare("SELECT 1 FROM media_store WHERE id = 's3-default'").first()).toBeNull();
+    // the core refuses it too, whoever calls
+    await expect(
+      saveStore(
+        e,
+        w.fetch,
+        { workspaceId: "default" },
+        "s3",
+        { ...TEST_S3_SETTINGS, endpoint: "https://127.0.0.1" },
+        JSON.stringify(TEST_S3_KEYS),
+        "amy",
+        0,
+      ),
+    ).rejects.toThrow(/not an IP address/);
+    // a public name over https still works
+    expect((await amy("/admin-api/settings/media/stores/s3/test", S3_FORM)).json).toEqual({ ok: true, error: null });
+    // the instance's: http and addresses are the instance admins' call (their server, their network)
+    const ina = await as("ina");
+    expect((await ina("/admin-api/media-stores/s3/test", { ...S3_FORM, endpoint: "http://s3.test" })).json).toEqual({
+      ok: true,
+      error: null,
+    });
+    const local = await ina("/admin-api/media-stores/s3/test", { ...S3_FORM, endpoint: "http://127.0.0.1:9000" });
+    expect(local.status).toBe(200);
+  });
+
   it("changes that ask for a fresh passkey check refuse without one", async () => {
     await env.DB.prepare(
       "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'amy', 'admin', 0) ON CONFLICT (workspace_id, user_id) DO NOTHING",
     ).run();
     const stale = caller(await createSession(env.DB, nowS() - 11 * 60, { app: "dashboard", userId: "amy" }));
-    for (const p of ["stores/s3", "stores/drive/start", "stores/s3/remove"])
+    for (const p of ["stores/s3", "stores/s3/test", "stores/drive/start", "stores/s3/remove"])
       expect((await stale(`/admin-api/settings/media/${p}`, S3_FORM)).json, p).toMatchObject({ verify: true });
     expect(
       (await stale("/admin-api/settings/oauth-apps/google", { clientId: "c", clientSecret: "s" })).json,

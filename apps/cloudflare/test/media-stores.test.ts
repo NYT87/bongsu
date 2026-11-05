@@ -144,6 +144,27 @@ describe("the dashboard's Media page", () => {
     expect((await call("/admin-api/media-stores/drive/inbox", { workspace: "default" })).status).toBe(404);
   });
 
+  it("tests the instance's bucket in the folder of a workspace that uses it, and makes nothing when none does", async () => {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE workspaces SET archived_at = 1 WHERE id <> 'default'"),
+      env.DB.prepare("UPDATE workspace_settings SET media_folder = 'demo-a' WHERE workspace_id = 'default'"),
+    ]);
+    try {
+      expect((await call("/admin-api/media-stores/s3/test", S3_FORM)).json).toEqual({ ok: true, error: null });
+      expect(w.s3.objects.has("demo-a/inbox/")).toBe(true);
+      expect(w.s3.objects.has("UPLOADS/inbox/")).toBe(false); // no workspace's folder
+      w.s3.objects.clear();
+      await env.DB.prepare("UPDATE workspaces SET archived_at = 1").run();
+      expect((await call("/admin-api/media-stores/s3/test", S3_FORM)).json).toEqual({ ok: true, error: null });
+      expect([...w.s3.objects.keys()]).toEqual([]);
+    } finally {
+      await env.DB.batch([
+        env.DB.prepare("UPDATE workspaces SET archived_at = NULL WHERE id = 'default'"),
+        env.DB.prepare("UPDATE workspace_settings SET media_folder = 'UPLOADS' WHERE workspace_id = 'default'"),
+      ]);
+    }
+  });
+
   it("tests a bucket before saving it, keeps the keys encrypted, and keeps them when the form leaves them empty", async () => {
     const bad = await call("/admin-api/media-stores/s3/test", { ...S3_FORM, accessKeyId: "WRONG" });
     expect(bad.json).toMatchObject({ ok: false });

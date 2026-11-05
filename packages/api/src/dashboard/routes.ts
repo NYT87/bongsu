@@ -1651,7 +1651,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   const ownStoreInput = async (c: C, kind: StoreKind, b: Record<string, unknown>) => {
     if (kind !== "s3") throw new AdminError(400, "Google Drive is connected with its button, not a form");
     return {
-      settings: { ...s3Settings(b) },
+      settings: { ...s3Settings(b, { workspaceId: ws(c) }) },
       credentials: s3Credentials(b) ?? (await savedCredentials(c.env, { workspaceId: ws(c) }, "s3")),
     };
   };
@@ -1665,6 +1665,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         if (!creds) throw new AdminError(400, "connect Google Drive first");
         return testStore(c.env, fetcher, "drive", {}, creds, scope);
       }
+      // a workspace admin's endpoint, signed requests sent to it: confirmed with a passkey, as saving is
+      fresh(c);
       const { settings, credentials } = await ownStoreInput(c, kind, await body(c));
       return testStore(c.env, fetcher, kind, settings, credentials, scope);
     }),
