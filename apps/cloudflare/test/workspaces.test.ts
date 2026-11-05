@@ -9,9 +9,14 @@ import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { encryptSecret } from "@bongsu/core/crypto";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
+import { iconByHash, removeIcon, setIcon } from "@bongsu/core/icon";
+import { notifier } from "@bongsu/core/notify";
+import { addMember } from "@bongsu/core/people";
 import { tick } from "@bongsu/core/tick";
-import { setWorkspaceSettings } from "@bongsu/core/workspaces";
+import { setDisplayName, setWorkspaceSettings } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { png } from "./icon-png";
+import { decrypt, keys } from "./push-helpers";
 import { clearPlan, seedReel, TEST_ENCRYPTION_KEY, testEnv, World } from "./world";
 
 const KEY_A = "bongsu_workspaceAworkspaceAworksp";
@@ -443,9 +448,12 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
         json: { error: "you can't open that workspace" },
       });
     const state = (await as("bea", "dashboard", "/admin-api/state")).json;
-    expect(state.workspaces).toEqual([{ id: "b", name: "Workspace B", role: "admin" }]);
+    expect(state.workspaces).toEqual([{ id: "b", name: "Workspace B", iconUrl: null, role: "admin" }]);
     const me = (await as("bea", "pwa", "/app-api/me")).json;
-    expect(me).toMatchObject({ workspace: { id: "b" }, workspaces: [{ id: "b", name: "Workspace B", role: "admin" }] });
+    expect(me).toMatchObject({
+      workspace: { id: "b" },
+      workspaces: [{ id: "b", name: "Workspace B", iconUrl: null, shownAs: expect.anything(), role: "admin" }],
+    });
     // no session of hers works in the default workspace
     expect(
       await env.DB.prepare(
@@ -689,5 +697,200 @@ describe("a workspace's media settings", () => {
         "client_id",
       ),
     ).toBe("a-client");
+  });
+});
+
+describe("a workspace's icon and people's names stay in their workspace (Phase 13 part 3b)", () => {
+  const nowS = () => Math.floor(Date.now() / 1000);
+  const IDS = ["isoa", "isob", "isoe"];
+  const SECRET_NAME = "Ana Only-In-A";
+  let iconA: Uint8Array;
+  let hashA: string;
+  const req = async (method: string, path: string, headers: Record<string, string>, body?: BodyInit) => {
+    const r = await exports.default.fetch(`https://scheduler.test${path}`, {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body }),
+    });
+    const text = await r.text();
+    let json: Record<string, unknown> = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    return { status: r.status, text, json };
+  };
+  // isoa: admin of the default workspace (A), shown as SECRET_NAME there; isob: admin of B; isoe: editor of A only
+  const cookie = async (userId: string, app: "dashboard" | "pwa") =>
+    ({
+      Cookie: `${app === "dashboard" ? "bongsu_admin" : "bongsu_session"}=${await createSession(env.DB, nowS(), { app, userId })}`,
+    }) as Record<string, string>;
+  const PNG = { "Content-Type": "image/png" };
+  type Ref = { iconUrl?: string | null; displayName?: string | null; shownAs?: string | null };
+
+  beforeEach(async () => {
+    const ids = IDS.map((i) => `'${i}'`).join(", ");
+    await env.DB.batch(
+      [
+        `DELETE FROM sessions WHERE user_id IN (${ids})`,
+        "DELETE FROM workspace_icons",
+        `DELETE FROM memberships WHERE user_id IN (${ids})`,
+        `DELETE FROM users WHERE id IN (${ids})`,
+        ...IDS.map(
+          (i) => `INSERT INTO users (id, email, name, created_at) VALUES ('${i}', '${i}@example.com', '${i}', 0)`,
+        ),
+      ].map((q) => env.DB.prepare(q)),
+    );
+    await addMember(env.DB, "default", "isoa", "admin", 0);
+    await addMember(env.DB, "default", "isoe", "editor", 0);
+    await addMember(env.DB, "b", "isob", "admin", 0);
+    await setDisplayName(env.DB, "default", "isoa", SECRET_NAME);
+    iconA = png(256, 3);
+    hashA = await setIcon(env.DB, "default", iconA, nowS());
+  });
+  afterEach(async () => {
+    await env.DB.batch(
+      [
+        `DELETE FROM sessions WHERE user_id IN (${IDS.map((i) => `'${i}'`).join(", ")})`,
+        "DELETE FROM workspace_icons",
+        "DELETE FROM push_subs WHERE endpoint LIKE '%iso-%'",
+      ].map((q) => env.DB.prepare(q)),
+    );
+  });
+
+  it("A's icon URL and display name never reach B's me, state, settings, members or audit", async () => {
+    // A's own views have them (so the absence below means something)
+    const a = await req("GET", "/admin-api/state", await cookie("isoa", "dashboard"));
+    expect(a.text).toContain(hashA);
+    expect(((await req("GET", "/app-api/me", await cookie("isoa", "pwa"))).json.you as Ref).shownAs).toBe(SECRET_NAME);
+    await req(
+      "POST",
+      "/admin-api/members/isoe/name",
+      {
+        ...(await cookie("isoa", "dashboard")),
+        "Content-Type": "application/json",
+      },
+      JSON.stringify({ name: "Eve Only-In-A" }),
+    );
+    for (const [app, path] of [
+      ["pwa", "/app-api/me"],
+      ["dashboard", "/admin-api/state"],
+      ["dashboard", "/admin-api/settings"],
+      ["dashboard", "/admin-api/members"],
+      ["dashboard", "/admin-api/audit"],
+    ] as const) {
+      const r = await req("GET", path, await cookie("isob", app));
+      expect(r.status, path).toBe(200);
+      expect(r.text, path).not.toContain(hashA);
+      expect(r.text, path).not.toContain("Only-In-A");
+    }
+    // B's me and state name no icon for B itself
+    const meB = (await req("GET", "/app-api/me", await cookie("isob", "pwa"))).json as {
+      workspace: Ref;
+      you: Ref;
+    };
+    expect(meB.workspace.iconUrl).toBeNull();
+    expect(meB.you.displayName).toBeNull();
+  });
+
+  it("a B session sets and removes B's icon only: A's row and URL are unchanged", async () => {
+    const h = await cookie("isob", "dashboard");
+    const put = await req("PUT", "/admin-api/settings/icon", { ...h, ...PNG }, png(256, 9));
+    expect(put.status).toBe(200);
+    expect(String(put.json.iconUrl)).not.toContain(hashA);
+    expect((await iconByHash(env.DB, hashA))?.length).toBe(iconA.length);
+    const del = await req("DELETE", "/admin-api/settings/icon", h);
+    expect(del.status).toBe(200);
+    expect((await iconByHash(env.DB, hashA))?.length).toBe(iconA.length);
+    const rows = await env.DB.prepare("SELECT workspace_id FROM workspace_icons").all();
+    expect(rows.results).toEqual([{ workspace_id: "default" }]);
+    // an editor of A can't remove A's
+    expect((await req("DELETE", "/admin-api/settings/icon", await cookie("isoe", "dashboard"))).status).toBe(403);
+    expect((await iconByHash(env.DB, hashA))?.length).toBe(iconA.length);
+  });
+
+  it("a B admin can't name a member who is only in A", async () => {
+    const r = await req(
+      "POST",
+      "/admin-api/members/isoe/name",
+      { ...(await cookie("isob", "dashboard")), "Content-Type": "application/json" },
+      JSON.stringify({ name: "Hijacked" }),
+    );
+    expect(r.status).toBe(404);
+    const row = await env.DB.prepare("SELECT display_name FROM memberships WHERE user_id = 'isoe'").first();
+    expect(row).toEqual({ display_name: null });
+  });
+
+  it("agent keys get 401 or 403 on every route of the icon and the names", async () => {
+    const json = { "Content-Type": "application/json" };
+    for (const key of [KEY_A, KEY_B]) {
+      const h = { Authorization: `Bearer ${key}` };
+      for (const [method, path, headers, body] of [
+        ["PUT", "/admin-api/settings/icon", { ...h, ...PNG }, png(256)],
+        ["DELETE", "/admin-api/settings/icon", h, undefined],
+        ["POST", "/app-api/me/name", { ...h, ...json }, JSON.stringify({ name: "X" })],
+        ["POST", "/app-api/me/display-name", { ...h, ...json }, JSON.stringify({ name: "X" })],
+        ["POST", "/admin-api/members/isoe/name", { ...h, ...json }, JSON.stringify({ name: "X" })],
+        ["GET", "/admin-api/settings", h, undefined],
+      ] as const) {
+        const r = await req(method, path, headers, body);
+        expect([401, 403], `${method} ${path}`).toContain(r.status);
+      }
+      // the app's me and the dashboard's state are public (the sign-in screens read them): to a key, the signed-out ones
+      const me = (await req("GET", "/app-api/me", h)).json;
+      expect([me.signedIn, me.workspace ?? null, me.workspaces ?? [], me.you ?? null]).toEqual([false, null, [], null]);
+      const state = (await req("GET", "/admin-api/state", h)).json;
+      expect([state.signedIn, state.workspace, state.workspaces]).toEqual([false, null, []]);
+    }
+    expect((await iconByHash(env.DB, hashA))?.length).toBe(iconA.length);
+    expect(await env.DB.prepare("SELECT display_name FROM memberships WHERE user_id = 'isoe'").first()).toEqual({
+      display_name: null,
+    });
+  });
+
+  // Pushes carry no person's name (notify.ts only prefixes the workspace's name), so only the icon is checked.
+  it("a push carries its own workspace's icon: A's for A, none for B, then B's own", async () => {
+    const k = await keys();
+    const e = await testEnv(env, {
+      VAPID_PUBLIC_KEY: k.VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY: k.VAPID_PRIVATE_KEY,
+      VAPID_SUBJECT: "mailto:owner@example.com",
+      NOTIFY_URL: undefined,
+    });
+    const bodies = new Map<string, Uint8Array>();
+    const service: typeof fetch = async (input, init) => {
+      bodies.set(String(input), new Uint8Array(init?.body as Uint8Array));
+      return new Response(null, { status: 201 });
+    };
+    const endpoint = (who: string) => `https://fcm.googleapis.com/fcm/send/iso-${who}`;
+    for (const who of ["isoa", "isob"])
+      await env.DB.prepare(
+        "INSERT INTO push_subs (endpoint, p256dh, auth, created_at, user_id) VALUES (?1, ?2, ?3, 0, ?4)",
+      )
+        .bind(endpoint(who), k.p256dh, k.auth, who)
+        .run();
+    const note = { group: "published" as const, title: "demo_travel: published", text: "t" };
+    const push = async (ws: string, who: string) => {
+      bodies.clear();
+      await notifier(e, service, 0).send(note, ws);
+      return decrypt(bodies.get(endpoint(who))!, k);
+    };
+    const origin = e.PUBLIC_URL.replace(/\/$/, "");
+    expect((await push("default", "isoa")).icon).toBe(`${origin}/icon/${hashA}.png`);
+    expect("icon" in (await push("b", "isob"))).toBe(false);
+    const hashB = await setIcon(env.DB, "b", png(256, 9), nowS());
+    try {
+      const fromB = await push("b", "isob");
+      expect(fromB.icon).toBe(`${origin}/icon/${hashB}.png`);
+      expect(fromB.icon).not.toContain(hashA);
+    } finally {
+      await removeIcon(env.DB, "b");
+    }
+  });
+
+  it("the icon URL is public and serves A's bytes; an unknown hash is a 404", async () => {
+    const r = await exports.default.fetch(`https://scheduler.test/icon/${hashA}.png`);
+    expect(r.status).toBe(200);
+    expect(new Uint8Array(await r.arrayBuffer())).toEqual(iconA);
+    expect((await exports.default.fetch(`https://scheduler.test/icon/${"0".repeat(64)}.png`)).status).toBe(404);
   });
 });

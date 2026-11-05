@@ -125,8 +125,8 @@ export async function draftFromUploads(
   const id = `d_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
   await env.DB.batch([
     env.DB.prepare(
-      "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'pwa', 'owner', 'draft', ?5, ?5, ?6)",
-    ).bind(id, kind, account, JSON.stringify(payload), nowS, workspaceId),
+      "INSERT INTO drafts (id, kind, account, payload, source, created_by, user_id, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'pwa', 'owner', ?7, 'draft', ?5, ?5, ?6)",
+    ).bind(id, kind, account, JSON.stringify(payload), nowS, workspaceId, userId),
     env.DB.prepare(
       "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'draft_upload', ?3, ?4, ?5, ?6)",
     ).bind(nowS, `user:${userId}`, id, JSON.stringify({ kind, files: files.length }), userId, workspaceId),

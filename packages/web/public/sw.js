@@ -1,5 +1,5 @@
 // The app's service worker: makes it installable, keeps the shell for offline opening, and shows push notifications.
-const SHELL = "bongsu-shell-v6";
+const SHELL = "bongsu-shell-v7";
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -49,7 +49,7 @@ self.addEventListener("push", (e) => {
   e.waitUntil(
     self.registration.showNotification(d.title || "Bongsu", {
       body: d.body || "",
-      icon: "/icon-192.png",
+      icon: d.icon || "/icon-192.png",
       badge: "/icon-192.png",
       tag: d.tag || undefined,
       // Buttons (Android shows two): each opens its own url; a tap on the notification opens `url`.

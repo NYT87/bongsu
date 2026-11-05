@@ -13,6 +13,7 @@ import type { Db } from "@bongsu/core/db";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneDate, zoneStamp } from "@bongsu/core/formats/time";
+import { withIconUrls } from "@bongsu/core/icon";
 import { mediaUrl } from "@bongsu/core/media";
 import { defaultIds, mediaStores, storeRows } from "@bongsu/core/media/index";
 import { isVideo, type MediaStore } from "@bongsu/core/media/store";
@@ -26,8 +27,15 @@ import { isRole, mayConnect } from "@bongsu/core/roles";
 import { mayBeLive } from "@bongsu/core/tick";
 import {
   callerZone,
+  checkName,
   FALLBACK_ZONE,
+  localPart,
+  memberName,
+  memberNamesIn,
+  NameError,
   sessionWorkspace,
+  setDisplayName,
+  setUserName,
   setUserZone,
   workspaceRef,
   workspaceSettings,
@@ -90,6 +98,9 @@ const NEEDS: [string, Scope | null][] = [
   ["/app-api/connect/*", null],
   ["/app-api/logout", null],
   ["/app-api/me/timezone", null],
+  // a person's own name, and the one their workspace shows
+  ["/app-api/me/name", null],
+  ["/app-api/me/display-name", null],
   // switching workspaces is the person's own; where they may go is mayOpen's (session.ts openWorkspace)
   ["/app-api/session/*", null],
   ["/app-api/push/*", null],
@@ -214,10 +225,26 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       // the text the app shows (packages/web/src/i18n.ts): the workspace's, English for someone not signed in
       locale: caller ? (await workspaceSettings(c.env.DB, caller.workspaceId)).locale : "en",
       // where the session works, and the picker's list (creators included: the app is theirs)
-      workspace: caller ? await workspaceOf(c.env.DB, caller.workspaceId) : null,
-      workspaces: s ? await workspacesOf(c.env.DB, s.userId) : [],
+      ...(await withIconUrls(
+        c.env.DB,
+        origin(c),
+        caller ? await workspaceOf(c.env.DB, caller.workspaceId) : null,
+        s ? await withShownAs(c.env.DB, s.userId, await workspacesOf(c.env.DB, s.userId)) : [],
+      )),
+      // the signed-in person's names: their own, the one this workspace shows, and what it shows now (core/workspaces.ts)
+      you: s ? await youOf(c.env.DB, s.userId, caller?.workspaceId ?? null) : null,
     });
   });
+
+  /** A name from a request, or a 400. */
+  const nameOf = (v: unknown) => {
+    try {
+      return checkName(v);
+    } catch (e) {
+      if (e instanceof NameError) throw new ops.ApiError(400, e.message);
+      throw e;
+    }
+  };
 
   // The code is checked here but only used up once a passkey is actually created (a failed attempt keeps it).
   app.post("/app-api/setup/options", async (c) => {
@@ -994,6 +1021,34 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
 
+  // The signed-in person's own name (users.name), the same in every workspace; empty goes back to the email's start.
+  app.post(
+    "/app-api/me/name",
+    wrap(async (c) => {
+      const name = nameOf((await body(c)).name);
+      await setUserName(c.env.DB, userOf(c), name);
+      await audit(c, "user_name", userOf(c), { name });
+      return { you: await youOf(c.env.DB, userOf(c), me(c).workspaceId) };
+    }),
+  );
+  // The name this workspace shows for them. Like the notification settings, only for a member: an instance admin
+  // visiting a workspace they're not in has no membership to name.
+  app.post(
+    "/app-api/me/display-name",
+    wrap(async (c) => {
+      const { workspaceId } = me(c);
+      const userId = userOf(c);
+      const m = await c.env.DB.prepare("SELECT role FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
+        .bind(workspaceId, userId)
+        .first<{ role: string }>();
+      if (!m) throw new ops.ApiError(403, "you're not a member of this workspace");
+      const name = nameOf((await body(c)).name);
+      await setDisplayName(c.env.DB, workspaceId, userId, name);
+      await audit(c, "member_name", userId, { name });
+      return { you: await youOf(c.env.DB, userId, workspaceId) };
+    }),
+  );
+
   // Web Push subscriptions for this device: they belong to the signed-in user, in no particular workspace (each
   // workspace's notes reach the members it should, core/push.ts), and only a browser push service's endpoint is taken
   // (Bongsu sends requests to it).
@@ -1061,6 +1116,36 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   return app;
 }
+
+/** The picker's list with the name each workspace shows for the person, from one batched lookup. */
+const withShownAs = async <W extends { id: string }>(db: Db, userId: string, list: W[]) => {
+  const names = await memberNamesIn(
+    db,
+    userId,
+    list.map((w) => w.id),
+  );
+  return list.map((w) => ({ ...w, shownAs: names.get(w.id) ?? null }));
+};
+
+/** `you` in GET /app-api/me: the person's own name, the display name in the workspace, and what the workspace shows. */
+const youOf = async (db: Db, userId: string, workspaceId: string | null) => {
+  const u = await db
+    .prepare("SELECT name, email FROM users WHERE id = ?1")
+    .bind(userId)
+    .first<{ name: string | null; email: string | null }>();
+  const m = workspaceId
+    ? await db
+        .prepare("SELECT display_name FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
+        .bind(workspaceId, userId)
+        .first<{ display_name: string | null }>()
+    : null;
+  return {
+    name: u?.name ?? null,
+    emailName: localPart(u?.email ?? null),
+    displayName: m?.display_name ?? null,
+    shownAs: workspaceId ? await memberName(db, userId, workspaceId) : null,
+  };
+};
 
 /** The session's workspace as the app sees it: who it is and where its files live. */
 const workspaceOf = async (db: Db, workspaceId: string) => {

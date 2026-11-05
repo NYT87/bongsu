@@ -385,6 +385,7 @@ interface ApprovalRow {
   media: string;
   approved_at: string;
   approved_by: string;
+  user_id?: string | null;
 }
 
 function toApproval(r: ApprovalRow): Approval {
@@ -400,6 +401,7 @@ function toApproval(r: ApprovalRow): Approval {
     media: JSON.parse(r.media) as MediaRef[],
     approvedAt: r.approved_at,
     approvedBy: r.approved_by,
+    approvedByUser: r.user_id ?? null,
   };
 }
 
@@ -565,13 +567,19 @@ export async function recordCommented(
 }
 
 // ---------------------------------------------------------------- pause switch
-// Each workspace pauses on its own (workspace_settings.paused: {reason, by, at}, NULL while running): the tick skips a
-// paused workspace's jobs and Shorts comments, and every other workspace goes on publishing.
+// Each workspace pauses on its own (workspace_settings.paused: {reason, by, userId?, at}, NULL while running): the tick
+// skips a paused workspace's jobs and Shorts comments, and every other workspace goes on publishing.
 
-export async function pausedState(
-  db: Db,
-  workspaceId: string,
-): Promise<{ reason: string; by: string; at: string } | null> {
+/** A pause: `by` is text (a key's name, or the person's name when paused); `userId` is the person, when one paused
+ *  (absent on a key's pause and on pauses stored before 0023, which show `by`). */
+export interface Pause {
+  reason: string;
+  by: string;
+  userId?: string;
+  at: string;
+}
+
+export async function pausedState(db: Db, workspaceId: string): Promise<Pause | null> {
   const r = await db
     .prepare("SELECT paused FROM workspace_settings WHERE workspace_id = ?1")
     .bind(workspaceId)
@@ -581,7 +589,19 @@ export async function pausedState(
 
 /** Pauses the workspace; false when it already was. A workspace without settings yet gets them (the defaults
  *  workspaceSettings reads for one without). */
-export async function setPaused(db: Db, workspaceId: string, reason: string, by: string, now: Date): Promise<boolean> {
+export async function setPaused(
+  db: Db,
+  workspaceId: string,
+  reason: string,
+  by: { userId?: string; text: string },
+  now: Date,
+): Promise<boolean> {
+  const pause: Pause = {
+    reason: reason.slice(0, 300),
+    by: by.text,
+    ...(by.userId ? { userId: by.userId } : {}),
+    at: now.toISOString(),
+  };
   const r = await db
     .prepare(
       `INSERT INTO workspace_settings (workspace_id, timezone, digest_hour, locale, updated_at, paused)
@@ -590,11 +610,7 @@ export async function setPaused(db: Db, workspaceId: string, reason: string, by:
        WHERE workspace_settings.paused IS NULL
        RETURNING workspace_id`,
     )
-    .bind(
-      workspaceId,
-      Math.floor(now.getTime() / 1000),
-      JSON.stringify({ reason: reason.slice(0, 300), by, at: now.toISOString() }),
-    )
+    .bind(workspaceId, Math.floor(now.getTime() / 1000), JSON.stringify(pause))
     .first();
   return !!r;
 }

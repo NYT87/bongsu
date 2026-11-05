@@ -39,6 +39,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { LintRules } from "@bongsu/core/formats/caption-lint";
 import { isTimeZone, utcIso, zoneStamp } from "@bongsu/core/formats/time";
+import { ICON_MAX_BYTES, IconError, iconHashes, iconUrl, removeIcon, setIcon, withIconUrls } from "@bongsu/core/icon";
 import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
 import { FolderError } from "@bongsu/core/media/folders";
 import { offeredKinds, STORE_KINDS, type StoreKind, storeRows } from "@bongsu/core/media/index";
@@ -78,7 +79,12 @@ import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
 import { schedulesOff } from "@bongsu/core/schedules";
 import {
   callerZone,
+  checkName,
+  memberName,
+  memberNames,
+  NameError,
   sessionWorkspace,
+  setDisplayName,
   setMediaFolder,
   setWorkspaceSettings,
   workspaceRef,
@@ -179,6 +185,16 @@ class AdminError extends Error {
     super(message);
   }
 }
+
+/** A person's name from a request (empty: none), or a 400. */
+const personName = (v: unknown) => {
+  try {
+    return checkName(v ?? "");
+  } catch (e) {
+    if (e instanceof NameError) throw new AdminError(400, e.message);
+    throw e;
+  }
+};
 
 /** "ABCD-EFGH": unambiguous letters and digits (no 0/O, 1/I). */
 const code = (n: number) => {
@@ -290,10 +306,14 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie"), "dashboard"), nowS(), "dashboard");
       const user = s
-        ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1").bind(s.userId).first()
+        ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1")
+            .bind(s.userId)
+            .first<{ id: string; email: string | null; name: string | null }>()
         : null;
       // what the sidebar shows: the Instance group for instance admins; a creator is pointed at the app
       const where = s && (await sessionWorkspace(c.env.DB, s, { notCreator: true }));
+      // the person as the workspace they're working in names them (their own name outside any)
+      if (user && where) user.name = (await memberName(c.env.DB, user.id, where.workspaceId)) ?? user.name;
       return {
         bootstrapNeeded: !(await bootstrapped(c)),
         setupTokenSet: !!c.env.SETUP_TOKEN,
@@ -302,8 +322,12 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         instanceAdmin: !!s && (where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId))),
         role: where?.role ?? null,
         // where the session works, and the switcher's list (creators' memberships left out: they use the app)
-        workspace: where ? await workspaceRef(c.env.DB, where.workspaceId) : null,
-        workspaces: s ? await workspacesOf(c.env.DB, s.userId, { notCreator: true }) : [],
+        ...(await withIconUrls(
+          c.env.DB,
+          origin(c),
+          where ? await workspaceRef(c.env.DB, where.workspaceId) : null,
+          s ? await workspacesOf(c.env.DB, s.userId, { notCreator: true }) : [],
+        )),
         // signed in, but in no workspace yet: the first run's (or a removed member's) "create one" / "ask for one"
         noWorkspace: !!s && !where,
         // an instance admin in none of them still has the Instance pages, once the instance has a workspace
@@ -326,10 +350,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const email = String(b.email ?? "")
         .trim()
         .toLowerCase();
-      const name =
-        String(b.name ?? "")
-          .trim()
-          .slice(0, 80) || null;
+      const name = personName(b.name);
       if (!EMAIL.test(email)) throw new AdminError(400, "enter an email address");
       // the first person is an instance admin, made when their passkey is (verify): the id is handed out now, since
       // the passkey names its user
@@ -833,11 +854,16 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/members",
     wrap(async (c) => {
       const members = await c.env.DB.prepare(
-        `SELECT u.id, u.email, u.name, m.role, u.instance_admin FROM memberships m JOIN users u ON u.id = m.user_id
+        `SELECT u.id, u.email, m.display_name, m.role, u.instance_admin FROM memberships m JOIN users u ON u.id = m.user_id
          WHERE m.workspace_id = ?1 ORDER BY m.role, u.email, u.id`,
       )
         .bind(ws(c))
-        .all<{ id: string; email: string | null; name: string | null; role: string; instance_admin: number }>();
+        .all<{ id: string; email: string | null; display_name: string | null; role: string; instance_admin: number }>();
+      const names = await memberNames(
+        c.env.DB,
+        members.results.map((m) => m.id),
+        ws(c),
+      );
       // who's an instance admin: for the instance admins' "Make instance admin" control only
       const ia = c.get("instanceAdmin");
       const invites = await c.env.DB.prepare(
@@ -850,7 +876,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         members: members.results.map((m) => ({
           userId: m.id,
           email: m.email,
-          name: m.name,
+          // the name shown in this workspace; displayName is the workspace's own (null: the person's name shows)
+          name: names.get(m.id) ?? null,
+          displayName: m.display_name,
           role: m.role,
           ...(ia ? { instanceAdmin: Number(m.instance_admin) === 1 } : {}),
         })),
@@ -915,6 +943,18 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       await setRole(c.env.DB, ws(c), userId, role, { instanceAdmin: c.get("instanceAdmin") }, nowS());
       await audit(c, "member_role", `user:${userId}`, { role });
       return { userId, role };
+    }),
+  );
+  // The name this workspace shows for a member (their own name stays theirs): the workspace's admins', like the rest
+  // of the members page. Another workspace's people are a 404.
+  app.post(
+    "/admin-api/members/:userId/name",
+    wrap(async (c) => {
+      const userId = c.req.param("userId") ?? "";
+      const name = personName((await body(c)).name);
+      if (!(await setDisplayName(c.env.DB, ws(c), userId, name))) throw new AdminError(404, "not a member here");
+      await audit(c, "member_name", `user:${userId}`, { name });
+      return { userId, displayName: name };
     }),
   );
   app.post(
@@ -1817,6 +1857,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         .first<{ name: string }>();
       return {
         name: name?.name ?? "",
+        iconUrl: iconUrl(origin(c), (await iconHashes(c.env.DB, [ws(c)])).get(ws(c))),
         timezone: w.timezone,
         digestHour: w.digestHour,
         dryRun: c.env.DRY_RUN !== "0",
@@ -1842,6 +1883,33 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (name !== undefined) await renameWorkspace(c.env.DB, ws(c), name);
       await audit(c, "settings", null, { name, timezone: tz, digestHour: hour });
       return { saved: true };
+    }),
+  );
+  // The workspace's icon: one PNG, the raw body (core/icon.ts checks it). Admins only, as the other settings.
+  app.put(
+    "/admin-api/settings/icon",
+    wrap(async (c) => {
+      // refused before the body is read when it says how big it is
+      const declared = Number(c.req.header("content-length"));
+      if (declared > ICON_MAX_BYTES) throw new AdminError(400, "the icon is over 200 KB");
+      const bytes = new Uint8Array(await c.req.arrayBuffer());
+      // refused before it is looked at; checkIcon says the same for a direct caller
+      if (bytes.length > ICON_MAX_BYTES) throw new AdminError(400, "the icon is over 200 KB");
+      try {
+        const hash = await setIcon(c.env.DB, ws(c), bytes, nowS());
+        await audit(c, "workspace_icon_set", null, { hash });
+        return { iconUrl: iconUrl(origin(c), hash) };
+      } catch (e) {
+        if (e instanceof IconError) throw new AdminError(400, e.message);
+        throw e;
+      }
+    }),
+  );
+  app.delete(
+    "/admin-api/settings/icon",
+    wrap(async (c) => {
+      if (await removeIcon(c.env.DB, ws(c))) await audit(c, "workspace_icon_remove", null, {});
+      return { iconUrl: null };
     }),
   );
   // The workspace's ntfy topic: its notifications are also posted there (core/ntfy.ts).
@@ -1879,7 +1947,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // admins, sign-ins outside any workspace) only to instance admins, on their own (?instance=1)
       const instance = c.req.query("instance") === "1";
       if (instance && !c.get("instanceAdmin")) throw new AdminError(403, "only an instance admin can do this");
-      // who: the person who acted (their name, else their email), when a person did
+      // who: the person who acted, when a person did (their name, else their email; in a workspace's list, as that
+      // workspace names them, below)
       const r = await c.env.DB.prepare(
         `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id, COALESCE(u.name, u.email) AS who
          FROM audit a LEFT JOIN users u ON u.id = a.user_id
@@ -1898,6 +1967,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           user_id: string | null;
           who: string | null;
         }>();
+      // every row here is the session's workspace's (the query's filter), so one workspace names them all
+      if (!instance) {
+        const names = await memberNames(
+          c.env.DB,
+          r.results.flatMap((x) => (x.user_id ? [x.user_id] : [])),
+          ws(c),
+        );
+        for (const x of r.results) if (x.user_id) x.who = names.get(x.user_id) ?? x.who;
+      }
       return { entries: r.results };
     }),
   );

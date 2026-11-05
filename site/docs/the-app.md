@@ -32,6 +32,20 @@ a sheet from the bottom listing your workspaces with your role in each. Choose o
 single workspace there's no picker. A notification link opens the workspace it came from; if you're no longer a
 member of it, the app says "You're no longer in that workspace."
 
+A workspace can have an icon, set by its admins in the [dashboard](the-dashboard.md#settings). When it has one, the
+app shows it beside the workspace's name in the header and in the picker, and in the notifications from that workspace.
+The icon on your home screen stays the app's own.
+
+## Your name
+
+**Settings → You** has two fields. **Name** is your name everywhere in Bongsu; leave it empty and the start of your
+email address is used. **Shown in** *workspace* **as** is how the people of the workspace you're in see you: on the
+approvals, pauses and drafts you make, and in its member list. It only applies there, so you can be "Jo" in one
+workspace and "Jo Park, shop" in another. Leave it empty to be shown by your name. Each field saves on its own, and a
+name can be up to 60 characters.
+
+In the picker, a workspace that shows you by another name than your own says so under it: "Shown as Jo Park, shop".
+
 ## Today and "Needs you"
 
 Today opens first. At the top is **Needs you**, and only when something waits on you:
@@ -106,6 +120,9 @@ If the item changed while you were looking, the approval is refused, the page re
 you approve that one. A button that reads **Fix 2 problems first** stays disabled until the listed problems are fixed.
 
 ![An approved item](assets/app/item-approved-light.png)
+
+An approved item says who approved it: "Approved by Jo, 18 Oct 09:12, exactly as shown", with the name the workspace
+shows for that person. Someone who has since left the workspace is still named, by their own name.
 
 ### After a change
 
@@ -193,6 +210,9 @@ you resume. Approvals are kept; other workspaces keep publishing." It asks once.
 **Approve (held while paused)**. A person resumes, with **Resume with passkey**: approved items go out at their time
 again, and any overdue ones go out now (within the 6-hour window). Agents may be allowed to pause (their own
 workspace), never to resume.
+
+The banner says who paused it: "Paused by Jo. Nothing goes out until you resume." A pause by an agent key names the
+key. Drafts you upload from the app, and the drafts list, name the person who made them too.
 
 A pause holds one workspace only, and resuming releases only that one. Admins and creators may pause and resume;
 editors may not.

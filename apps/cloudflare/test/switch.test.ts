@@ -116,28 +116,34 @@ describe("switching the session's workspace", () => {
   it("an admin of both lists both by name, switches to the second, and works there", async () => {
     const amy = await dash("amy", "default");
     const before = await stateOf(amy);
-    expect(before.workspace).toEqual({ id: "default", name: "Default" });
+    expect(before.workspace).toEqual({ id: "default", name: "Default", iconUrl: null });
     expect(before.workspaces).toEqual([
-      { id: "default", name: "Default", role: "admin" },
-      { id: w2, name: "Studio Two", role: "admin" },
+      { id: "default", name: "Default", iconUrl: null, role: "admin" },
+      { id: w2, name: "Studio Two", iconUrl: null, role: "admin" },
     ]);
     expect(await amy("/admin-api/session/workspace", { id: w2 })).toEqual({ status: 200, json: { ok: true, id: w2 } });
-    expect((await stateOf(amy)).workspace).toEqual({ id: w2, name: "Studio Two" });
+    expect((await stateOf(amy)).workspace).toEqual({ id: w2, name: "Studio Two", iconUrl: null });
     const accounts = (await amy("/admin-api/accounts")).json.accounts as { id: string }[];
     expect(accounts.map((a) => a.id)).toEqual(["demo_studio2"]);
     // a member moving between their own workspaces leaves no audit row
     expect((await opens()).results).toEqual([]);
     // the app's list is the same, and its switch works the same way
     const amyApp = await app("amy", "default");
-    expect((await meOf(amyApp)).workspaces).toEqual(before.workspaces);
+    expect((await meOf(amyApp)).workspaces).toMatchObject(before.workspaces as object[]);
     expect(await amyApp("/app-api/session/workspace", { id: w2 })).toEqual({ status: 200, json: { ok: true, id: w2 } });
-    expect((await meOf(amyApp)).workspace).toEqual({ id: w2, name: "Studio Two", mediaFolder: expect.any(String) });
+    expect((await meOf(amyApp)).workspace).toEqual({
+      id: w2,
+      name: "Studio Two",
+      iconUrl: null,
+      mediaFolder: expect.any(String),
+    });
   });
 
   it("the app names the session workspace's media folder", async () => {
     expect((await meOf(await app("amy", "default"))).workspace).toEqual({
       id: "default",
       name: "Default",
+      iconUrl: null,
       mediaFolder: "UPLOADS",
     });
     const b = await createWorkspace(
@@ -149,27 +155,30 @@ describe("switching the session's workspace", () => {
     expect((await meOf(await app("amy", b))).workspace).toEqual({
       id: b,
       name: "Demo Studio B",
+      iconUrl: null,
       mediaFolder: "client-b",
     });
   });
 
   it("a creator in w2 can't open it in the dashboard, but can in the app", async () => {
     const cleo = await dash("cleo", "default");
-    expect((await stateOf(cleo)).workspaces).toEqual([{ id: "default", name: "Default", role: "admin" }]);
+    expect((await stateOf(cleo)).workspaces).toEqual([
+      { id: "default", name: "Default", iconUrl: null, role: "admin" },
+    ]);
     expect(await cleo("/admin-api/session/workspace", { id: w2 })).toEqual({
       status: 403,
       json: { error: "you can't open that workspace" },
     });
-    expect((await stateOf(cleo)).workspace).toEqual({ id: "default", name: "Default" });
+    expect((await stateOf(cleo)).workspace).toEqual({ id: "default", name: "Default", iconUrl: null });
 
     const cleoApp = await app("cleo", "default");
     expect((await meOf(cleoApp)).workspaces).toEqual([
-      { id: "default", name: "Default", role: "admin" },
-      { id: w2, name: "Studio Two", role: "creator" },
+      { id: "default", name: "Default", iconUrl: null, shownAs: expect.anything(), role: "admin" },
+      { id: w2, name: "Studio Two", iconUrl: null, shownAs: expect.anything(), role: "creator" },
     ]);
     expect((await cleoApp("/app-api/session/workspace", { id: w2 })).status).toBe(200);
     const me = await meOf(cleoApp);
-    expect(me.workspace).toMatchObject({ id: w2, name: "Studio Two" });
+    expect(me.workspace).toMatchObject({ id: w2, name: "Studio Two", iconUrl: null });
     // and works there: w2's zone
     expect(me.workspaceTimezone).toBe("Europe/Madrid");
   });
@@ -184,8 +193,8 @@ describe("switching the session's workspace", () => {
       });
       expect((await amyApp("/app-api/session/workspace", { id })).status, id).toBe(403);
     }
-    expect((await stateOf(amy)).workspace).toEqual({ id: "default", name: "Default" });
-    expect((await meOf(amyApp)).workspace).toMatchObject({ id: "default", name: "Default" });
+    expect((await stateOf(amy)).workspace).toEqual({ id: "default", name: "Default", iconUrl: null });
+    expect((await meOf(amyApp)).workspace).toMatchObject({ id: "default", name: "Default", iconUrl: null });
     // the archived one isn't offered either
     expect(((await stateOf(amy)).workspaces as { id: string }[]).map((x) => x.id)).not.toContain(gone);
   });
@@ -193,7 +202,7 @@ describe("switching the session's workspace", () => {
   it("an instance admin opens any workspace that isn't archived, as its admin, and its admins see it", async () => {
     const ina = await dash("ina");
     const listed = (await stateOf(ina)).workspaces as { id: string; role: string }[];
-    expect(listed).toEqual(expect.arrayContaining([{ id: other, name: "Elsewhere", role: "admin" }]));
+    expect(listed).toEqual(expect.arrayContaining([{ id: other, name: "Elsewhere", iconUrl: null, role: "admin" }]));
     expect(listed.map((x) => x.id)).not.toContain(gone);
     const names = (listed as unknown as { name: string }[]).map((x) => x.name);
     expect(names).toEqual([...names].sort());
@@ -206,7 +215,7 @@ describe("switching the session's workspace", () => {
     expect((await ina("/admin-api/session/workspace", { id: gone })).status).toBe(403);
     // the old route still answers as it did
     expect(await ina(`/admin-api/workspaces/${w2}/open`, {})).toEqual({ status: 200, json: { id: w2 } });
-    expect((await stateOf(ina)).workspace).toEqual({ id: w2, name: "Studio Two" });
+    expect((await stateOf(ina)).workspace).toEqual({ id: w2, name: "Studio Two", iconUrl: null });
     expect((await ina("/admin-api/workspaces/nope/open", {})).status).toBe(404);
     expect((await ina(`/admin-api/workspaces/${gone}/open`, {})).status).toBe(409);
     expect((await opens()).results).toEqual([
@@ -219,17 +228,17 @@ describe("switching the session's workspace", () => {
     const amy = await dash("amy", "default");
     const amyApp = await app("amy", "default");
     expect((await amyApp("/app-api/session/workspace", { id: w2 })).status).toBe(200);
-    expect((await stateOf(amy)).workspace).toEqual({ id: "default", name: "Default" });
+    expect((await stateOf(amy)).workspace).toEqual({ id: "default", name: "Default", iconUrl: null });
     expect((await amy("/admin-api/session/workspace", { id: w2 })).status).toBe(200);
     expect((await amy("/admin-api/session/workspace", { id: "default" })).status).toBe(200);
-    expect((await meOf(amyApp)).workspace).toMatchObject({ id: w2, name: "Studio Two" });
+    expect((await meOf(amyApp)).workspace).toMatchObject({ id: w2, name: "Studio Two", iconUrl: null });
   });
 
   it("one workspace: the list has just it", async () => {
     const otto = await app("otto");
     expect(await meOf(otto)).toMatchObject({
-      workspace: { id: "default", name: "Default" },
-      workspaces: [{ id: "default", name: "Default", role: "editor" }],
+      workspace: { id: "default", name: "Default", iconUrl: null },
+      workspaces: [{ id: "default", name: "Default", iconUrl: null, shownAs: expect.anything(), role: "editor" }],
     });
   });
 

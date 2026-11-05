@@ -32,11 +32,13 @@ export const en = {
   "header.commentsNew": "Comments, {n} new",
   "header.settings": "Settings",
   "header.paused": "Publishing is paused.",
+  "header.pausedBy": "Paused by {name}. Nothing goes out until you resume.",
   "header.pausedDetail": "Nothing goes out until you resume.",
   "header.resume": "Resume",
 
   // the workspace picker (the name under the header's title) and push links into another workspace
   "workspace.switch": "Switch workspace",
+  "workspace.shownAs": "Shown as {name}",
   "workspace.gone": "You're no longer in that workspace.",
   "workspace.toQueue": "Open the queue",
 
@@ -92,6 +94,11 @@ export const en = {
   "status.hold": "On hold",
 
   // settings
+  "you.title": "You",
+  "you.name": "Name",
+  "you.shownIn": "Shown in {workspace} as",
+  "you.save": "Save",
+  "you.saved": "Saved.",
   "settings.publishing": "Publishing",
   "settings.pausedNote": "Paused: nothing in this workspace is published until you resume.",
   "settings.resumeWithPasskey": "Resume with passkey",
@@ -313,6 +320,7 @@ export const en = {
   "item.failedAgain": "Approve it again to start over.",
   "item.failedMayBeLive":
     "{platform} was asked to publish it, so it may be live: check the account (post it by hand if it isn't there), then record it with record_posted.",
+  "item.approvedByAt": "Approved by {name}, {when}, exactly as shown.",
   "item.approvedAt": "Approved {when}, exactly as shown.",
   "item.commentsChanged":
     "Only the comments changed since it was approved: approve them (the post itself stays as approved).",

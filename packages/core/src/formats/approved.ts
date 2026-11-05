@@ -21,7 +21,10 @@ export interface Approval {
   altSha256: string | null;
   media: MediaRef[];
   approvedAt: string;
+  /** The channel it was given through ("owner@app", "owner@cli"). */
   approvedBy: string;
+  /** The person who approved (approvals.user_id); null on an approval that recorded none. */
+  approvedByUser?: string | null;
 }
 
 /** sha256 hex of a text, as approval fingerprints use (UTF-8, exactly as stored). */

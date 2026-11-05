@@ -152,6 +152,11 @@ or creator) and makes a link that works once, for 7 days: copy it then, it isn't
 creators in the app: someone new makes a passkey, someone with a Bongsu account signs in with theirs. Pending invites
 are listed with **Revoke**.
 
+Each member is listed by the name this workspace shows for them, with their email. **Edit name** (admins) sets that name
+for this workspace only, up to 60 characters, and an empty one goes back to the person's own name; people can also set
+it themselves in the app's [Settings](the-app.md#your-name). The audit log and the pages that say who approved,
+paused or drafted something use the same name.
+
 Each member's role can be changed in place, and **Remove** takes them out of the workspace at once: signed out of
 it, their CLI tokens for it revoked, their devices no longer notified there. A workspace always keeps one admin: make
 someone else admin before the last one steps down. An admin who's removed or no longer an admin loses the invites they
@@ -203,6 +208,12 @@ The inbox scans `<folder>/inbox` in each of the workspace's stores, a few worksp
 connection uses the workspace's app if it has one, else the instance's, and keeps the one it started with.
 
 **General** is the rest of this section.
+
+**Icon** (admins) is an optional picture for the workspace: a square PNG, between 192 and 1024 pixels on a side and at
+most 200 KB. **Upload an icon** (or **Replace the icon**) sets it at once and **Remove** takes it away. In the
+dashboard it shows beside the workspace's name in the sidebar. In the app it shows in the header and in the workspace
+picker, and in the push notifications from that workspace. The installed app's icon on a phone's home screen stays the instance's own, because
+it belongs to the app and not to a workspace. Setting or removing the icon is in the audit log.
 
 **Workspace** holds its **Name** (it can't be emptied), the **Time zone**, the default for everyone (each person can
 choose their own in the app), and the **Daily digest** hour, in that zone. **Notifications (ntfy)** optionally posts the

@@ -120,8 +120,24 @@ main[tabindex="-1"]:focus {
 }
 /* the sidebar's workspace: its name, or a labelled select when the person has several */
 .workspace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 0 8px 12px;
   font-size: 13px;
+}
+.workspace > :not(.workspace-icon) {
+  flex: 1;
+  min-width: 0;
+}
+.workspace-icon {
+  flex: none;
+  border-radius: 5px;
+}
+.icon-preview {
+  display: block;
+  margin: 0 0 12px;
+  border-radius: 14px;
 }
 .workspace label {
   display: block;

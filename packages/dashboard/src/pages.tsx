@@ -2,7 +2,7 @@
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, Fragment, type ReactNode, useEffect, useState } from "react";
 import type { State } from "./App";
-import { api, manages, NAVIGATED, switchWorkspace, when, withFreshCheck } from "./api";
+import { api, apiFile, manages, NAVIGATED, STATE_STALE, switchWorkspace, when, withFreshCheck } from "./api";
 import { GuideLink } from "./docs";
 import { Brand, Card, Field, Loading, Page, Pill, QrCode, SecretOnce, useConfirm, useLoad, useToast } from "./ui";
 
@@ -2081,7 +2081,10 @@ function CliTokens() {
 interface Member {
   userId: string;
   email: string | null;
+  /** The name shown in this workspace. */
   name: string | null;
+  /** The per-workspace value behind it, null when unset. */
+  displayName: string | null;
   role: string;
   /** Only in an instance admin's list: whether this member is one too. */
   instanceAdmin?: boolean;
@@ -2136,6 +2139,21 @@ export function Members({ state }: Props) {
       setErr(errorText(e));
     }
     reload();
+  };
+  const [editing, setEditing] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [nameErr, setNameErr] = useState<string | null>(null);
+  const saveName = async (e: FormEvent, m: Member) => {
+    e.preventDefault();
+    setNameErr(null);
+    try {
+      await api(`members/${encodeURIComponent(m.userId)}/name`, { name: draft });
+      setEditing(null);
+      if (m.userId === me) dispatchEvent(new Event(STATE_STALE)); // the sidebar shows this name too
+      reload();
+    } catch (error) {
+      setNameErr(errorText(error));
+    }
   };
   const me = state.user?.id;
   return (
@@ -2216,6 +2234,34 @@ export function Members({ state }: Props) {
                         {m.userId === me && <span className="muted"> (you)</span>}
                       </div>
                       {m.name && m.email && <div className="muted small">{m.email}</div>}
+                      {editing === m.userId && (
+                        <form onSubmit={(e) => saveName(e, m)} className="inset">
+                          <Field label="Name in this workspace" help="Leave it empty to use their own name.">
+                            {(p) => (
+                              <input
+                                {...p}
+                                value={draft}
+                                onChange={(e) => setDraft(e.target.value)}
+                                placeholder="Shown here as …"
+                                maxLength={60}
+                              />
+                            )}
+                          </Field>
+                          <div className="actions">
+                            {nameErr && (
+                              <span className="error" role="alert">
+                                {nameErr}
+                              </span>
+                            )}
+                            <button type="button" onClick={() => setEditing(null)}>
+                              Cancel
+                            </button>
+                            <button className="primary" type="submit">
+                              Save
+                            </button>
+                          </div>
+                        </form>
+                      )}
                     </td>
                     <td data-label="Role">
                       <select
@@ -2231,6 +2277,21 @@ export function Members({ state }: Props) {
                       </select>
                     </td>
                     <td className="right">
+                      {manages(state) && editing !== m.userId && (
+                        <>
+                          <button
+                            type="button"
+                            className="link"
+                            onClick={() => {
+                              setEditing(m.userId);
+                              setDraft(m.displayName ?? "");
+                              setNameErr(null);
+                            }}
+                          >
+                            Edit name
+                          </button>{" "}
+                        </>
+                      )}
                       {state.instanceAdmin && m.instanceAdmin !== undefined && (
                         <button
                           type="button"
@@ -2829,6 +2890,7 @@ function GeneralSettings(_: Props) {
     publicUrl: string;
     ntfy: { set: boolean; host: string | null };
     encryptionKeySet: boolean;
+    iconUrl: string | null;
   }>("settings");
   const [name, setName] = useState("");
   const [tz, setTz] = useState("");
@@ -2849,6 +2911,7 @@ function GeneralSettings(_: Props) {
     try {
       await api("settings", { name, timezone: tz, digestHour: hour });
       toast({ ok: true, text: "Settings saved." });
+      dispatchEvent(new Event(STATE_STALE));
       reload();
     } catch (e) {
       setErr(errorText(e));
@@ -2897,6 +2960,7 @@ function GeneralSettings(_: Props) {
               </div>
             </form>
           </Card>
+          <IconCard iconUrl={data.iconUrl} onChange={reload} />
           <NtfyCard ntfy={data.ntfy} encryptionKeySet={data.encryptionKeySet} onChange={reload} />
           <Card title="Instance">
             <dl className="facts">
@@ -2918,6 +2982,67 @@ function GeneralSettings(_: Props) {
         </>
       )}
     </>
+  );
+}
+
+/** The workspace's icon: a square PNG, shown beside its name in the dashboard, the app and the switchers. */
+function IconCard({ iconUrl, onChange }: { iconUrl: string | null; onChange: () => void }) {
+  const toast = useToast();
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = async (call: () => Promise<unknown>, done: string) => {
+    setErr(null);
+    setBusy(true);
+    try {
+      await call();
+      toast({ ok: true, text: done });
+      dispatchEvent(new Event(STATE_STALE));
+      onChange();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card title="Icon">
+      {iconUrl ? (
+        <img className="icon-preview" src={iconUrl} alt="" width={64} height={64} />
+      ) : (
+        <p className="muted">No icon: the app's own is used.</p>
+      )}
+      <Field label={iconUrl ? "Replace the icon" : "Upload an icon"} help="A square PNG, up to 200 KB.">
+        {(p) => (
+          <input
+            {...p}
+            type="file"
+            accept="image/png"
+            disabled={busy}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (file) run(() => apiFile("settings/icon", file, "PUT"), "Icon saved.");
+            }}
+          />
+        )}
+      </Field>
+      <div className="actions">
+        {err && (
+          <span className="error" role="alert">
+            {err}
+          </span>
+        )}
+        {iconUrl && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => run(() => api("settings/icon", undefined, "DELETE"), "Icon removed.")}
+          >
+            Remove
+          </button>
+        )}
+      </div>
+    </Card>
   );
 }
 

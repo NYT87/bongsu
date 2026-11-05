@@ -49,12 +49,16 @@ type Me = {
   /** Signed in, but a member of no workspace (yet, or any more): nothing to show but "ask for an invite". */
   noWorkspace?: boolean;
   /** Where the session works (null: in none), and every workspace the person can open, with their role there. */
-  workspace?: { id: string; name: string; mediaFolder: string } | null;
-  workspaces?: { id: string; name: string; role: string }[];
+  workspace?: { id: string; name: string; mediaFolder: string; iconUrl: string | null } | null;
+  workspaces?: { id: string; name: string; role: string; iconUrl: string | null; shownAs: string | null }[];
+  /** The person's own name (all workspaces), the one this workspace shows for them, and what it shows now. */
+  you?: { name: string | null; emailName: string | null; displayName: string | null; shownAs: string | null } | null;
 };
 type Status = {
   dry_run: boolean;
   paused: boolean;
+  /** Who paused it, as the workspace names them (null: unknown). */
+  paused_by?: string | null;
   today: string;
   timezone: string;
   jobs_last_7_days: { state: string; mode: string; n: number }[];
@@ -65,6 +69,8 @@ type Draft = {
   account: string;
   source: string;
   created_by: string;
+  /** Who made it, as the workspace names them (null: nobody to name). */
+  by?: string | null;
   created_at: string;
   payload: Record<string, string> & { media?: string[] };
   previews?: { name: string; mime: string; url: string }[];
@@ -756,11 +762,15 @@ function SignedIn({ me, hash, onRefresh }: { me: Me; hash: string; onRefresh: ()
                     aria-label={`${t("workspace.switch")}: ${me.workspace.name}`}
                     onClick={() => setPicking(true)}
                   >
+                    <WsIcon url={me.workspace.iconUrl} />
                     <span className="clip">{me.workspace.name}</span>
                     {ICON.chevD}
                   </button>
                 ) : (
-                  <span className="ws-name clip">{me.workspace.name}</span>
+                  <span className="ws-name">
+                    <WsIcon url={me.workspace.iconUrl} />
+                    <span className="clip">{me.workspace.name}</span>
+                  </span>
                 ))}
             </div>
             <span className="head-icons">
@@ -793,7 +803,10 @@ function SignedIn({ me, hash, onRefresh }: { me: Me; hash: string; onRefresh: ()
             <div className="banner bad" role="status">
               {ICON.pause}
               <span>
-                <strong>{t("header.paused")}</strong> {t("header.pausedDetail")}
+                <strong>{t("header.paused")}</strong>{" "}
+                {shared.status.data.paused_by
+                  ? t("header.pausedBy", { name: shared.status.data.paused_by })
+                  : t("header.pausedDetail")}
               </span>
               <a href="#/settings">{t("header.resume")}</a>
             </div>
@@ -832,6 +845,11 @@ function SignedIn({ me, hash, onRefresh }: { me: Me; hash: string; onRefresh: ()
       </SharedCtx.Provider>
     </MeCtx.Provider>
   );
+}
+
+/** A workspace's icon, small and rounded; nothing for one without (no placeholder box). */
+function WsIcon({ url }: { url?: string | null }) {
+  return url ? <img className="ws-icon" src={url} alt="" width={24} height={24} /> : null;
 }
 
 /** The header's picker: the workspaces the person can open, with their role in each. Choosing one moves the app's
@@ -881,7 +899,13 @@ function WorkspaceSheet({ me, onClose, onSwitched }: { me: Me; onClose: () => vo
                 disabled={busy !== null}
                 onClick={() => pick(w.id)}
               >
-                <span className="clip">{w.name}</span>
+                <WsIcon url={w.iconUrl} />
+                <span className="clip">
+                  {w.name}
+                  {w.shownAs && w.shownAs !== (me.you?.name ?? me.you?.emailName) && (
+                    <span className="muted small ws-as">{t("workspace.shownAs", { name: w.shownAs })}</span>
+                  )}
+                </span>
                 <span className="muted small">{w.role}</span>
                 {here && <span className="check-mark">{ICON.check}</span>}
               </button>
@@ -1991,7 +2015,9 @@ function ItemPage({
       {item.approved && !item.failed && !done && (
         <p className={`notice ${item.approved.matches ? "ok" : "warn"}`}>
           {item.approved.matches
-            ? t("item.approvedAt", { when: utcToZone(item.approved.at) })
+            ? item.approved.by
+              ? t("item.approvedByAt", { name: item.approved.by, when: utcToZone(item.approved.at) })
+              : t("item.approvedAt", { when: utcToZone(item.approved.at) })
             : item.approved.commentsOnly
               ? t("item.commentsChanged")
               : t("item.changed")}
@@ -3930,7 +3956,8 @@ function DraftsPage() {
             )}
             {d.payload.note && <p className="small">{d.payload.note}</p>}
             <p className="muted small">
-              {when(d.created_at)} · {d.source === "drive" ? t("drafts.driveInbox") : d.created_by}
+              {when(d.created_at)}
+              {d.source === "drive" ? ` · ${t("drafts.driveInbox")}` : d.by ? ` · ${d.by}` : ""}
             </p>
             {open !== d.id && (
               <div className="row actions">
@@ -4462,6 +4489,67 @@ function unblockHelp(): string {
   return t("settings.unblockHelp", { steps, brave: brave ? ` ${t("settings.unblockBrave")}` : "" });
 }
 
+/** Your name everywhere, and the name this workspace shows for you (empty clears either). Each field saves alone. */
+function YouCard({ me, onRefresh }: { me: Me; onRefresh: () => void }) {
+  const you = me.you;
+  const [name, setName] = useState(you?.name ?? "");
+  const [shown, setShown] = useState(you?.displayName ?? "");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [msg, setMsg] = useState<{ field: string; text: string; ok: boolean } | null>(null);
+  useEffect(() => {
+    setName(you?.name ?? "");
+    setShown(you?.displayName ?? "");
+  }, [you?.name, you?.displayName]);
+  if (!you) return null;
+  const save = async (field: "name" | "display-name", value: string) => {
+    setBusy(field);
+    setMsg(null);
+    try {
+      await api(`me/${field}`, { name: value.trim() });
+      setMsg({ field, text: t("you.saved"), ok: true });
+      onRefresh();
+    } catch (e) {
+      setMsg({ field, text: (e as Error).message, ok: false });
+    }
+    setBusy(null);
+  };
+  const field = (id: "name" | "display-name", label: string, value: string, set: (v: string) => void, hint: string) => (
+    <div className="form">
+      <label>
+        {label}
+        <input
+          value={value}
+          maxLength={60}
+          placeholder={hint}
+          onChange={(e) => set(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && save(id, value)}
+        />
+      </label>
+      <button type="button" disabled={busy !== null} onClick={() => save(id, value)}>
+        {busy === id ? t("common.saving") : t("you.save")}
+      </button>
+      {msg?.field === id && (
+        <p className={`notice small ${msg.ok ? "ok" : "bad"}`} role={msg.ok ? "status" : "alert"}>
+          {msg.text}
+        </p>
+      )}
+    </div>
+  );
+  return (
+    <div className="card">
+      <h2>{t("you.title")}</h2>
+      {field("name", t("you.name"), name, setName, "")}
+      {field(
+        "display-name",
+        t("you.shownIn", { workspace: me.workspace?.name ?? "" }),
+        shown,
+        setShown,
+        you.name ?? you.emailName ?? "",
+      )}
+    </div>
+  );
+}
+
 function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const { status, refresh } = useShared();
   const [msg, setMsg] = useState<{ card: string; text: string; ok: boolean } | null>(null);
@@ -4519,6 +4607,7 @@ function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   };
   return (
     <section>
+      <YouCard me={me} onRefresh={onSignOut} />
       <div className="card">
         <h2>{t("settings.publishing")}</h2>
         {status.data?.paused ? (

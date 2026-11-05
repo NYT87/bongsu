@@ -9,7 +9,7 @@ import { buildDigest } from "@bongsu/core/digest";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { tick } from "@bongsu/core/tick";
-import { setWorkspaceSettings } from "@bongsu/core/workspaces";
+import { setDisplayName, setWorkspaceSettings } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   approve,
@@ -56,7 +56,7 @@ const status = async (key: string) => {
   const r = await exports.default.fetch("https://scheduler.test/v1/status", {
     headers: { Authorization: `Bearer ${key}` },
   });
-  return (await r.json()) as { paused: boolean };
+  return (await r.json()) as { paused: boolean; paused_by: string | null };
 };
 const jobState = async (key: string) =>
   env.DB.prepare("SELECT state FROM jobs WHERE item_key = ?1").bind(key).first<string>("state");
@@ -208,5 +208,33 @@ describe("pause per workspace", () => {
     await tick(e, { fetch: w.fetch, now: later(5) }, "shorts");
     expect(w.ytComments).toEqual([]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM jobs WHERE kind = 'comment'").first("n")).toBe(0);
+  });
+
+  it("says who paused: a person as the workspace names them, a key by its name, an old pause by its text", async () => {
+    expect(await status(KEY_B)).toMatchObject({ paused: false, paused_by: null });
+    await setDisplayName(env.DB, "b", "cara", "Ana");
+    await (await asCara())("/app-api/pause", { reason: "x" });
+    const stored = await env.DB.prepare("SELECT paused FROM workspace_settings WHERE workspace_id = 'b'").first<string>(
+      "paused",
+    );
+    expect(JSON.parse(stored ?? "")).toMatchObject({ reason: "x", by: "Ana", userId: "cara" });
+    expect(await status(KEY_B)).toMatchObject({ paused: true, paused_by: "Ana" });
+    // named as the workspace names her now
+    await setDisplayName(env.DB, "b", "cara", null);
+    expect((await status(KEY_B)).paused_by).toBe("Cara");
+
+    await env.DB.prepare("UPDATE api_keys SET name = 'demo-agent' WHERE id = 'ka'").run();
+    await exports.default.fetch("https://scheduler.test/v1/pause", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${KEY_A}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "x" }),
+    });
+    expect((await status(KEY_A)).paused_by).toBe('API key "demo-agent"');
+
+    // a pause stored before people had ids: its text
+    await env.DB.prepare("UPDATE workspace_settings SET paused = ?1 WHERE workspace_id = 'default'")
+      .bind(JSON.stringify({ reason: "old", by: "Owner", at: "2026-10-01T00:00:00.000Z" }))
+      .run();
+    expect((await status(KEY_A)).paused_by).toBe("Owner");
   });
 });

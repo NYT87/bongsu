@@ -7,6 +7,7 @@ import type { Env } from "./env";
 import { utcIso, zoneStamp } from "./formats/time";
 import { notifier } from "./notify";
 import { releaseMoved } from "./texts/notifications";
+import { memberName } from "./workspaces";
 
 export type ReleaseActor = { kind: "owner"; userId: string | null } | { kind: "key"; id: string; name: string };
 
@@ -74,7 +75,11 @@ export async function moveRelease(env: Env, fetcher: typeof fetch, req: ReleaseR
 
   const stamp = (s: number) => `${zoneStamp(s, tz)} ${tz}`;
   const fromS = Math.floor(Date.parse(from) / 1000);
-  const by = actor.kind === "owner" ? "you" : actor.name;
+  // everyone the notification reaches reads the mover's name, as this workspace names them
+  const by =
+    actor.kind === "key"
+      ? actor.name
+      : ((actor.userId ? await memberName(env.DB, actor.userId, req.workspaceId) : null) ?? "someone");
   await notifier(env, fetcher, nowS).send(releaseMoved(upload.title, stamp(fromS), stamp(at), by), req.workspaceId);
   return {
     video: videoId,

@@ -2,6 +2,7 @@
 // agent API (/v1, /mcp), the owner's app API (/app-api) and, when the runtime provides them, the app's static files.
 
 import type { Env } from "@bongsu/core/env";
+import { iconByHash } from "@bongsu/core/icon";
 import { serveMedia } from "@bongsu/core/media";
 import { mediaStoreById, storeRows } from "@bongsu/core/media/index";
 import { tableNames } from "@bongsu/core/sql";
@@ -70,6 +71,16 @@ export function createApp(fetcher: typeof fetch) {
       Math.floor(Date.now() / 1000),
     ),
   );
+
+  // A workspace's icon: public, addressed by the content's hash, so it can't be guessed and never changes.
+  app.get("/icon/:file", async (c) => {
+    const m = /^([0-9a-f]{64})\.png$/.exec(c.req.param("file"));
+    const png = m ? await iconByHash(c.env.DB, m[1]) : null;
+    if (!png) return c.body(null, 404);
+    return new Response(new Uint8Array(png), {
+      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=31536000, immutable" },
+    });
+  });
 
   // The agent API: REST /v1 and MCP /mcp, behind API keys (agent/).
   app.route("/", apiRoutes(fetcher));
