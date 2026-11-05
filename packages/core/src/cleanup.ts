@@ -1,26 +1,39 @@
-// Media cleanup, in the inbox's cron run: a day after an item is posted its media moves from UPLOADS/<project>/... to
-// UPLOADS/_posted/ in the store it's in. Move only: nothing is trashed or deleted here; the owner empties _posted/ by
+// Media cleanup, in the inbox's cron run: a day after an item is posted its media moves from <folder>/<project>/... to
+// <folder>/_posted/ (the folder of the item's workspace) in the store it's in. Move only: nothing is trashed or deleted here; the owner empties _posted/ by
 // hand. Some stores give a moved file a new id (S3), which is fine: nothing reads an id after this. If a store refuses
 // a move, that's recorded once, notified, never retried.
 import { contentPaths, getItem, latestApprovals } from "./data";
 import type { Env } from "./env";
-import { mediaStores } from "./media/index";
+import { mediaPath } from "./media/folders";
+import { type MediaStores, mediaStores } from "./media/index";
 import type { MediaStore } from "./media/store";
 import { MediaRefused } from "./media/store";
 import { notifier } from "./notify";
 import { cleanupRefused } from "./texts/notifications";
+import { workspaceSettings } from "./workspaces";
 
 export const MOVE_AFTER_S = 86400;
 /** Moves per run (each file costs a few subrequests; the free plan allows 50 per invocation). */
 const FILES_PER_RUN = 8;
-const POSTED = "UPLOADS/_posted";
 
 export async function cleanMedia(
   env: Env,
   deps: { fetch: typeof fetch; now: Date },
 ): Promise<{ moved: number; refused: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
-  const stores = await mediaStores(env, deps.fetch);
+  /** The stores and folder of each workspace, read once per run. */
+  const scopes = new Map<string, { stores: MediaStores; folder: string }>();
+  const scopeOf = async (ws: string) => {
+    let s = scopes.get(ws);
+    if (!s) {
+      s = {
+        stores: await mediaStores(env, deps.fetch, ws),
+        folder: (await workspaceSettings(env.DB, ws)).mediaFolder,
+      };
+      scopes.set(ws, s);
+    }
+    return s;
+  };
   const out = { moved: 0, refused: [] as string[] };
   /** The refusals per workspace: each workspace's devices hear of their own. */
   const refusedIn = new Map<string, string[]>();
@@ -38,7 +51,7 @@ export async function cleanMedia(
       env.DB,
       due.results.map((r) => r.item_key),
     );
-    /** _posted/ in each store, created once per run. */
+    /** _posted/ of each workspace's folder in each store, created once per run. */
     const targets = new Map<string, string>();
     const mark = (store: string, id: string, item: string, movedAt: number | null, refused: string | null) =>
       env.DB.prepare(
@@ -47,6 +60,8 @@ export async function cleanMedia(
         .bind(store, id, item, movedAt, refused)
         .run();
     for (const { item_key, workspace_id } of due.results) {
+      const { stores, folder } = await scopeOf(workspace_id);
+      const posted = mediaPath(folder, "_posted");
       // the approved files, in their store (an item's files are all in one: a draft's or an upload's)
       const refs = approvals.get(item_key)?.media ?? [];
       let store: MediaStore | null = null;
@@ -58,8 +73,9 @@ export async function cleanMedia(
       } else {
         // no approval: the item's media path, in the default store
         store = stores.default;
-        const i = await getItem(env.DB, item_key);
-        const node = store && i && contentPaths(i).single ? await store.resolve(contentPaths(i).media) : null;
+        const i = await getItem(env.DB, item_key, workspace_id);
+        const paths = i ? contentPaths(i, folder) : null;
+        const node = store && paths?.single ? await store.resolve(paths.media) : null;
         ids = node ? [node.id] : [];
       }
       if (!store || !ids.length) {
@@ -80,15 +96,16 @@ export async function cleanMedia(
           refused: string | null = null;
         if (!e) refused = "gone from the media store";
         else {
-          let target = targets.get(store.id);
+          const tkey = `${store.id}/${posted}`;
+          let target = targets.get(tkey);
           if (!target) {
-            target = await store.ensureFolder(POSTED);
-            targets.set(store.id, target);
+            target = await store.ensureFolder(posted);
+            targets.set(tkey, target);
           }
           if (e.parent === target) moved = nowS;
           else
             try {
-              await store.move(id, POSTED);
+              await store.move(id, posted);
               moved = nowS;
               out.moved++;
             } catch (err) {

@@ -4229,9 +4229,9 @@ function VersionInfo() {
 
 /** Where the media are read from: the stores set up in the dashboard, read-only here. */
 function MediaStoresCard() {
-  const { data } = useLoad<{ stores: { kind: string; default: boolean; status: string; where: string | null }[] }>(
-    "media-stores",
-  );
+  const { data } = useLoad<{
+    stores: { id: string; kind: string; own: boolean; default: boolean; status: string; where: string | null }[];
+  }>("media-stores");
   if (!data) return null;
   const name = (k: string) => (k === "drive" || k === "s3" || k === "local" ? t(`store.${k}`) : k);
   return (
@@ -4242,7 +4242,7 @@ function MediaStoresCard() {
       ) : (
         <ul className="small">
           {data.stores.map((s) => (
-            <li key={s.kind}>
+            <li key={s.id}>
               {name(s.kind)}
               {s.where && <code> {s.where}</code>}
               {s.default && <span className="muted"> ({t("settings.mediaDefault")})</span>}

@@ -472,11 +472,13 @@ describe("signed media links", () => {
     const now = 1_800_000_000;
     const good = await signedLink("https://s.test", "k", "drive", "abcdefghij12", "mp4", now + 60);
     expect(good).toContain("/m/drive/abcdefghij12.mp4?");
-    const r = await serveMedia(new Request(good), "k", stores, now);
+    const r = await serveMedia(new Request(good), "k", async (id) => stores.get(id), now);
     expect([r.status, r.headers.get("Content-Type"), await r.text()]).toEqual([200, "video/mp4", "VIDEO"]);
-    expect((await serveMedia(new Request(good), "k", stores, now + 61)).status).toBe(403);
-    expect((await serveMedia(new Request(good.replace(/sig=./, "sig=0")), "k", stores, now)).status).toBe(403);
-    expect((await serveMedia(new Request(good), "other-key", stores, now)).status).toBe(403);
+    expect((await serveMedia(new Request(good), "k", async (id) => stores.get(id), now + 61)).status).toBe(403);
+    expect(
+      (await serveMedia(new Request(good.replace(/sig=./, "sig=0")), "k", async (id) => stores.get(id), now)).status,
+    ).toBe(403);
+    expect((await serveMedia(new Request(good), "other-key", async (id) => stores.get(id), now)).status).toBe(403);
   });
 
   it("are signed for their store: the same id under another store is refused", async () => {
@@ -487,10 +489,13 @@ describe("signed media links", () => {
     );
     const now = 1_800_000_000;
     const good = await signedLink("https://s.test", "k", "drive", "abcdefghij12", "mp4", now + 60);
-    expect((await serveMedia(new Request(good.replace("/m/drive/", "/m/local/")), "k", stores, now)).status).toBe(403);
+    expect(
+      (await serveMedia(new Request(good.replace("/m/drive/", "/m/local/")), "k", async (id) => stores.get(id), now))
+        .status,
+    ).toBe(403);
     // a store that isn't set up: not found, even with a valid signature
     const other = await signedLink("https://s.test", "k", "s3", "abcdefghij12", "mp4", now + 60);
-    expect((await serveMedia(new Request(other), "k", stores, now)).status).toBe(404);
+    expect((await serveMedia(new Request(other), "k", async (id) => stores.get(id), now)).status).toBe(404);
   });
 });
 

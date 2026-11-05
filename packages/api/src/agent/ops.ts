@@ -56,7 +56,7 @@ import {
 import { youtubeAnalytics } from "@bongsu/core/providers/youtube";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { jsonList } from "@bongsu/core/sql";
-import { callerZone } from "@bongsu/core/workspaces";
+import { callerZone, workspaceSettings } from "@bongsu/core/workspaces";
 import type { Caller } from "./auth";
 
 export class ApiError extends Error {
@@ -339,6 +339,7 @@ export async function exportPlan(c: OpCtx, opts: { texts?: boolean } = {}) {
     ).results.map((p) => [p.item_key, p]),
   );
   const platformOf = new Map((await listAccounts(db, { workspaceId, all: true })).map((a) => [a.id, a.platform]));
+  const folder = (await workspaceSettings(db, workspaceId)).mediaFolder;
   const rows: ExportRow[] = [];
   for (const i of items) {
     const a = approvals.get(i.item_key);
@@ -360,7 +361,7 @@ export async function exportPlan(c: OpCtx, opts: { texts?: boolean } = {}) {
       note: i.note,
     };
     if (opts.texts) {
-      const paths = contentPaths(i);
+      const paths = contentPaths(i, folder);
       const caption = captionText((await readText(db, paths.caption)) ?? "");
       row.caption = caption;
       row.comment = commentText(caption, await readText(db, paths.comment));
@@ -379,7 +380,7 @@ export async function item(c: OpCtx, key: string) {
     throw new ApiError(400, 'key must be "reel:<project>/<base>" or "post:<project>/<post dir>"');
   const i = await getItem(c.env.DB, key, c.caller.workspaceId);
   if (!i) throw new ApiError(404, `${key} isn't planned`);
-  const paths = contentPaths(i);
+  const paths = contentPaths(i, (await workspaceSettings(c.env.DB, c.caller.workspaceId)).mediaFolder);
   const caption = captionText((await readText(c.env.DB, paths.caption)) ?? "");
   const a = (await latestApprovals(c.env.DB, [key])).get(key);
   const due = i.due_at;

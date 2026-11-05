@@ -120,6 +120,8 @@ export class MediaStores {
     private readonly defaultId: string | null,
     /** Stores set up but not usable (credentials that don't decrypt, a kind the runtime doesn't offer): id → why. */
     readonly errors: Map<string, string> = new Map(),
+    /** The instance's default, for when the workspace's own default can't be built. */
+    private readonly fallbackId: string | null = null,
   ) {}
 
   get all(): MediaStore[] {
@@ -134,7 +136,7 @@ export class MediaStores {
   }
   /** Where nothing names a store: plan items given by path, drafts from the agent API, the upload page's choice. */
   get default(): MediaStore | null {
-    return (this.defaultId && this.get(this.defaultId)) || this.all[0] || null;
+    return (this.defaultId && this.get(this.defaultId)) || this.get(this.fallbackId ?? "") || this.all[0] || null;
   }
   /** The stores the app can upload to. */
   get uploadable(): MediaStore[] {
@@ -160,6 +162,29 @@ export async function mediaStores(
       errors.set(r.id, (e as Error).message);
     }
   }
+  const defaults = defaultIds(rows, workspaceId);
+  return new MediaStores(built, defaults.effective, errors, defaults.instance);
+}
+
+/** Which row is the default: the workspace's own when it has one, else the instance's (null: none marked). */
+export function defaultIds(
+  rows: StoreRow[],
+  workspaceId: string | null,
+): { effective: string | null; instance: string | null } {
   const own = rows.find((r) => r.isDefault && workspaceId !== null && r.workspaceId === workspaceId);
-  return new MediaStores(built, (own ?? rows.find((r) => r.isDefault))?.id ?? null, errors);
+  const instance = rows.find((r) => r.isDefault && r.workspaceId === null)?.id ?? null;
+  return { effective: own?.id ?? instance, instance };
+}
+
+/** One store by id among all rows of every scope (the /m links name a store by id; the signature vouches for the
+ *  file). Null when it isn't set up or can't be built. */
+export async function mediaStoreById(env: Env, fetcher: typeof fetch, id: string): Promise<MediaStore | null> {
+  const r = (await storeRows(env.DB)).find((x) => x.id === id);
+  if (!r) return null;
+  try {
+    const creds = r.credentials ? await decryptSecret(env.ENCRYPTION_KEY, r.credentials) : null;
+    return buildStore(env, fetcher, r.kind, r.settings, creds, r.id);
+  } catch {
+    return null;
+  }
 }

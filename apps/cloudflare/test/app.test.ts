@@ -566,7 +566,7 @@ describe("a draft becomes a scheduled item (texts in D1)", () => {
 });
 
 describe("uploads from the app", () => {
-  it("opens resumable sessions in the app's own Drive folder, then makes a draft of the uploaded files", async () => {
+  it("opens resumable sessions in the workspace's _uploads folder in Drive, then makes a draft of the uploaded files", async () => {
     await signUp();
     await env.DB.prepare("DELETE FROM media_store").run();
     expect((await post("/app-api/uploads/start", { name: "a.mp4", mimeType: "video/mp4", size: 10 })).status).toBe(503); // no store
@@ -583,13 +583,13 @@ describe("uploads from the app", () => {
     expect(s).toMatchObject({ chunked: true, store: "drive", id: null });
     await post("/app-api/uploads/start", { name: "b.jpg", mimeType: "image/jpeg", size: 99 });
     const folder = w.uploads[0].parents[0];
-    expect(w.drive.get(folder)!.name).toBe("Bongsu app uploads");
+    expect(w.drive.get(folder)!.name).toBe("_uploads"); // UPLOADS/_uploads: the default workspace's folder
     expect(w.uploads.map((u) => u.parents[0])).toEqual([folder, folder]); // created once
     expect(w.uploads[0]).toMatchObject({ origin: "https://bongsu.test", type: "video/mp4" });
     expect(w.shares).toEqual([]); // the owner's own grant reads it: nothing to share
 
     // The browser sent the bytes to Google: the file is in the folder.
-    const vid = w.drivePut("Bongsu app uploads/short3_x.mp4", { md5: MD5, mimeType: "video/mp4" });
+    const vid = w.drivePut("UPLOADS/_uploads/short3_x.mp4", { md5: MD5, mimeType: "video/mp4" });
     const outside = w.drivePut("UPLOADS/other.mp4", { md5: MD5, mimeType: "video/mp4" });
     await planItem({ folder: "demo_running/CONTENT/20260201_RUN", name: "short1_x", account: "demo_running" });
     expect((await post("/app-api/drafts/new", { files: [outside], project: "20260201_RUN", name: "x" })).status).toBe(

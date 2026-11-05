@@ -23,6 +23,7 @@ import { mediaStores } from "@bongsu/core/media/index";
 import { isMedia, isVideo, type MediaEntry } from "@bongsu/core/media/store";
 import { platform } from "@bongsu/core/platforms/index";
 import { type Format, formatLabel } from "@bongsu/core/platforms/types";
+import { workspaceSettings } from "@bongsu/core/workspaces";
 
 export interface Resolved {
   key: string;
@@ -86,8 +87,8 @@ export async function resolveItem(
   if (!/^(reel|post):[^/]+\/[^/]+$/.test(key)) return null;
   const i = await getItem(env.DB, key, workspaceId);
   if (!i) return null;
-  const stores = await mediaStores(env, fetcher);
-  const paths = contentPaths(i);
+  const stores = await mediaStores(env, fetcher, workspaceId);
+  const paths = contentPaths(i, (await workspaceSettings(env.DB, workspaceId)).mediaFolder);
   const problems: string[] = [];
   const db = i.content === "db";
   // The texts (D1, the copy the scheduler posts) and the media (the store) at the same time: the page's Approve waits on this.

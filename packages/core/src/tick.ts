@@ -51,7 +51,7 @@ import { InstagramProvider } from "./providers/instagram-publish";
 import type { OutgoingPost, Provider, Step } from "./providers/types";
 import { jsonList } from "./sql";
 import * as N from "./texts/notifications";
-import { workspaceZone } from "./workspaces";
+import { workspaceSettings, workspaceZone } from "./workspaces";
 
 export interface Deps {
   fetch: typeof fetch;
@@ -141,8 +141,7 @@ interface JobRow {
 }
 
 class Ctx {
-  /** The instance's media stores, read at the start of the run (tick). */
-  stores!: MediaStores;
+  private storeSets = new Map<string, MediaStores>();
   /** The workspaces this run leaves alone (data.ts heldWorkspaces), read once at its start. */
   held = new Map<string, Held>();
   note: Notifier;
@@ -157,6 +156,15 @@ class Ctx {
     this.nowS = Math.floor(deps.now.getTime() / 1000);
     this.dry = env.DRY_RUN !== "0";
     this.note = notifier(env, deps.fetch, this.nowS);
+  }
+  /** The media stores of a workspace (the instance's and its own), built once per run. */
+  async storesFor(workspaceId: string): Promise<MediaStores> {
+    let s = this.storeSets.get(workspaceId);
+    if (!s) {
+      s = await mediaStores(this.env, this.deps.fetch, workspaceId);
+      this.storeSets.set(workspaceId, s);
+    }
+    return s;
   }
   /** The provider that reaches the job's account (its connection, in the job's workspace), looked up once per run.
    *  Jobs queued before the providers name only a Composio connection. */
@@ -226,7 +234,6 @@ export async function tick(
   if (!(await acquire(env.DB, lock, holder, nowS, 240))) return { status: "locked" };
   try {
     const c = new Ctx(env, deps);
-    c.stores = await mediaStores(env, deps.fetch);
     // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
     c.held = await heldWorkspaces(env.DB);
     if (part === "shorts") {
@@ -286,9 +293,10 @@ async function discover(c: Ctx, a: Account) {
     workspaceId: a.workspaceId,
   };
   const cands: Candidate[] = [];
+  const folder = (await workspaceSettings(c.env.DB, a.workspaceId)).mediaFolder;
   for (const i of await dueItems(c.env.DB, a.id, c.nowS)) {
     const at = i.due_at as number; // dueItems: due_at ≤ now
-    const paths = contentPaths(i);
+    const paths = contentPaths(i, folder);
     cands.push({
       key: i.item_key,
       format: i.format ?? null,
@@ -495,6 +503,7 @@ async function settle(c: Ctx, job: JobRow, p: Payload, r: { state: "done" | "ref
 async function verify(
   c: Ctx,
   p: Payload,
+  workspaceId: string,
 ): Promise<{ problem: string | null; caption: string; comment: string | null; alts: string[] }> {
   const ap = p.approval!;
   const captionRaw = p.story ? "" : await c.read(p.captionPath); // a Story has no caption or comments
@@ -521,8 +530,9 @@ async function verify(
   const comment2 = p.comment2Path && !p.story ? comment2Text(await c.read(p.comment2Path)) : null;
   if ((comment2 ? await sha256Hex(comment2) : null) !== (ap.comment2Sha256 ?? null))
     return { problem: "the second comment changed after approval", caption, comment, alts: [] };
+  const stores = await c.storesFor(workspaceId);
   for (const m of ap.media) {
-    const store = c.stores.for(m);
+    const store = stores.for(m);
     if (!store)
       return {
         problem: `approved on the ${m.store} store, which isn't set up any more: approve again`,
@@ -538,8 +548,8 @@ async function verify(
   return { problem: null, caption, comment, alts: altLines(alt) };
 }
 
-async function link(c: Ctx, m: MediaRef, video: boolean) {
-  const store = c.stores.for(m);
+async function link(c: Ctx, m: MediaRef, video: boolean, workspaceId: string) {
+  const store = (await c.storesFor(workspaceId)).for(m);
   if (!store) throw new Error(`the ${m.store} media store isn't set up`);
   return mediaUrl(store, {
     base: c.env.PUBLIC_URL,
@@ -550,7 +560,8 @@ async function link(c: Ctx, m: MediaRef, video: boolean) {
     ttlS: LINK_TTL_S,
   });
 }
-const isVideoRef = async (c: Ctx, m: MediaRef) => isVideo((await c.stores.for(m)?.stat(m.id)) ?? { mime: "" });
+const isVideoRef = async (c: Ctx, m: MediaRef, workspaceId: string) =>
+  isVideo((await (await c.storesFor(workspaceId)).for(m)?.stat(m.id)) ?? { mime: "" });
 
 async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   if (p.trial) return stepTrialPending(c, job, p);
@@ -562,7 +573,7 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   const r = await recheck(c, job, p);
   if (r) return settle(c, job, p, r);
 
-  const v = await verify(c, p);
+  const v = await verify(c, p, job.workspace_id);
   if (v.problem) return refuse(c, job, v.problem);
   const media = p.approval!.media;
 
@@ -593,7 +604,7 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
     return;
   }
 
-  const kinds = await Promise.all(media.map((m) => isVideoRef(c, m)));
+  const kinds = await Promise.all(media.map((m) => isVideoRef(c, m, job.workspace_id)));
   // an "image" whose file is a video goes out as a video (a single-video post: the slideshow Reels in posts/reelN_<name>/)
   const format: Format = p.story ? "story" : job.kind === "image" && kinds[0] ? "video" : (job.kind as Format);
   await startPublishing(c, job, p, {
@@ -601,7 +612,7 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
     caption: v.caption,
     alts: v.alts,
     media: await Promise.all(
-      media.map(async (m, i) => ({ id: m.id, url: await link(c, m, kinds[i]), video: kinds[i] })),
+      media.map(async (m, i) => ({ id: m.id, url: await link(c, m, kinds[i], job.workspace_id), video: kinds[i] })),
     ),
     options: postOptions(p, format),
   });
@@ -661,7 +672,7 @@ async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
     await c.setJob(job.id, { state: "done", last_error: "trial copy switched off" });
     return;
   }
-  const v = await verify(c, p);
+  const v = await verify(c, p, job.workspace_id);
   if (v.problem) return refuse(c, job, `trial copy: ${v.problem}`);
   if (c.dry) {
     await c.setJob(job.id, { state: "done", dry_run: 1, last_error: "dry run: trial copy not posted" });
@@ -680,7 +691,7 @@ async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
     format: "video",
     caption: v.caption,
     alts: [],
-    media: [{ id: m.id, url: await link(c, m, true), video: true }],
+    media: [{ id: m.id, url: await link(c, m, true, job.workspace_id), video: true }],
     options: postOptions({ ...p, trial: true }, "video"),
   });
 }

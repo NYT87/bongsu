@@ -28,7 +28,7 @@ export async function runSchedule(env: Env, fetcher: typeof fetch, cron: string,
     if (!(await acquire(env.DB, "inbox", holder, nowS, 600))) return console.log("inbox: locked");
     try {
       console.log(`inbox: ${JSON.stringify(await scanInbox(env, deps))}`);
-      console.log(`cleanup: ${JSON.stringify(await cleanMedia(env, deps))}`); // posted media → UPLOADS/_posted/ (move only)
+      console.log(`cleanup: ${JSON.stringify(await cleanMedia(env, deps))}`); // posted media → <folder>/_posted/ (move only)
       console.log(`digest: ${await dailyDigest(env, deps)}`); // once a day, at the workspace's digest hour
       // Each in its own try: one failing (a Composio or YouTube hiccup) doesn't stop the others.
       for (const [name, run] of [

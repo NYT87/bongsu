@@ -1,7 +1,6 @@
 // Signed, expiring links that stream a private file from a media store to Instagram (and to the app's previews):
 //   GET|HEAD /m/<store>/<id>[.<ext>]?exp=<unix seconds>&sig=<hex HMAC-SHA256 of "<store>/<id>.<exp>">
 // A store with publicUrl (presigned URLs) doesn't need them: Instagram fetches the store directly (mediaUrl).
-import type { MediaStores } from "./media/index";
 import type { MediaStore } from "./media/store";
 
 const utf8 = (s: string) => new TextEncoder().encode(s);
@@ -37,9 +36,14 @@ async function validSig(secret: string, signed: string, sig: string): Promise<bo
   return crypto.subtle.verify("HMAC", await hmacKey(secret, "verify"), bytes, utf8(signed)); // constant-time
 }
 
-export async function serveMedia(req: Request, secret: string, stores: MediaStores, nowS: number): Promise<Response> {
+export async function serveMedia(
+  req: Request,
+  secret: string,
+  lookup: (id: string) => Promise<MediaStore | null>,
+  nowS: number,
+): Promise<Response> {
   const url = new URL(req.url);
-  const m = url.pathname.match(/^\/m\/([a-z0-9]{2,20})\/([A-Za-z0-9_-]{2,})(?:\.[a-z0-9]{2,4})?$/);
+  const m = url.pathname.match(/^\/m\/([a-z0-9][a-z0-9_-]{1,40})\/([A-Za-z0-9_-]{2,})(?:\.[a-z0-9]{2,4})?$/);
   if (!m || (req.method !== "GET" && req.method !== "HEAD")) return new Response("not found", { status: 404 });
   const [, kind, id] = m,
     exp = url.searchParams.get("exp") ?? "",
@@ -47,7 +51,7 @@ export async function serveMedia(req: Request, secret: string, stores: MediaStor
   if (!/^\d+$/.test(exp) || Number(exp) < nowS || !(await validSig(secret, `${kind}/${id}.${exp}`, sig))) {
     return new Response("forbidden", { status: 403 });
   }
-  const store = stores.get(kind);
+  const store = await lookup(kind);
   if (!store) return new Response("not found", { status: 404 });
   const meta = await store.stat(id);
   if (!meta || meta.folder) return new Response("not found", { status: 404 });

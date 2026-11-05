@@ -13,7 +13,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneDate, zoneStamp } from "@bongsu/core/formats/time";
 import { mediaUrl } from "@bongsu/core/media";
-import { mediaStores, storeRows } from "@bongsu/core/media/index";
+import { defaultIds, mediaStores, storeRows } from "@bongsu/core/media/index";
 import { isVideo, type MediaStore } from "@bongsu/core/media/store";
 import { effectivePrefs, isNoteGroup, setPref } from "@bongsu/core/notify-prefs";
 import { platforms } from "@bongsu/core/platforms/index";
@@ -427,7 +427,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     "/app-api/drafts",
     wrap(async (c) => {
       const r = await ops.listDrafts(opctx(c), { status: c.req.query("status") });
-      const stores = await mediaStores(c.env, fetcher);
+      const stores = await mediaStores(c.env, fetcher, me(c).workspaceId);
       return {
         accounts: (await instagramAccounts(c.env.DB, me(c).workspaceId)).map((a) => a.id),
         drafts: await Promise.all(
@@ -508,7 +508,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // Uploads from the app: the store's upload target per file (the browser sends the bytes straight to it), then the draft.
   app.post(
     "/app-api/uploads/start",
-    owned(async (c) => startUpload(c.env, fetcher, await body(c))),
+    owned(async (c) => startUpload(c.env, fetcher, await body(c), me(c).workspaceId)),
   );
   app.post(
     "/app-api/drafts/new",
@@ -532,16 +532,21 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return c.json({ ok: true });
   });
   // The media stores, for Settings (read-only: they're set up in the dashboard; no settings or secrets here).
-  app.get("/app-api/media-stores", async (c) =>
-    c.json({
-      stores: (await storeRows(c.env.DB, { workspaceId: me(c).workspaceId })).map((r) => ({
+  app.get("/app-api/media-stores", async (c) => {
+    const ws = me(c).workspaceId;
+    const rows = await storeRows(c.env.DB, { workspaceId: ws });
+    const effective = defaultIds(rows, ws).effective;
+    return c.json({
+      stores: rows.map((r) => ({
+        id: r.id,
         kind: r.kind,
-        default: r.isDefault,
+        own: r.workspaceId === ws,
+        default: r.id === effective,
         status: r.status,
         where: r.kind === "s3" ? String(r.settings.bucket ?? "") : null,
       })),
-    }),
-  );
+    });
+  });
   // ---- connecting accounts (Settings): admins and creators connect Instagram and YouTube with the instance's OAuth
   // apps, into their workspace. The provider sends the browser back to the dashboard's callback (the one redirect URL
   // registered in the app), which sends it on to the app's Settings (dashboard/routes.ts).
@@ -598,7 +603,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   );
   // The stores the app can upload to (the default first): the upload page offers a choice when there are several.
   app.get("/app-api/uploads/enabled", async (c) => {
-    const stores = await mediaStores(c.env, fetcher);
+    const stores = await mediaStores(c.env, fetcher, me(c).workspaceId);
     const up = stores.uploadable.sort((a, b) => Number(b === stores.default) - Number(a === stores.default));
     return c.json({ enabled: up.length > 0, stores: up.map((s) => s.id) });
   });
@@ -641,7 +646,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     const tz = await zone(c);
     const r = await resolveItem(c.env, fetcher, c.req.query("key") ?? "", tz, me(c).workspaceId);
     if (!r) return c.json({ error: "this item isn't in the plan any more" }, 404);
-    const stores = await mediaStores(c.env, fetcher);
+    const stores = await mediaStores(c.env, fetcher, me(c).workspaceId);
     const media = await Promise.all(
       r.media.map(async (m) => {
         const store = stores.for(m);
