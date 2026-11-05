@@ -49,7 +49,7 @@ type Me = {
   /** Signed in, but a member of no workspace (yet, or any more): nothing to show but "ask for an invite". */
   noWorkspace?: boolean;
   /** Where the session works (null: in none), and every workspace the person can open, with their role there. */
-  workspace?: { id: string; name: string } | null;
+  workspace?: { id: string; name: string; mediaFolder: string } | null;
   workspaces?: { id: string; name: string; role: string }[];
 };
 type Status = {
@@ -349,6 +349,8 @@ const MeCtx = createContext<Me | null>(null);
 /** True once /app-api/me says the workspace has no active account: every list shows the setup note instead. */
 const useNoAccounts = () => useContext(MeCtx)?.accounts === 0;
 /** Whether the signed-in role has a scope, e.g. "reschedule" for moving a YouTube release date. */
+/** The workspace's media folder: where its inbox and the app's uploads live. */
+const useMediaFolder = () => useContext(MeCtx)?.workspace?.mediaFolder ?? "UPLOADS";
 const useCan = (scope: string) => useContext(MeCtx)?.scopes?.includes(scope) ?? false;
 
 /** What an empty list says once accounts exist: where posts come from. */
@@ -3599,6 +3601,7 @@ function NewDraft({
   onDone: (id: string) => void;
   onCancel: () => void;
 }) {
+  const mediaFolder = useMediaFolder();
   const [store, setStore] = useState(stores[0] ?? "");
   const groups = useLoad<{ groups: { channel: string; group: string }[] }>("queue/groups?days=120");
   const [files, setFiles] = useState<File[]>([]);
@@ -3757,7 +3760,7 @@ function NewDraft({
           {busy ? t("draft.uploadingShort") : t("draft.upload")}
         </button>
       </div>
-      <p className="muted small">{t("draft.uploadNote")}</p>
+      <p className="muted small">{t("draft.uploadNote", { folder: mediaFolder })}</p>
     </div>
   );
 }
@@ -3817,6 +3820,7 @@ function ConfirmButton({
 }
 
 function DraftsPage() {
+  const mediaFolder = useMediaFolder();
   const {
     drafts: { data, error, reload, stale, at },
   } = useShared();
@@ -3869,7 +3873,7 @@ function DraftsPage() {
       )}
       {about && (
         <p id="drafts-about" className="notice small">
-          {t("drafts.aboutBefore")} <code>UPLOADS/inbox/&lt;project&gt;/</code> {t("drafts.aboutAfter")}
+          {t("drafts.aboutBefore")} <code>{mediaFolder}/inbox/&lt;project&gt;/</code> {t("drafts.aboutAfter")}
         </p>
       )}
       {adding && (

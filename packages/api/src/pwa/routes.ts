@@ -9,6 +9,7 @@ import { replyToComment } from "@bongsu/core/comments";
 import { ConnectError, readyAppIds, startConnect } from "@bongsu/core/connections";
 import { LINK_TTL_S } from "@bongsu/core/constants";
 import { dueFrom, getItem, getPosted, isPosted, itemOptions, trialFor, WhenError } from "@bongsu/core/data";
+import type { Db } from "@bongsu/core/db";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneDate, zoneStamp } from "@bongsu/core/formats/time";
@@ -213,7 +214,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       // the text the app shows (packages/web/src/i18n.ts): the workspace's, English for someone not signed in
       locale: caller ? (await workspaceSettings(c.env.DB, caller.workspaceId)).locale : "en",
       // where the session works, and the picker's list (creators included: the app is theirs)
-      workspace: caller ? await workspaceRef(c.env.DB, caller.workspaceId) : null,
+      workspace: caller ? await workspaceOf(c.env.DB, caller.workspaceId) : null,
       workspaces: s ? await workspacesOf(c.env.DB, s.userId) : [],
     });
   });
@@ -1059,3 +1060,9 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   return app;
 }
+
+/** The session's workspace as the app sees it: who it is and where its files live. */
+const workspaceOf = async (db: Db, workspaceId: string) => {
+  const ref = await workspaceRef(db, workspaceId);
+  return ref && { ...ref, mediaFolder: (await workspaceSettings(db, workspaceId)).mediaFolder };
+};
