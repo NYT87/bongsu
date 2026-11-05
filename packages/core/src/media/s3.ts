@@ -104,6 +104,17 @@ interface Listed {
   folders: string[];
 }
 
+/** The key an id names, or null when it isn't one of ours. An id is a caller-chosen base64url key, and a `.` or `..`
+ *  segment (or an empty one) would be normalised away by the URL, reaching a key outside the folder it says it is in:
+ *  such ids count as missing everywhere. A folder's key ends in a slash. */
+function keyOf(id: string): string | null {
+  const rel = b64url.decode(id);
+  if (!rel) return rel;
+  const segs = rel.split("/");
+  if (rel.endsWith("/")) segs.pop();
+  return segs.some((x) => x === "" || x === "." || x === "..") ? null : rel;
+}
+
 export class S3Store implements MediaStore {
   private readonly aws: AwsClient;
   private readonly prefix: string;
@@ -227,13 +238,13 @@ export class S3Store implements MediaStore {
   // ---------------------------------------------------------------- the interface
 
   async stat(id: string) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     if (!rel) return null;
     return rel.endsWith("/") ? this.folder(rel) : this.head(rel);
   }
 
   async stream(id: string, range?: string | null) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     if (!rel || rel.endsWith("/")) return new Response("not found", { status: 404 });
     const r = await this.send(this.url(rel), { headers: range ? { Range: range } : {} });
     if (r.status === 404) return new Response("not found", { status: 404 });
@@ -253,14 +264,14 @@ export class S3Store implements MediaStore {
   }
 
   async inside(id: string, folderPath: string) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     const folder = clean(folderPath);
     // the key says where it is: the trailing slash keeps "inbox/tr" from matching "inbox/trip"
     return !!rel && !!folder && rel.startsWith(`${folder}/`) && rel.length > folder.length + 1;
   }
 
   async list(folderId: string) {
-    const rel = b64url.decode(folderId);
+    const rel = keyOf(folderId);
     if (rel === null || (rel && !rel.endsWith("/"))) return [];
     const l = await this.listing(rel, { delimiter: true, all: true });
     return [
@@ -277,7 +288,7 @@ export class S3Store implements MediaStore {
   }
 
   async move(id: string, toFolderPath: string) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     if (!rel) throw new Error("s3 move: not an id of this store");
     const to = `${clean(toFolderPath)}/`;
     await this.ensureFolder(to);
@@ -304,7 +315,7 @@ export class S3Store implements MediaStore {
   }
 
   async publicUrl(id: string, ttlS: number) {
-    const rel = b64url.decode(id);
+    const rel = keyOf(id);
     if (!rel) throw new Error("s3: not an id of this store");
     const ttl = Math.max(1, Math.min(Math.floor(ttlS), MAX_TTL_S));
     const req = await this.aws.sign(this.url(rel, { "X-Amz-Expires": String(ttl) }), {

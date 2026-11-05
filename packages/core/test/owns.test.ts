@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { FakeS3 } from "../src/media/fake-s3";
 import { MediaStores } from "../src/media/index";
 import { MemoryStore } from "../src/media/memory";
 import { assertOwns, MediaError, ownsRef } from "../src/media/owns";
+import { S3Store } from "../src/media/s3";
 
 async function setup() {
   const shared = new MemoryStore("s3");
@@ -52,6 +54,21 @@ describe("ownsRef", () => {
     }) as MemoryStore;
     const stores = new MediaStores(new Map([["s3", boom]]), "s3");
     expect(await ownsRef(stores, "client-a", { store: "s3", id: ids.mine })).toBe(false);
+  });
+});
+
+describe("ownsRef with S3 ids", () => {
+  it("refuses a key that climbs out of the folder with dot segments", async () => {
+    const s3 = new FakeS3({ host: "s3.test", bucket: "media", accessKeyId: "AKIDEXAMPLE" });
+    await s3.put("client-b/x/b.jpg", "b", "image/jpeg");
+    const store = new S3Store(
+      { endpoint: "https://s3.test", region: "auto", bucket: "media", pathStyle: true },
+      { accessKeyId: "AKIDEXAMPLE", secretAccessKey: "secret" },
+      s3.fetch,
+    );
+    const stores = new MediaStores(new Map([["s3", store]]), "s3");
+    const id = btoa("UPLOADS/../client-b/x/b.jpg").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    expect(await ownsRef(stores, "UPLOADS", { store: "s3", id })).toBe(false);
   });
 });
 

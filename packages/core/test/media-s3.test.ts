@@ -40,6 +40,29 @@ for (const variant of [
 }
 
 describe("s3 store", () => {
+  it("treats an id with a dot or empty segment as missing: the URL would normalise it out of its folder", async () => {
+    const { s3, store } = setup();
+    await s3.put("client-b/trip/b.jpg", "b-bytes", "image/jpeg");
+    await s3.put("UPLOADS/trip/a.jpg", "a", "image/jpeg");
+    const id = (key: string) => btoa(key).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    for (const key of [
+      "UPLOADS/../client-b/trip/b.jpg",
+      "UPLOADS/./trip/a.jpg",
+      "UPLOADS//trip/a.jpg",
+      "/UPLOADS/trip/a.jpg",
+      "UPLOADS/trip/../../client-b/trip/b.jpg",
+      "UPLOADS/../client-b/trip/",
+    ]) {
+      expect(await store.inside(id(key), "UPLOADS"), key).toBe(false);
+      expect(await store.stat(id(key)), key).toBeNull();
+      expect((await store.stream(id(key))).status, key).toBe(404);
+      await expect(store.publicUrl(id(key), 60), key).rejects.toThrow();
+      await expect(store.move(id(key), "elsewhere"), key).rejects.toThrow();
+      expect(await store.list(id(key)), key).toEqual([]);
+    }
+    expect(await store.inside(id("UPLOADS/trip/a.jpg"), "UPLOADS")).toBe(true);
+  });
+
   it("keeps every key under its prefix, and ids are opaque and URL-safe", async () => {
     const { s3, store } = setup({ prefix: "bongsu" });
     await s3.put("other/secret.mp4", "x", "video/mp4");

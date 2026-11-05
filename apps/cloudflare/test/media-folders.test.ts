@@ -450,6 +450,15 @@ describe("references stay in the workspace", () => {
     expect(payload.media).toEqual([{ store: "s3", id: ids.a }]);
   });
 
+  it("refuses an S3 id that climbs out of the folder with '..': /v1/drafts and scheduling", async () => {
+    const sneaky = btoa("UPLOADS/../client-b/trip/b.jpg").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    const r = await rest(KEY_A, "/v1/drafts", { kind: "photo", account: "demo_travel", caption: "x", media: [sneaky] });
+    expect([r.status, r.json.error]).toEqual([400, REFUSED]);
+    const d = await draft([{ store: "s3", id: sneaky }]);
+    const s = await app(`/app-api/drafts/${d}/schedule`, { ...when, name: "n3" });
+    expect([s.status, s.json.error]).toEqual([400, REFUSED]);
+  });
+
   it("takes anything from the workspace's own default store, and files from the instance's must be in its folder", async () => {
     await saveStore(e, w.fetch, { workspaceId: B }, "s3", TEST_S3_SETTINGS, JSON.stringify(TEST_S3_KEYS), "owner", 0);
     const base = { kind: "photo", account: "b_shop", caption: "x" };
