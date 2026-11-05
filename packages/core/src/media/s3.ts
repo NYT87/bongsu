@@ -164,7 +164,7 @@ export class S3Store implements MediaStore {
     // aws4fetch signs; the request goes out through the instance's fetch (the tests' fake world). Redirects aren't
     // followed: a signature is for one host, and a workspace's endpoint could point the server at a private address.
     const r = await this.fetcher(await this.aws.sign(url, { ...init, redirect: "manual" }));
-    if (r.type === "opaqueredirect" || (r.status >= 300 && r.status < 400))
+    if (String(r.type) === "opaqueredirect" || (r.status >= 300 && r.status < 400))
       throw new Error(`s3: the endpoint answered with a redirect (${r.status}), not followed; check the endpoint`);
     return r;
   }

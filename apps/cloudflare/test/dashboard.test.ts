@@ -219,7 +219,7 @@ describe("signed in", () => {
     await env.DB.prepare(
       "INSERT INTO media_store (id, kind, workspace_id, is_default, settings, status, updated_at) VALUES ('s3-default', 's3', 'default', 1, '{}', 'ok', 0)",
     ).run();
-    expect((await setup()).mediaStore).toBe(false);
+    expect(await setup()).toMatchObject({ mediaStore: false });
     await env.DB.prepare(
       "INSERT INTO media_store (kind, is_default, settings, status, updated_at) VALUES ('s3', 1, '{}', 'ok', 0)",
     ).run();

@@ -145,8 +145,8 @@ describe("the first run", () => {
         .first("media_folder");
     const make = (folder: string) =>
       call("/admin-api/workspaces", { name: "Demo Studio", timezone: "UTC", admin: "me", folder });
-    expect(await folderOf((await make("")).json.id)).toBe("demo-studio");
-    expect(await folderOf((await make("  ")).json.id)).toBe("demo-studio-2");
+    expect(await folderOf((await make("")).json.id as string)).toBe("demo-studio");
+    expect(await folderOf((await make("  ")).json.id as string)).toBe("demo-studio-2");
     const taken = await make("demo-studio");
     expect([taken.status, taken.json.error]).toEqual([400, "another workspace uses demo-studio"]);
   });
