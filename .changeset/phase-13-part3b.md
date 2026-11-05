@@ -11,8 +11,8 @@
 A workspace icon, and people's names per workspace (Phase 13, part 3b).
 
 - **Icon.** A workspace's admins set an optional icon in the dashboard's Settings: a square PNG, 192 to 1024 pixels,
-  at most 200 KB (`PUT` and `DELETE /admin-api/settings/icon`). It shows beside the workspace's name in the dashboard
-  and the app, in the workspace pickers and in its push notifications. It is served, public, at `/icon/<hash>.png`.
+  at most 200 KB (`PUT` and `DELETE /admin-api/settings/icon`). It shows beside the workspace's name in the dashboard's
+  sidebar, in the app's header and workspace picker, and in its push notifications. It is served, public, at `/icon/<hash>.png`.
   The installed app's icon stays the instance's. `iconUrl` is now part of `state`, `me` and the settings.
 - **Names.** You set your own name in the app's Settings → You, and a name each workspace shows for you
   (`POST /app-api/me/name` and `/app-api/me/display-name`); an admin can edit a member's name for their workspace

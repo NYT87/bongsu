@@ -9,12 +9,14 @@ import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { encryptSecret } from "@bongsu/core/crypto";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
-import { iconByHash, setIcon } from "@bongsu/core/icon";
+import { iconByHash, removeIcon, setIcon } from "@bongsu/core/icon";
+import { notifier } from "@bongsu/core/notify";
 import { addMember } from "@bongsu/core/people";
 import { tick } from "@bongsu/core/tick";
 import { setDisplayName, setWorkspaceSettings } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { png } from "./icon-png";
+import { decrypt, keys } from "./push-helpers";
 import { clearPlan, seedReel, TEST_ENCRYPTION_KEY, testEnv, World } from "./world";
 
 const KEY_A = "bongsu_workspaceAworkspaceAworksp";
@@ -711,7 +713,7 @@ describe("a workspace's icon and people's names stay in their workspace (Phase 1
       ...(body === undefined ? {} : { body }),
     });
     const text = await r.text();
-    let json: Record<string, any> = {};
+    let json: Record<string, unknown> = {};
     try {
       json = JSON.parse(text);
     } catch {}
@@ -723,12 +725,13 @@ describe("a workspace's icon and people's names stay in their workspace (Phase 1
       Cookie: `${app === "dashboard" ? "bongsu_admin" : "bongsu_session"}=${await createSession(env.DB, nowS(), { app, userId })}`,
     }) as Record<string, string>;
   const PNG = { "Content-Type": "image/png" };
+  type Ref = { iconUrl?: string | null; displayName?: string | null; shownAs?: string | null };
 
   beforeEach(async () => {
     const ids = IDS.map((i) => `'${i}'`).join(", ");
     await env.DB.batch(
       [
-        "DELETE FROM sessions",
+        `DELETE FROM sessions WHERE user_id IN (${ids})`,
         "DELETE FROM workspace_icons",
         `DELETE FROM memberships WHERE user_id IN (${ids})`,
         `DELETE FROM users WHERE id IN (${ids})`,
@@ -745,14 +748,20 @@ describe("a workspace's icon and people's names stay in their workspace (Phase 1
     hashA = await setIcon(env.DB, "default", iconA, nowS());
   });
   afterEach(async () => {
-    await env.DB.batch(["DELETE FROM sessions", "DELETE FROM workspace_icons"].map((q) => env.DB.prepare(q)));
+    await env.DB.batch(
+      [
+        `DELETE FROM sessions WHERE user_id IN (${IDS.map((i) => `'${i}'`).join(", ")})`,
+        "DELETE FROM workspace_icons",
+        "DELETE FROM push_subs WHERE endpoint LIKE '%iso-%'",
+      ].map((q) => env.DB.prepare(q)),
+    );
   });
 
   it("A's icon URL and display name never reach B's me, state, settings, members or audit", async () => {
     // A's own views have them (so the absence below means something)
     const a = await req("GET", "/admin-api/state", await cookie("isoa", "dashboard"));
     expect(a.text).toContain(hashA);
-    expect((await req("GET", "/app-api/me", await cookie("isoa", "pwa"))).json.you.shownAs).toBe(SECRET_NAME);
+    expect(((await req("GET", "/app-api/me", await cookie("isoa", "pwa"))).json.you as Ref).shownAs).toBe(SECRET_NAME);
     await req(
       "POST",
       "/admin-api/members/isoe/name",
@@ -775,7 +784,10 @@ describe("a workspace's icon and people's names stay in their workspace (Phase 1
       expect(r.text, path).not.toContain("Only-In-A");
     }
     // B's me and state name no icon for B itself
-    const meB = (await req("GET", "/app-api/me", await cookie("isob", "pwa"))).json;
+    const meB = (await req("GET", "/app-api/me", await cookie("isob", "pwa"))).json as {
+      workspace: Ref;
+      you: Ref;
+    };
     expect(meB.workspace.iconUrl).toBeNull();
     expect(meB.you.displayName).toBeNull();
   });
@@ -784,7 +796,7 @@ describe("a workspace's icon and people's names stay in their workspace (Phase 1
     const h = await cookie("isob", "dashboard");
     const put = await req("PUT", "/admin-api/settings/icon", { ...h, ...PNG }, png(256, 9));
     expect(put.status).toBe(200);
-    expect(put.json.iconUrl).not.toContain(hashA);
+    expect(String(put.json.iconUrl)).not.toContain(hashA);
     expect((await iconByHash(env.DB, hashA))?.length).toBe(iconA.length);
     const del = await req("DELETE", "/admin-api/settings/icon", h);
     expect(del.status).toBe(200);
@@ -833,6 +845,46 @@ describe("a workspace's icon and people's names stay in their workspace (Phase 1
     expect(await env.DB.prepare("SELECT display_name FROM memberships WHERE user_id = 'isoe'").first()).toEqual({
       display_name: null,
     });
+  });
+
+  // Pushes carry no person's name (notify.ts only prefixes the workspace's name), so only the icon is checked.
+  it("a push carries its own workspace's icon: A's for A, none for B, then B's own", async () => {
+    const k = await keys();
+    const e = await testEnv(env, {
+      VAPID_PUBLIC_KEY: k.VAPID_PUBLIC_KEY,
+      VAPID_PRIVATE_KEY: k.VAPID_PRIVATE_KEY,
+      VAPID_SUBJECT: "mailto:owner@example.com",
+      NOTIFY_URL: undefined,
+    });
+    const bodies = new Map<string, Uint8Array>();
+    const service: typeof fetch = async (input, init) => {
+      bodies.set(String(input), new Uint8Array(init?.body as Uint8Array));
+      return new Response(null, { status: 201 });
+    };
+    const endpoint = (who: string) => `https://fcm.googleapis.com/fcm/send/iso-${who}`;
+    for (const who of ["isoa", "isob"])
+      await env.DB.prepare(
+        "INSERT INTO push_subs (endpoint, p256dh, auth, created_at, user_id) VALUES (?1, ?2, ?3, 0, ?4)",
+      )
+        .bind(endpoint(who), k.p256dh, k.auth, who)
+        .run();
+    const note = { group: "published" as const, title: "demo_travel: published", text: "t" };
+    const push = async (ws: string, who: string) => {
+      bodies.clear();
+      await notifier(e, service, 0).send(note, ws);
+      return decrypt(bodies.get(endpoint(who))!, k);
+    };
+    const origin = e.PUBLIC_URL.replace(/\/$/, "");
+    expect((await push("default", "isoa")).icon).toBe(`${origin}/icon/${hashA}.png`);
+    expect("icon" in (await push("b", "isob"))).toBe(false);
+    const hashB = await setIcon(env.DB, "b", png(256, 9), nowS());
+    try {
+      const fromB = await push("b", "isob");
+      expect(fromB.icon).toBe(`${origin}/icon/${hashB}.png`);
+      expect(fromB.icon).not.toContain(hashA);
+    } finally {
+      await removeIcon(env.DB, "b");
+    }
   });
 
   it("the icon URL is public and serves A's bytes; an unknown hash is a 404", async () => {

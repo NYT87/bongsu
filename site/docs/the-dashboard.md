@@ -210,9 +210,9 @@ connection uses the workspace's app if it has one, else the instance's, and keep
 **General** is the rest of this section.
 
 **Icon** (admins) is an optional picture for the workspace: a square PNG, between 192 and 1024 pixels on a side and at
-most 200 KB. **Upload an icon** (or **Replace the icon**) sets it at once and **Remove** takes it away. It shows beside
-the workspace's name in the sidebar and in the switchers, in the app's header and picker, and in the push
-notifications from that workspace. The installed app's icon on a phone's home screen stays the instance's own, because
+most 200 KB. **Upload an icon** (or **Replace the icon**) sets it at once and **Remove** takes it away. In the
+dashboard it shows beside the workspace's name in the sidebar. In the app it shows in the header and in the workspace
+picker, and in the push notifications from that workspace. The installed app's icon on a phone's home screen stays the instance's own, because
 it belongs to the app and not to a workspace. Setting or removing the icon is in the audit log.
 
 **Workspace** holds its **Name** (it can't be emptied), the **Time zone**, the default for everyone (each person can
