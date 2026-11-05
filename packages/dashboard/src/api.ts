@@ -22,7 +22,11 @@ export const NAVIGATED = "bongsu:navigated";
  *  connections, agent keys or settings. */
 export const manages = (state: State) => state.instanceAdmin || state.role === "admin";
 
-export async function api<T = Record<string, unknown>>(path: string, body?: unknown, method?: "PUT"): Promise<T> {
+export async function api<T = Record<string, unknown>>(
+  path: string,
+  body?: unknown,
+  method?: "PUT" | "DELETE",
+): Promise<T> {
   const r = await fetch(`/admin-api/${path}`, {
     method: method ?? (body === undefined ? "GET" : "POST"),
     headers: body === undefined ? {} : { "Content-Type": "application/json" },
@@ -31,6 +35,19 @@ export async function api<T = Record<string, unknown>>(path: string, body?: unkn
   });
   const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
   if (r.status === 403 && data.app === true) dispatchEvent(new Event(APP_ONLY));
+  if (!r.ok) throw new ApiError(r.status, String(data.error ?? r.statusText), data);
+  return data as T;
+}
+
+/** Sends a file as the raw body (the workspace icon): the content type is the file's own. */
+export async function apiFile<T = Record<string, unknown>>(path: string, file: File, method: "PUT"): Promise<T> {
+  const r = await fetch(`/admin-api/${path}`, {
+    method,
+    headers: { "Content-Type": file.type },
+    body: file,
+    credentials: "same-origin",
+  });
+  const data = (await r.json().catch(() => ({}))) as Record<string, unknown>;
   if (!r.ok) throw new ApiError(r.status, String(data.error ?? r.statusText), data);
   return data as T;
 }

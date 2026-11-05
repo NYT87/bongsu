@@ -38,9 +38,9 @@ export interface State {
    *  Instance pages, not the first run's "create your first workspace". */
   anyWorkspace: boolean;
   /** The session's workspace, if any. */
-  workspace: { id: string; name: string } | null;
+  workspace: { id: string; name: string; iconUrl: string | null } | null;
   /** The workspaces this person can open (creator-only ones left out): more than one gets the switcher. */
-  workspaces: { id: string; name: string; role: string }[];
+  workspaces: { id: string; name: string; role: string; iconUrl: string | null }[];
   dryRun: boolean;
   publicUrl: string;
 }
@@ -238,8 +238,11 @@ function Shell({
         <Brand />
         {state.workspace && (
           <div className="workspace">
+            {state.workspace.iconUrl && (
+              <img className="workspace-icon" src={state.workspace.iconUrl} alt="" width={20} height={20} />
+            )}
             {state.workspaces.length > 1 ? (
-              <>
+              <div>
                 <label htmlFor="workspace-switch">Workspace</label>
                 <select id="workspace-switch" value={state.workspace.id} onChange={(e) => switchTo(e.target.value)}>
                   {state.workspaces.map((w) => (
@@ -248,7 +251,7 @@ function Shell({
                     </option>
                   ))}
                 </select>
-              </>
+              </div>
             ) : (
               <div className="workspace-name" title="Workspace">
                 {state.workspace.name}
