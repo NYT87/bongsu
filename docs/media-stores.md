@@ -31,8 +31,8 @@ credentials don't decrypt, or a kind the runtime doesn't offer, lands in `errors
 `for(ref)` (the store a reference names, or null), `default`, `all` and `uploadable`. `media/manage.ts` is the
 dashboard's side: `testStore`, `saveStore` (tests first), `setDefaultStore`, `removeStore`, `waitingApprovalsIn`,
 Connect Google Drive (`startDriveConnect`, `finishDriveConnect`), and the weekly `checkStores` in
-the inbox's cron run. The stores are the instance's: a broken one is told to the instance admins
-(`notifyInstanceAdmins`: the audit log in no workspace, and an email with a `Mailer`), not to any workspace.
+the inbox's cron run. A broken instance store is told to the instance admins
+(`notifyInstanceAdmins`: the audit log in no workspace, and an email with a `Mailer`); a workspace's own store is told to that workspace.
 
 ## How a store is used
 

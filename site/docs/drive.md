@@ -28,7 +28,7 @@ steps 2 and 4 are new.
 
 Dashboard → **Media** → **Connect Google Drive**. Sign in with the Google account whose Drive holds the media and allow
 access; Google sends you back with Drive set up as a store (the first store you add is the default). Bongsu tests it
-first: it finds or makes `UPLOADS/inbox`, so reading and writing both work. **Connect again** replaces the grant, for
+first: it finds or makes the workspace's `<folder>/inbox` (`UPLOADS/inbox` in the first workspace), so reading and writing both work. **Connect again** replaces the grant, for
 example after you revoked it in your Google account.
 
 ## 3. The folders
@@ -48,9 +48,8 @@ their own Drive in **Settings → Media** (see [the dashboard](the-dashboard.md#
 | `UPLOADS/_uploads/` | files uploaded from the app: a folder Bongsu makes on first use |
 
 Planned items given by path (the first two rows) are looked up in the **default** store; drafts from the inbox and
-from the app remember the store their files are in. An inbox draft goes to the workspace whose plan has its project;
-a project no plan has yet goes to the workspace the store's **Inbox feeds** names (dashboard → Media), or waits
-until one is chosen.
+from the app remember the store their files are in. Each workspace's inbox
+(`<its folder>/inbox`) drafts into that workspace, the one being scanned; nothing waits for a choice.
 
 ## Uploads from the app
 
