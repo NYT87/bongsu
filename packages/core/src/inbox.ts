@@ -26,7 +26,7 @@ import { mediaStores } from "./media/index";
 import { isMedia, isVideo, type MediaEntry, type MediaStore } from "./media/store";
 import { notifier } from "./notify";
 import { platform } from "./platforms/index";
-import { SUBTITLE, THUMBNAIL } from "./platforms/youtube";
+import { isSubtitle, THUMBNAIL, videoWithExtras } from "./platforms/youtube";
 import { jsonList } from "./sql";
 import { newDrafts } from "./texts/notifications";
 import { workspaceSettings } from "./workspaces";
@@ -57,11 +57,6 @@ const MAX_TRANSLATIONS = 5;
 /** Store reads (lists and file reads) a run makes at most. The free plan allows 50 subrequests per invocation and the
  *  run's other calls (settings, the notification, the media-store token) need room, so this stays well under. */
 export const INBOX_READ_BUDGET = 30;
-
-const isSubtitle = (n: string) => {
-  const m = SUBTITLE.exec(n);
-  return !!m && LANG.test(m[1]);
-};
 
 const TEXT_FILE = /^(caption|title)\.([^.]+(?:\.[^.]+)*)\.txt$/;
 /** The language code in a translation file's name, or "" when it isn't one. */
@@ -339,9 +334,7 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
     const account = await accountOf(env.DB, i.project, i.workspaceId);
     const video = i.media.some((m) => isVideo(m));
     // a video with only subtitles and a thumbnail beside it is one YouTube video, not a carousel
-    const aside = (m: MediaEntry) => isSubtitle(m.name) || THUMBNAIL.test(m.name);
-    const lone = i.media.filter((m) => !aside(m));
-    const asideOnly = lone.length === 1 && isVideo(lone[0]) && i.media.length > 1;
+    const asideOnly = videoWithExtras(i.media);
     const kind = asideOnly ? "reel" : i.media.length > 1 ? "carousel" : video ? "reel" : "photo";
     const read = await Promise.all(i.titles.map(async (f) => ({ name: f.name, text: await store.readText(f.id) })));
     const { texts, partial } = readTexts(read, i.stem);

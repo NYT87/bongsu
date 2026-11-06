@@ -1,4 +1,7 @@
 // The owner's app: see what's scheduled, approve with a passkey, get push notifications.
+
+import { LANG, tagsLength } from "@bongsu/core/formats/youtube-texts";
+import { isSubtitle, SUBTITLE, THUMBNAIL, videoWithExtras } from "@bongsu/core/platforms/youtube";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import {
   createContext,
@@ -25,6 +28,9 @@ import {
   type Results,
   setNotifyPref,
   switchWorkspace,
+  type UploadProgress,
+  type YouTubeSettings,
+  type YouTubeTexts,
 } from "./api";
 import { type ChartSeries, LineChart } from "./Chart";
 import { dateLocale, type Key, setLocale, t } from "./i18n";
@@ -72,9 +78,18 @@ type Draft = {
   /** Who made it, as the workspace names them (null: nobody to name). */
   by?: string | null;
   created_at: string;
-  payload: Record<string, string> & { media?: string[] };
+  payload: Record<string, string> & {
+    media?: string[];
+    files?: { name: string; mime: string }[];
+    options?: Record<string, unknown>;
+  };
   previews?: { name: string; mime: string; url: string }[];
+  /** A YouTube video's title, languages and tags (null: none yet). */
+  texts?: YouTubeTexts | null;
 };
+/** `/app-api/drafts`: each account's platform, and a YouTube channel's default settings. */
+type AccountInfo = Record<string, { platform: string; youtube?: YouTubeSettings }>;
+type DraftsAnswer = { accounts: string[]; accountInfo?: AccountInfo; drafts: Draft[] };
 
 // Each route change opens the new page at the top; going back/forward to a history entry the app made restores
 // where that page was scrolled (entries are tagged in history.state, their scrollY kept here).
@@ -345,7 +360,7 @@ type Shared = {
   overdue: QueueItem[];
   held: QueueItem[];
   queue: ReturnType<typeof useLoad<{ items: QueueItem[] }>>;
-  drafts: ReturnType<typeof useLoad<{ accounts: string[]; drafts: Draft[] }>>;
+  drafts: ReturnType<typeof useLoad<DraftsAnswer>>;
   unseen: ReturnType<typeof useLoad<{ n: number }>>;
   refresh: () => void;
 };
@@ -398,7 +413,7 @@ function SetupNote() {
 function useSharedState(): Shared {
   const status = useLoad<Status>("status");
   const queue = useLoad<{ items: QueueItem[] }>("queue?days=7");
-  const drafts = useLoad<{ accounts: string[]; drafts: Draft[] }>("drafts");
+  const drafts = useLoad<DraftsAnswer>("drafts");
   const items = queue.data?.items ?? [];
   const today = zoneToday();
   const now = `${today} ${zoneClock(Date.now())}`;
@@ -1818,8 +1833,20 @@ function ItemPage({
       {channelLabel(ch)} · @{item.account} · <strong>{when(item.due)}</strong>
     </>
   );
-  // A published Instagram item opens on its Results (when it has any, unless the link says Post) or on the post.
-  const split = !!item.published && item.platform === "instagram";
+  // A YouTube video's own fields: its texts and settings, its subtitle files and thumbnail among the media.
+  const yt = item.platform === "youtube" ? (item.youtube ?? null) : null;
+  const files = yt
+    ? {
+        subtitles: yt.subtitles,
+        thumbnail: yt.thumbnail
+          ? { name: yt.thumbnail, url: item.media.find((m) => m.name === yt.thumbnail)?.url ?? null }
+          : null,
+      }
+    : null;
+  const shownMedia = yt ? item.media.filter((m) => m.mime.startsWith("video/")) : item.media;
+  // A published Instagram item or YouTube video opens on its Results (when it has any, unless the link says Post)
+  // or on the post.
+  const split = !!item.published && (item.platform === "instagram" || item.platform === "youtube");
   const shown: ItemView = split ? (view ?? (item.results || item.trial?.results ? "results" : "post")) : "post";
   const head = (
     <>
@@ -1855,7 +1882,7 @@ function ItemPage({
           value={shown}
           options={[
             { value: "results", text: t("results.results") },
-            { value: "post", text: t("results.post") },
+            { value: "post", text: yt ? t("results.video") : t("results.post") },
           ]}
           // the view is part of the link (a notification opens Results), replaced so Back still leaves the item
           onChange={(v) => location.replace(`#/item/${encodeURIComponent(keyId)}/${v}`)}
@@ -1882,11 +1909,12 @@ function ItemPage({
           {item.published.permalink && (
             <a className="button-link with-icon" href={item.published.permalink} target="_blank" rel="noopener">
               {ICON.external}
-              {t("row.openOn", { where: "Instagram" })}
+              {t("row.openOn", { where: platformName(item.platform) })}
             </a>
           )}
         </div>
       )}
+      {!item.published && item.progress && <UploadLine p={item.progress} />}
       {item.trial && item.published && (item.trial.on || item.trial.state !== "planned") && (
         <div className="card published">
           <p className="small">
@@ -1917,8 +1945,14 @@ function ItemPage({
         <p className="muted small">{t("item.storyNote")}</p>
       ) : (
         <>
-          <h2>{t("item.caption")}</h2>
-          <pre className="text">{item.caption || t("item.missing")}</pre>
+          {yt && (
+            <>
+              <h2>{t("yt.title")}</h2>
+              <pre className="text">{yt.texts?.title || t("item.missing")}</pre>
+            </>
+          )}
+          <h2>{yt ? t("yt.description") : t("item.caption")}</h2>
+          <pre className="text">{item.caption || (yt ? t("item.none") : t("item.missing"))}</pre>
           {!item.posted && (item.lint?.length ?? 0) > 0 && (
             <div className="notice warn small">
               <strong>{t("item.captionCheck")}</strong> {t("item.captionCheckNote")}
@@ -1953,6 +1987,7 @@ function ItemPage({
           </ol>
         </>
       )}
+      {yt && files && <YtSummary yt={yt} files={files} />}
       {item.format !== "story" && <TextsOrigin item={item} />}
       {item.format !== "story" &&
         !item.posted &&
@@ -1965,9 +2000,26 @@ function ItemPage({
               comment2: item.comment2 ?? "",
               alt: item.alt ?? "",
             }}
+            youtube={
+              yt && files
+                ? { initial: { texts: { title: "", ...(yt.texts ?? {}) }, settings: yt.settings }, files }
+                : null
+            }
             submit={t("item.saveTexts")}
-            onSubmit={async (texts) => {
-              await api("item/texts", { key: keyId, ...texts });
+            onSubmit={async (texts, edited) => {
+              if (yt && edited) {
+                const { alt: _alt, ...words } = texts;
+                await api("item/texts", { key: keyId, ...words, texts: ytTexts(edited.texts) });
+                // the settings aren't part of the approval: saved on their own, after the texts
+                const changed = changedSettings(edited.settings, yt.settings);
+                if (Object.keys(changed).length)
+                  try {
+                    await api("item/youtube", { key: keyId, ...changed });
+                  } catch (e) {
+                    reload();
+                    throw new Error(t("yt.saveFailedSettings", { error: (e as Error).message }));
+                  }
+              } else await api("item/texts", { key: keyId, ...texts });
               setEditing(false);
               reload();
             }}
@@ -1980,9 +2032,9 @@ function ItemPage({
           </p>
         ))}
 
-      <h2>{item.media.length > 1 ? t("item.mediaCount", { n: item.media.length }) : t("item.media")}</h2>
-      <div className={item.media.length > 1 ? "media carousel" : "media"}>
-        {item.media.map((m, k) =>
+      <h2>{shownMedia.length > 1 ? t("item.mediaCount", { n: shownMedia.length }) : t("item.media")}</h2>
+      <div className={shownMedia.length > 1 ? "media carousel" : "media"}>
+        {shownMedia.map((m, k) =>
           m.mime.startsWith("video/") ? (
             <video
               key={m.id}
@@ -1996,7 +2048,7 @@ function ItemPage({
             <img key={m.id} src={m.url} alt={alts[k] ?? t("item.imageN", { n: k + 1 })} loading="lazy" />
           ),
         )}
-        {!item.media.length &&
+        {!shownMedia.length &&
           (item.posted ? (
             <p className="muted small">{t("item.mediaPosted")}</p>
           ) : (
@@ -3270,7 +3322,397 @@ function CommentsPage() {
 
 type Texts = { caption: string; comment: string; comment2: string; alt: string };
 
-/** Caption / self-comment / alt texts (posts only), as they'll be published. */
+// ---------------------------------------------------------------- a YouTube video's own fields
+
+/** What a YouTube video's form edits besides the description and comments: its texts and settings. */
+type YtState = { texts: YouTubeTexts; settings: YouTubeSettings };
+/** The video's files that aren't the video, by name (the media roles): subtitles by language, the thumbnail. */
+type YtFiles = { subtitles: { lang: string; name: string }[]; thumbnail: { name: string; url: string | null } | null };
+const YT_TITLE_MAX = 100;
+const YT_DESCRIPTION_MAX = 5000;
+const YT_TAGS_MAX = 500;
+/** YouTube's common categories (videoCategories), by the id the video stores. */
+const YT_CATEGORIES = ["1", "2", "10", "15", "17", "19", "20", "22", "23", "24", "25", "26", "27", "28", "29"] as const;
+const categoryName = (id: string) =>
+  (YT_CATEGORIES as readonly string[]).includes(id) ? t(`yt.cat.${id}` as Key) : t("yt.categoryN", { id });
+
+/** "Spanish (es)" in the app's locale; the bare tag where the browser doesn't know it. */
+function langName(code: string): string {
+  try {
+    const n = new Intl.DisplayNames([dateLocale()], { type: "language" }).of(code);
+    return n && n !== code ? `${n} (${code})` : code;
+  } catch {
+    return code;
+  }
+}
+
+/** The subtitle files and thumbnail among a post's files, told apart by name as the server does (mediaRoles). */
+function ytFiles(files: { name: string; mime?: string; url?: string | null }[]): YtFiles {
+  const subtitles = files
+    .filter((f) => isSubtitle(f.name))
+    .map((f) => ({ lang: SUBTITLE.exec(f.name)![1], name: f.name }));
+  const thumb = files.find((f) => THUMBNAIL.test(f.name));
+  return { subtitles, thumbnail: thumb ? { name: thumb.name, url: thumb.url ?? null } : null };
+}
+
+/** The texts as the server takes them: no empty languages or tags. */
+function ytTexts(x: YouTubeTexts): YouTubeTexts {
+  const out: YouTubeTexts = { title: x.title };
+  if (x.language?.trim()) out.language = x.language.trim();
+  if (x.audioLanguage?.trim()) out.audioLanguage = x.audioLanguage.trim();
+  if (x.tags?.length) out.tags = x.tags;
+  if (x.translations && Object.keys(x.translations).length) out.translations = x.translations;
+  return out;
+}
+
+/** The settings that differ from where the form started: what to send (the rest keeps the channel's default). */
+function changedSettings(now: YouTubeSettings, start: YouTubeSettings): Partial<YouTubeSettings> {
+  return Object.fromEntries(
+    (Object.keys(now) as (keyof YouTubeSettings)[]).filter((k) => now[k] !== start[k]).map((k) => [k, now[k]]),
+  );
+}
+
+/** What stops the form saving (the server would refuse it); an empty title only stops approving. */
+function ytBlocked(x: YouTubeTexts): boolean {
+  const bad = (c?: string) => !!c && !LANG.test(c.trim());
+  return (
+    x.title.length > YT_TITLE_MAX ||
+    bad(x.language) ||
+    bad(x.audioLanguage) ||
+    tagsLength(x.tags ?? []) > YT_TAGS_MAX ||
+    Object.values(x.translations ?? {}).some(
+      (tr) => !tr.title.trim() || tr.title.length > YT_TITLE_MAX || tr.description.length > YT_DESCRIPTION_MAX,
+    )
+  );
+}
+
+const Counter = ({ n, max }: { n: number; max: number }) => (
+  <span className={`small ${n > max ? "bad-text" : "muted"}`}>
+    {n} / {max}
+  </span>
+);
+
+function YtTitle({ value, onChange }: { value: YtState; onChange: (v: YtState) => void }) {
+  return (
+    <>
+      <label>
+        {t("yt.title")} <span className="muted small">{t("yt.titleHint")}</span>
+        <input
+          value={value.texts.title}
+          onChange={(e) => onChange({ ...value, texts: { ...value.texts, title: e.target.value } })}
+        />
+      </label>
+      <Counter n={value.texts.title.length} max={YT_TITLE_MAX} />
+    </>
+  );
+}
+
+/** Tags as chips: Enter, a comma or Add tag adds one; the counter counts as YouTube does (tagsLength). */
+function YtTags({ tags, onChange }: { tags: string[]; onChange: (tags: string[]) => void }) {
+  const [draft, setDraft] = useState("");
+  const add = (raw = draft) => {
+    const tag = raw.replace(/,/g, "").trim();
+    if (tag && !tags.includes(tag)) onChange([...tags, tag]);
+    setDraft("");
+  };
+  return (
+    <>
+      <label>
+        {t("yt.tags")} <span className="muted small">{t("yt.tagsHint")}</span>
+        <input
+          value={draft}
+          enterKeyHint="done"
+          onChange={(e) => (e.target.value.endsWith(",") ? add(e.target.value) : setDraft(e.target.value))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+          onBlur={() => draft.trim() && add()}
+        />
+      </label>
+      <div className="chips">
+        {tags.map((tag) => (
+          <button
+            key={tag}
+            type="button"
+            className="chip tag"
+            aria-label={t("yt.removeTag", { tag })}
+            onClick={() => onChange(tags.filter((x) => x !== tag))}
+          >
+            {tag} <span aria-hidden="true">×</span>
+          </button>
+        ))}
+        {draft.trim() && (
+          <button type="button" className="chip tag" onClick={() => add()}>
+            {t("yt.addTag")}
+          </button>
+        )}
+      </div>
+      <Counter n={tagsLength(tags)} max={YT_TAGS_MAX} />
+    </>
+  );
+}
+
+/** A language's subtitle file among the post's files, or how to add one. */
+const SubtitleLine = ({ lang, files }: { lang: string; files: YtFiles }) => {
+  const f = files.subtitles.find((s) => s.lang === lang);
+  return (
+    <p className="muted small">
+      {f ? t("yt.subtitleFile", { name: f.name }) : t("yt.noSubtitleFile", { name: `${lang}.srt` })}
+    </p>
+  );
+};
+
+/** Settings, languages (with each translation and its subtitle file) and the thumbnail. */
+function YtExtras({ value, onChange, files }: { value: YtState; onChange: (v: YtState) => void; files: YtFiles }) {
+  const x = value.texts;
+  const setTexts = (texts: YouTubeTexts) => onChange({ ...value, texts });
+  const setSettings = (s: Partial<YouTubeSettings>) => onChange({ ...value, settings: { ...value.settings, ...s } });
+  const translations = x.translations ?? {};
+  const [code, setCode] = useState("");
+  const [codeErr, setCodeErr] = useState<string | null>(null);
+  const addLanguage = () => {
+    const c = code.trim();
+    if (!LANG.test(c)) return setCodeErr(t("yt.badLanguage", { code: c }));
+    if (c in translations || c === x.language) return setCodeErr(t("yt.haveLanguage", { code: c }));
+    setTexts({ ...x, translations: { ...translations, [c]: { title: "", description: "" } } });
+    setCode("");
+    setCodeErr(null);
+  };
+  const setTranslation = (c: string, field: "title" | "description", v: string) =>
+    setTexts({ ...x, translations: { ...translations, [c]: { ...translations[c], [field]: v } } });
+  const known = new Set([...(x.language ? [x.language] : []), ...Object.keys(translations)]);
+  const others = files.subtitles.filter((s) => !known.has(s.lang));
+  const langField = (field: "language" | "audioLanguage", label: string) => {
+    const v = x[field] ?? "";
+    return (
+      <label>
+        {label} <span className="muted small">{t("yt.langHint")}</span>
+        <input
+          value={v}
+          autoCapitalize="none"
+          spellCheck={false}
+          list="yt-languages"
+          onChange={(e) => setTexts({ ...x, [field]: e.target.value })}
+        />
+        {v.trim() && !LANG.test(v.trim()) && (
+          <span className="small bad-text">{t("yt.badLanguage", { code: v.trim() })}</span>
+        )}
+      </label>
+    );
+  };
+  return (
+    <>
+      <h3>{t("yt.settings")}</h3>
+      <Switch
+        on={value.settings.madeForKids}
+        label={t("yt.madeForKids")}
+        onChange={(on) => setSettings({ madeForKids: on })}
+      />
+      <span className="label-text">{t("yt.visibility")}</span>
+      <Segmented
+        label={t("yt.visibility")}
+        value={value.settings.privacy}
+        options={[
+          { value: "public", text: t("yt.public") },
+          { value: "unlisted", text: t("yt.unlisted") },
+        ]}
+        onChange={(privacy) => setSettings({ privacy })}
+      />
+      <YtTags tags={x.tags ?? []} onChange={(tags) => setTexts({ ...x, tags })} />
+      <label>
+        {t("yt.category")}
+        <select value={value.settings.category} onChange={(e) => setSettings({ category: e.target.value })}>
+          {[
+            ...((YT_CATEGORIES as readonly string[]).includes(value.settings.category)
+              ? []
+              : [value.settings.category]),
+            ...YT_CATEGORIES,
+          ].map((id) => (
+            <option key={id} value={id}>
+              {categoryName(id)}
+            </option>
+          ))}
+        </select>
+      </label>
+
+      <h3>{t("yt.languages")}</h3>
+      {langField("language", t("yt.language"))}
+      {x.language && LANG.test(x.language) && <SubtitleLine lang={x.language} files={files} />}
+      {langField("audioLanguage", t("yt.audioLanguage"))}
+      <datalist id="yt-languages">
+        {["en", "es", "ko", "pt-BR", "fr", "de", "ja"].map((c) => (
+          <option key={c} value={c}>
+            {langName(c)}
+          </option>
+        ))}
+      </datalist>
+      {Object.entries(translations).map(([c, tr]) => (
+        <div key={c} className="lang-block">
+          <div className="row lang-head">
+            <strong>{langName(c)}</strong>
+            {/* not a danger button: nothing is lost until the form is saved, and Cancel brings it back */}
+            <button
+              type="button"
+              onClick={() => {
+                const { [c]: _gone, ...rest } = translations;
+                setTexts({ ...x, translations: rest });
+              }}
+            >
+              {t("yt.removeLanguage", { lang: c })}
+            </button>
+          </div>
+          <label>
+            {t("yt.translationTitle", { lang: c })}
+            <input value={tr.title} onChange={(e) => setTranslation(c, "title", e.target.value)} />
+          </label>
+          {!tr.title.trim() ? (
+            <span className="small bad-text">{t("yt.translationNeedsTitle", { lang: langName(c) })}</span>
+          ) : (
+            <Counter n={tr.title.length} max={YT_TITLE_MAX} />
+          )}
+          <label>
+            {t("yt.translationDescription", { lang: c })}
+            <textarea
+              rows={4}
+              value={tr.description}
+              onChange={(e) => setTranslation(c, "description", e.target.value)}
+            />
+          </label>
+          <Counter n={tr.description.length} max={YT_DESCRIPTION_MAX} />
+          <SubtitleLine lang={c} files={files} />
+        </div>
+      ))}
+      <div className="row add-lang">
+        <label>
+          {t("yt.newLanguage")}
+          <input
+            value={code}
+            autoCapitalize="none"
+            spellCheck={false}
+            list="yt-languages"
+            placeholder="es"
+            onChange={(e) => {
+              setCode(e.target.value);
+              setCodeErr(null);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addLanguage();
+              }
+            }}
+          />
+        </label>
+        <button type="button" onClick={addLanguage} disabled={!code.trim()}>
+          {t("yt.addLanguage")}
+        </button>
+      </div>
+      {codeErr && <p className="small bad-text">{codeErr}</p>}
+      {others.length > 0 && (
+        <p className="muted small">{t("yt.otherSubtitles", { names: others.map((s) => s.name).join(", ") })}</p>
+      )}
+
+      <h3>{t("yt.thumbnail")}</h3>
+      <YtThumbnail files={files} />
+    </>
+  );
+}
+
+const YtThumbnail = ({ files }: { files: YtFiles }) =>
+  files.thumbnail ? (
+    files.thumbnail.url ? (
+      <div className="media">
+        <img src={files.thumbnail.url} alt={t("yt.thumbnailAlt", { name: files.thumbnail.name })} loading="lazy" />
+      </div>
+    ) : (
+      <p className="small">{files.thumbnail.name}</p>
+    )
+  ) : (
+    <p className="muted small">{t("yt.noThumbnail")}</p>
+  );
+
+/** What approving a YouTube video covers besides its description and comments, listed before the passkey. */
+function YtSummary({ yt, files }: { yt: NonNullable<Item["youtube"]>; files: YtFiles }) {
+  const x = yt.texts;
+  const translations = Object.entries(x?.translations ?? {});
+  return (
+    <>
+      <h2>{t("yt.settings")}</h2>
+      <ul className="small facts">
+        <li>
+          {t("yt.visibility")}:{" "}
+          <strong>{yt.settings.privacy === "unlisted" ? t("yt.unlisted") : t("yt.public")}</strong>
+        </li>
+        <li>
+          <strong>{yt.settings.madeForKids ? t("yt.madeForKids") : t("yt.notForKids")}</strong>
+        </li>
+        <li>
+          {t("yt.category")}: <strong>{categoryName(yt.settings.category)}</strong>
+        </li>
+        <li>
+          {t("yt.tags")}: {x?.tags?.length ? <strong>{x.tags.join(", ")}</strong> : t("yt.noTags")}
+        </li>
+        <li>
+          {t("yt.language")}: {x?.language ? <strong>{langName(x.language)}</strong> : t("yt.notSet")}
+        </li>
+        <li>
+          {t("yt.audioLanguage")}: {x?.audioLanguage ? <strong>{langName(x.audioLanguage)}</strong> : t("yt.notSet")}
+        </li>
+      </ul>
+      <h2>{t("yt.translations")}</h2>
+      {translations.length ? (
+        translations.map(([c, tr]) => (
+          <div key={c} className="lang-block">
+            <h3>{langName(c)}</h3>
+            <pre className="text">{tr.title}</pre>
+            {tr.description && <pre className="text">{tr.description}</pre>}
+          </div>
+        ))
+      ) : (
+        <p className="muted small">{t("yt.noTranslations")}</p>
+      )}
+      <h2>{t("yt.subtitles")}</h2>
+      {yt.subtitles.length ? (
+        <ul className="small facts">
+          {yt.subtitles.map((s) => (
+            <li key={s.lang}>
+              {langName(s.lang)}: <strong>{s.name}</strong>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="muted small">{t("yt.noSubtitles")}</p>
+      )}
+      <h2>{t("yt.thumbnail")}</h2>
+      <YtThumbnail files={files} />
+    </>
+  );
+}
+
+/** The upload's phase on the item page: uploading (with how far), adding subtitles, processing, ready, or locked. */
+function UploadLine({ p }: { p: NonNullable<UploadProgress> }) {
+  const text =
+    p.phase === "uploading"
+      ? t("upload.uploading", { percent: p.percent })
+      : p.phase === "ready"
+        ? t("upload.ready", { time: `${zoneClock(p.at * 1000)} ${zoneLabel()}` })
+        : t(`upload.${p.phase}`);
+  const tone = p.phase === "ready" ? " ok" : p.phase === "locked" ? " bad" : "";
+  return (
+    <div className="card published" role="status">
+      <p className="small">
+        <span className={`pill${tone}`}>{t("upload.progress")}</span> {text}
+      </p>
+      {p.phase === "uploading" && <progress className="upload-bar" max={100} value={p.percent} aria-hidden="true" />}
+    </div>
+  );
+}
+
+/** Caption / self-comment / alt texts (posts only), as they'll be published; a YouTube video's title, settings,
+ *  languages and thumbnail around them when `youtube` is given. */
 function TextsForm({
   alt,
   initial,
@@ -3279,24 +3721,31 @@ function TextsForm({
   onCancel,
   children,
   noTexts = false,
+  youtube,
 }: {
   /** Show the alt texts field (images on a platform that takes alt texts). */
   alt: boolean;
   initial: Texts;
   submit: string;
-  onSubmit: (texts: Texts) => Promise<void>;
+  onSubmit: (texts: Texts, yt: YtState | null) => Promise<void>;
   onCancel: () => void;
   children?: ReactNode;
   noTexts?: boolean;
+  /** A YouTube video's form: where its fields start, and its files. */
+  youtube?: { initial: YtState; files: YtFiles } | null;
 }) {
   const [texts, setTexts] = useState(initial);
+  // kept once touched, so switching the account back and forth doesn't lose it; until then the account's start
+  const [ytEdit, setYt] = useState<YtState | null>(null);
+  const yt = youtube ? (ytEdit ?? youtube.initial) : null;
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const max = yt ? YT_DESCRIPTION_MAX : 2200;
   const go = async () => {
     setBusy(true);
     setErr(null);
     try {
-      await onSubmit(texts);
+      await onSubmit(texts, yt);
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -3310,17 +3759,16 @@ function TextsForm({
         <p className="muted small">{t("texts.storyNone")}</p>
       ) : (
         <>
+          {yt && <YtTitle value={yt} onChange={setYt} />}
           <label>
-            {t("item.caption")}
+            {yt ? t("yt.description") : t("item.caption")}
             <textarea
               rows={6}
               value={texts.caption}
               onChange={(e) => setTexts({ ...texts, caption: e.target.value })}
             />
           </label>
-          <span className={`small ${texts.caption.length > 2200 ? "bad-text" : "muted"}`}>
-            {texts.caption.length} / 2200
-          </span>
+          <Counter n={texts.caption.length} max={max} />
           <label>
             {t("item.selfComment")} <span className="muted small">{t("texts.commentHint")}</span>
             <textarea
@@ -3337,12 +3785,13 @@ function TextsForm({
               onChange={(e) => setTexts({ ...texts, comment2: e.target.value })}
             />
           </label>
-          {alt && (
+          {alt && !yt && (
             <label>
               {t("item.altTexts")} <span className="muted small">{t("texts.altHint")}</span>
               <textarea rows={3} value={texts.alt} onChange={(e) => setTexts({ ...texts, alt: e.target.value })} />
             </label>
           )}
+          {yt && youtube && <YtExtras value={yt} onChange={setYt} files={youtube.files} />}
         </>
       )}
       {err && (
@@ -3357,7 +3806,12 @@ function TextsForm({
         <button
           className="primary"
           onClick={go}
-          disabled={busy || (!noTexts && (!texts.caption.trim() || texts.caption.length > 2200))}
+          disabled={
+            busy ||
+            (!noTexts &&
+              // a YouTube description may be empty; an Instagram caption may not
+              ((!yt && !texts.caption.trim()) || texts.caption.length > max || (!!yt && ytBlocked(yt.texts))))
+          }
         >
           {busy ? t("common.saving") : submit}
         </button>
@@ -3386,7 +3840,17 @@ function FreeSlots({ slots, onPick }: { slots: Slot[]; onPick: (s: Slot) => void
 }
 
 /** Turn a draft into a scheduled item: account, date, time, name and texts; approval follows on the item page. */
-function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[]; onCancel: () => void }) {
+function ScheduleForm({
+  d,
+  accounts,
+  info,
+  onCancel,
+}: {
+  d: Draft;
+  accounts: string[];
+  info: AccountInfo;
+  onCancel: () => void;
+}) {
   const kind = d.kind === "reel" ? "reel" : "post";
   const [account, setAccount] = useState(accounts.includes(d.account) ? d.account : accounts[0]);
   const [date, setDate] = useState(zoneShift(1));
@@ -3395,27 +3859,43 @@ function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[];
   const [slots, setSlots] = useState<Slot[]>([]);
   const single = (d.payload.media?.length ?? 0) === 1;
   const [story, setStory] = useState(false);
+  // a YouTube channel takes a video with its title, settings and languages; its settings start at the channel's
+  // defaults with the draft's own on top, and only what the form changes is sent
+  const channel = info[account]?.youtube;
+  const tube = kind === "reel" && !!channel;
+  const start: YtState | null = channel
+    ? {
+        texts: { title: "", ...(d.texts ?? {}) },
+        settings: { ...channel, ...((d.payload.options ?? {}) as Partial<YouTubeSettings>) },
+      }
+    : null;
   return (
     <TextsForm
       alt={kind === "post"}
-      noTexts={story}
+      noTexts={story && !tube}
+      youtube={tube && start ? { initial: start, files: ytFiles(d.previews ?? d.payload.files ?? []) } : null}
       initial={{
         caption: d.payload.caption ?? "",
         comment: d.payload.comment ?? "",
         comment2: d.payload.comment2 ?? "",
         alt: d.payload.alt ?? "",
       }}
-      submit={story ? t("schedule.story") : t("schedule.schedule")}
+      submit={story && !tube ? t("schedule.story") : t("schedule.schedule")}
       onCancel={onCancel}
-      onSubmit={async (texts) => {
+      onSubmit={async (texts, yt) => {
         setSlots([]);
+        const { alt: _alt, ...words } = texts;
         try {
           const r = await api<{ key: string }>(`drafts/${d.id}/schedule`, {
             account,
             date,
             time,
             name,
-            ...(story ? { format: "story" } : texts),
+            ...(yt && start
+              ? { ...words, texts: ytTexts(yt.texts), options: changedSettings(yt.settings, start.settings) }
+              : story
+                ? { format: "story" }
+                : texts),
           });
           location.hash = `#/item/${encodeURIComponent(r.key)}`;
         } catch (e) {
@@ -3424,7 +3904,7 @@ function ScheduleForm({ d, accounts, onCancel }: { d: Draft; accounts: string[];
         }
       }}
     >
-      {single && (
+      {single && !tube && (
         <div className="segmented" role="group" aria-label={t("schedule.publishAs")}>
           <button aria-pressed={!story} onClick={() => setStory(false)}>
             {kind === "reel" ? t("schedule.reel") : t("channel.post")}
@@ -3650,11 +4130,13 @@ function NewDraft({
   const total = files.reduce((s, f) => s + f.size, 0);
   const images = files.filter((f) => f.type.startsWith("image/")).length;
   const pick = (list: FileList | null) => {
-    const fs = [...(list ?? [])].filter((f) => /^(image|video)\//.test(f.type)).slice(0, 10);
+    // a YouTube video's subtitle files go with it by name (<lang>.srt or .vtt); phones give them no media type
+    const fs = [...(list ?? [])].filter((f) => /^(image|video)\//.test(f.type) || isSubtitle(f.name)).slice(0, 10);
     setFiles(fs);
-    if (!name && fs[0])
+    const first = fs.find((f) => !isSubtitle(f.name) && !THUMBNAIL.test(f.name)) ?? fs[0];
+    if (!name && first)
       setName(
-        fs[0].name
+        first.name
           .replace(/\.[^.]+$/, "")
           .replace(/[^A-Za-z0-9_.-]+/g, "_")
           .slice(0, 60),
@@ -3715,11 +4197,18 @@ function NewDraft({
       )}
       {files.length > 0 && (
         <p className="muted small">
-          {files.length > 1
-            ? t("draft.carouselOf", { n: files.length })
-            : files[0].type.startsWith("video/")
-              ? t("schedule.reel")
-              : t("draft.photo")}{" "}
+          {videoWithExtras(files.map((f) => ({ name: f.name, mime: f.type })))
+            ? t("draft.youtubeVideo", {
+                extras: files
+                  .filter((f) => isSubtitle(f.name) || THUMBNAIL.test(f.name))
+                  .map((f) => f.name)
+                  .join(", "),
+              })
+            : files.length > 1
+              ? t("draft.carouselOf", { n: files.length })
+              : files[0].type.startsWith("video/")
+                ? t("schedule.reel")
+                : t("draft.photo")}{" "}
           · {t("draft.size", { mb: (total / 1024 / 1024).toFixed(1), files: files.map((f) => f.name).join(", ") })}
         </p>
       )}
@@ -3943,23 +4432,36 @@ function DraftsPage() {
               </span>
             </div>
             {d.previews && (
-              <div className={d.previews.length > 1 ? "media carousel" : "media"}>
-                {d.previews.map((m) =>
-                  m.mime.startsWith("video/") ? (
-                    <video
-                      key={m.url}
-                      src={`${m.url}#t=0.1`}
-                      controls
-                      playsInline
-                      preload="metadata"
-                      aria-label={t("drafts.video", { name: m.name })}
-                    />
-                  ) : (
-                    <img key={m.url} src={m.url} alt={m.name} loading="lazy" />
-                  ),
-                )}
+              <div className={d.previews.filter((m) => !isSubtitle(m.name)).length > 1 ? "media carousel" : "media"}>
+                {d.previews
+                  .filter((m) => !isSubtitle(m.name))
+                  .map((m) =>
+                    m.mime.startsWith("video/") ? (
+                      <video
+                        key={m.url}
+                        src={`${m.url}#t=0.1`}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        aria-label={t("drafts.video", { name: m.name })}
+                      />
+                    ) : (
+                      <img key={m.url} src={m.url} alt={m.name} loading="lazy" />
+                    ),
+                  )}
               </div>
             )}
+            {d.previews?.some((m) => isSubtitle(m.name)) && (
+              <p className="muted small">
+                {t("yt.subtitleFile", {
+                  name: d.previews
+                    .filter((m) => isSubtitle(m.name))
+                    .map((m) => m.name)
+                    .join(", "),
+                })}
+              </p>
+            )}
+            {d.texts?.title && <p className="small">{t("drafts.ytTitle", { title: d.texts.title })}</p>}
             {d.payload.caption && <pre className="text small">{d.payload.caption}</pre>}
             {d.payload.comment && <p className="muted small">{t("drafts.selfComment", { text: d.payload.comment })}</p>}
             {d.payload.comment2 && (
@@ -3983,7 +4485,14 @@ function DraftsPage() {
                 )}
               </div>
             )}
-            {open === d.id && data && <ScheduleForm d={d} accounts={data.accounts} onCancel={() => setOpen(null)} />}
+            {open === d.id && data && (
+              <ScheduleForm
+                d={d}
+                accounts={data.accounts}
+                info={data.accountInfo ?? {}}
+                onCancel={() => setOpen(null)}
+              />
+            )}
           </li>
         ))}
       </ul>

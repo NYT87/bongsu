@@ -52,3 +52,13 @@ describe("the app's text", () => {
     expect(used.filter((k) => !(k in en))).toEqual([]);
   });
 });
+
+describe("a YouTube upload's progress", () => {
+  it("reads as the spec words it", () => {
+    expect(t("upload.uploading", { percent: 40 })).toBe("Uploading, 40%");
+    expect(t("upload.extras")).toBe("Adding subtitles");
+    expect(t("upload.processing")).toBe("YouTube is processing");
+    expect(t("upload.ready", { time: "18:00" })).toBe("Ready: goes public at 18:00");
+    expect(t("upload.locked")).toBe("Private: needs YouTube's audit");
+  });
+});

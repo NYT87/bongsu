@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 import { leadOf, MAX_LEAD_S } from "../src/platforms/index";
 import { validateOptions } from "../src/platforms/types";
 import {
+  isSubtitle,
   MediaRolesError,
   mediaRoles,
   type RoleEntry,
+  videoWithExtras,
   youtube,
   youtubePermalink,
   youtubeSettings,
@@ -83,5 +85,20 @@ describe("youtube platform", () => {
       privacy: "unlisted",
       category: "20",
     });
+  });
+});
+
+describe("a video's extra files by name", () => {
+  it("knows a subtitle file by its language tag", () => {
+    expect(["es.srt", "pt-BR.vtt"].map(isSubtitle)).toEqual([true, true]);
+    expect(["English.srt", "es.txt", "srt"].map(isSubtitle)).toEqual([false, false, false]);
+  });
+  it("a video with subtitles and a thumbnail is one video; two videos or a photo beside it aren't", () => {
+    const f = (name: string, mime: string) => ({ name, mime });
+    const clip = f("clip.mp4", "video/mp4");
+    expect(videoWithExtras([clip, f("es.srt", "application/x-subrip"), f("thumbnail.jpg", "image/jpeg")])).toBe(true);
+    expect(videoWithExtras([clip])).toBe(false);
+    expect(videoWithExtras([clip, f("b.mp4", "video/mp4")])).toBe(false);
+    expect(videoWithExtras([clip, f("photo.jpg", "image/jpeg")])).toBe(false);
   });
 });

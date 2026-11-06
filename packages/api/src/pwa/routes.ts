@@ -26,6 +26,7 @@ import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isRole, mayConnect } from "@bongsu/core/roles";
 import { mayBeLive } from "@bongsu/core/tick";
+import { uploadProgress } from "@bongsu/core/upload-progress";
 import {
   callerZone,
   checkName,
@@ -457,11 +458,21 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     wrap(async (c) => {
       const r = await ops.listDrafts(opctx(c), { status: c.req.query("status") });
       const stores = await mediaStores(c.env, fetcher, me(c).workspaceId);
+      const publishing = (await listAccounts(c.env.DB, { workspaceId: me(c).workspaceId })).filter(
+        (a) => platform(a.platform)?.formats.length,
+      );
       return {
         // the accounts a draft can be scheduled to: every one that publishes (Instagram accounts, YouTube channels)
-        accounts: (await listAccounts(c.env.DB, { workspaceId: me(c).workspaceId }))
-          .filter((a) => platform(a.platform)?.formats.length)
-          .map((a) => a.id),
+        accounts: publishing.map((a) => a.id),
+        // each one's platform (the form shows a channel's own fields) and a channel's defaults for its settings
+        accountInfo: Object.fromEntries(
+          publishing.map((a) => [
+            a.id,
+            a.platform === "youtube"
+              ? { platform: a.platform, youtube: youtubeSettings({}, a.settings) }
+              : { platform: a.platform },
+          ]),
+        ),
         drafts: await Promise.all(
           r.drafts.map(async (d) => {
             const files = (d.payload as { files?: { store: string; id: string; name: string; mime: string }[] }).files;
@@ -726,13 +737,15 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }
     // A failed job: approving again starts it over, unless its post may be live (tick.ts reopens()).
     const job = await c.env.DB.prepare(
-      "SELECT state, last_error, media_id, payload FROM jobs WHERE item_key = ?1 AND workspace_id = ?2",
+      "SELECT state, due_at, last_error, media_id, payload FROM jobs WHERE item_key = ?1 AND workspace_id = ?2",
     )
       .bind(r.key, me(c).workspaceId)
-      .first<{ state: string; last_error: string | null; media_id: string | null; payload: string }>();
+      .first<{ state: string; due_at: number; last_error: string | null; media_id: string | null; payload: string }>();
     const failed =
       job?.state === "failed" ? { error: job.last_error, again: !mayBeLive(job, JSON.parse(job.payload)) } : null;
-    return c.json({ ...r, media, published, fingerprint, results, trial, failed });
+    // a YouTube upload's phase (uploading, processing, ready…); null for anything else
+    const progress = job ? uploadProgress(job) : null;
+    return c.json({ ...r, media, published, fingerprint, results, trial, failed, progress });
   });
 
   // Approve: options bind the passkey challenge to a snapshot of what was shown (the page's fingerprint must still match

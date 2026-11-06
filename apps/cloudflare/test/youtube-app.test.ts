@@ -4,6 +4,7 @@ import { appRoutes } from "@bongsu/api/pwa/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
+import { YOUTUBE_LOCKED } from "@bongsu/core/texts/notifications";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearPlan, MD5, testEnv, World } from "./world";
 
@@ -153,9 +154,48 @@ describe("scheduling a draft to a YouTube channel", () => {
 
   it("the drafts list returns texts and offers the channels", async () => {
     await seedDraft();
-    const d = (await json(await call("/app-api/drafts"))) as { accounts: string[]; drafts: { texts: unknown }[] };
+    const d = (await json(await call("/app-api/drafts"))) as {
+      accounts: string[];
+      accountInfo: Record<string, { platform: string; youtube?: unknown }>;
+      drafts: { texts: unknown }[];
+    };
     expect(d.drafts[0].texts).toEqual(TEXTS);
     expect(d.accounts).toContain("main");
+    // the form shows a channel's fields, starting from the channel's defaults
+    expect(d.accountInfo.main).toEqual({
+      platform: "youtube",
+      youtube: { madeForKids: false, privacy: "public", category: "22" },
+    });
+    expect(d.accountInfo.demo_travel).toEqual({ platform: "instagram" });
+  });
+
+  it("the app's uploads take a video with its subtitle files and thumbnail as one video draft", async () => {
+    const start = (name: string, mimeType: string) => post("/app-api/uploads/start", { name, mimeType, size: 10 });
+    // phones send no type for a subtitle file: its name says what it is
+    expect((await start("es.srt", "")).status).toBe(200);
+    expect((await start("pt-BR.vtt", "text/vtt")).status).toBe(200);
+    expect((await start("notes.txt", "text/plain")).status).toBe(400);
+    expect((await start("English.srt", "")).status).toBe(400);
+    const files = [
+      w.drivePut("UPLOADS/_uploads/clip.mp4", { md5: MD5, mimeType: "video/mp4" }),
+      w.drivePut("UPLOADS/_uploads/es.srt", { md5: "b".repeat(32), mimeType: "application/x-subrip" }),
+      w.drivePut("UPLOADS/_uploads/thumbnail.jpg", { md5: "c".repeat(32), mimeType: "image/jpeg" }),
+    ];
+    const d = (await json(await post("/app-api/drafts/new", { files, project: "demo", name: "clip" }))) as {
+      id: string;
+    };
+    const r = await env.DB.prepare("SELECT kind, payload FROM drafts WHERE id = ?1")
+      .bind(d.id)
+      .first<{ kind: string; payload: string }>();
+    expect(r?.kind).toBe("reel");
+    expect(JSON.parse(String(r?.payload)).files.map((f: { name: string }) => f.name)).toEqual([
+      "clip.mp4",
+      "es.srt",
+      "thumbnail.jpg",
+    ]);
+    // a subtitle file alone is no draft
+    const lone = w.drivePut("UPLOADS/_uploads/fr.srt", { md5: "d".repeat(32), mimeType: "application/x-subrip" });
+    expect((await post("/app-api/drafts/new", { files: [lone], project: "demo", name: "x" })).status).toBe(400);
   });
 });
 
@@ -254,5 +294,34 @@ describe("editing a YouTube video in the app", () => {
       "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id, content) VALUES ('reel:x/ig', 'video', 'demo_travel', 'x', 'ig', 1, '{}', 0, 1, 0, 0, 'default', 'db')",
     ).run();
     expect((await post("/app-api/item/youtube", { key: "reel:x/ig", privacy: "public" })).status).toBe(400);
+  });
+});
+
+describe("an upload's progress on the item page", () => {
+  const job = (state: string, data: Record<string, unknown>, lastError: string | null = null) =>
+    env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, last_error, dry_run, payload, created_at, updated_at, workspace_id) VALUES (?1, 'reel', 'main', 1800000000, ?2, ?3, 1, ?4, 0, 0, 'default') ON CONFLICT (item_key) DO UPDATE SET state = excluded.state, last_error = excluded.last_error, payload = excluded.payload",
+    )
+      .bind(KEY, state, lastError, JSON.stringify({ username: "main", step: { state: "processing", data } }))
+      .run();
+  const progress = async () =>
+    ((await (await call(`/app-api/item?key=${encodeURIComponent(KEY)}`)).json()) as { progress: unknown }).progress;
+
+  it("follows the job's phase: uploading, ready, locked", async () => {
+    await scheduled();
+    expect(await progress()).toBeNull();
+    await job("container_created", { phase: "uploading", size: 100, offset: 40 });
+    expect(await progress()).toEqual({ phase: "uploading", percent: 40 });
+    await job("container_created", { phase: "waiting", size: 100, offset: 100, videoId: "v1" });
+    expect(await progress()).toEqual({ phase: "ready", at: 1800000000 });
+    await job("failed", { phase: "waiting", size: 100, videoId: "v1" }, YOUTUBE_LOCKED);
+    expect(await progress()).toEqual({ phase: "locked" });
+  });
+
+  it("another workspace's job with the same key isn't read", async () => {
+    await scheduled();
+    await job("container_created", { phase: "uploading", size: 100, offset: 40 });
+    await env.DB.prepare("UPDATE jobs SET workspace_id = 'other' WHERE item_key = ?1").bind(KEY).run();
+    expect(await progress()).toBeNull();
   });
 });

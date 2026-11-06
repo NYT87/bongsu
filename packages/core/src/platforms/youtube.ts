@@ -58,6 +58,18 @@ export class MediaRolesError extends Error {}
 export const SUBTITLE = /^(.+)\.(srt|vtt)$/;
 export const THUMBNAIL = /^thumbnail\.(jpg|png)$/;
 
+/** A subtitle file's name: `<lang>.srt` or `<lang>.vtt` with a language tag. */
+export const isSubtitle = (name: string) => {
+  const m = SUBTITLE.exec(name);
+  return !!m && LANG.test(m[1]);
+};
+
+/** One video with only subtitle files and a thumbnail beside it: a YouTube video, not a carousel. */
+export function videoWithExtras(files: { name: string; mime: string }[]): boolean {
+  const lone = files.filter((f) => !isSubtitle(f.name) && !THUMBNAIL.test(f.name));
+  return files.length > 1 && lone.length === 1 && isVideo(lone[0]);
+}
+
 /** Tells the files of a YouTube item apart by name: the video, `<lang>.srt|vtt` subtitles, `thumbnail.jpg|png`. */
 export function mediaRoles<T>(entries: RoleEntry<T>[]): MediaRoles<T> {
   const videos: T[] = [];
