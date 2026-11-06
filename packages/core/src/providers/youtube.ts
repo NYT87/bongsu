@@ -4,6 +4,7 @@
 import { type Connection, connectionSecret } from "../accounts";
 import { ANALYTICS_SCOPE, type VideoMeta, type VideoState, YouTube, YouTubeRefused } from "../clients/youtube";
 import { MediaRolesError, mediaRoles, youtubePermalink, youtubeSettings } from "../platforms/youtube";
+import { YOUTUBE_LOCKED } from "../texts/notifications";
 import type {
   Grant,
   OAuthContext,
@@ -44,13 +45,10 @@ export interface UploadData {
   privacy: "public" | "unlisted";
 }
 
-const LOCKED =
-  "YouTube keeps this video private until your Google project passes YouTube's audit (see the YouTube guide)";
-
 /** YouTube left the video private when asked to publish it: the Google project hasn't passed YouTube's audit. */
 export class YouTubeLocked extends Error {
   constructor() {
-    super(LOCKED);
+    super(YOUTUBE_LOCKED);
   }
 }
 
@@ -188,7 +186,11 @@ export class YouTubeProvider implements Provider {
         return next(await this.extras(d));
       case "processing": {
         const v = await this.yt.videoState(d.videoId as string);
-        if (!v) return { ...step, state: "failed", error: "the video is gone from YouTube" };
+        if (!v) {
+          // no video to keep: the failure note mustn't say it is still there
+          const { videoId: _gone, ...rest } = step.data;
+          return { state: "failed", data: rest, error: "the video is gone from YouTube" };
+        }
         if (v.uploadStatus === "rejected" || v.uploadStatus === "failed")
           return {
             ...step,
@@ -302,10 +304,15 @@ export class YouTubeProvider implements Provider {
     return v;
   }
 
-  /** Deletes the uploaded private video, if there is one; best effort (it may already be gone). */
-  async discard(step: Step): Promise<void> {
+  /** Deletes the uploaded private video, if there is one; best effort. True when it is gone now (deleted, or YouTube
+   *  no longer had it); false when there was none or the delete failed. */
+  async discard(step: Step): Promise<boolean> {
     const id = (step.data as Partial<UploadData>).videoId;
-    if (id) await this.yt.deleteVideo(id).catch(() => {});
+    if (!id) return false;
+    return this.yt.deleteVideo(id).then(
+      () => true,
+      () => false,
+    );
   }
 
   /** A top-level comment as the channel; returns the thread id. */

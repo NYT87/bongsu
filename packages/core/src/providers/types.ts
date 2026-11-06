@@ -128,8 +128,9 @@ export interface Provider {
   start(post: OutgoingPost, previous?: Step): Promise<Step>;
   check(step: Step): Promise<Step>;
   finish(step: Step): Promise<Published>;
-  /** Removes what a step left on the platform and won't publish (an uploaded private video); best effort. */
-  discard?(step: Step): Promise<void>;
+  /** Removes what a step left on the platform and won't publish (an uploaded private video); best effort. True when
+   *  it is gone now. */
+  discard?(step: Step): Promise<boolean>;
   /** Optional features, present when the platform has them (Platform.features). */
   /** A comment as the account on a post; returns its id when the platform gives one. */
   comment?(mediaId: string, text: string): Promise<string | null | undefined | void>;

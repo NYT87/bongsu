@@ -32,6 +32,25 @@ describe("notification builders", () => {
       text: "Instagram reported: container EXPIRED",
       target: KEY,
     });
+    expect(N.providerFailed(KEY, "YouTube", "videos.list: 500", true)).toMatchObject({
+      group: "problems",
+      text: "YouTube reported: videos.list: 500\nThe video is still on YouTube, private: inspect it there or publish it by hand.",
+    });
+    expect(N.youtubeLocked(KEY)).toMatchObject({
+      group: "problems",
+      title: `${KEY}: failed`,
+      text: "YouTube keeps this video private until your Google project passes YouTube's audit (see the YouTube guide)",
+      target: KEY,
+    });
+    expect(N.youtubeQuota()).toMatchObject({
+      group: "problems",
+      text: "YouTube's daily quota is used up: uploads continue after midnight Pacific time",
+    });
+    expect(N.youtubeThumbnailRefused(KEY)).toMatchObject({
+      group: "problems",
+      text: "YouTube refused the thumbnail: the channel needs YouTube's verified features (the video still goes out)",
+      target: KEY,
+    });
     expect(N.processingTimeout(KEY, "Instagram")).toMatchObject({
       title: `${KEY}: failed`,
       text: "Instagram didn't finish processing within 2 h",
@@ -200,6 +219,9 @@ describe("every builder has a group", () => {
     connectionProblem: N.connectionProblem("x"),
     mediaStoreProblem: N.mediaStoreProblem("x"),
     releaseMoved: N.releaseMoved("t", "a", "b", "c"),
+    youtubeLocked: N.youtubeLocked(KEY),
+    youtubeQuota: N.youtubeQuota(),
+    youtubeThumbnailRefused: N.youtubeThumbnailRefused(KEY),
   };
 
   it("covers every exported builder", () => {
@@ -222,6 +244,9 @@ describe("every builder has a group", () => {
         "connectionProblem",
         "cleanupRefused",
         "mediaStoreProblem",
+        "youtubeLocked",
+        "youtubeQuota",
+        "youtubeThumbnailRefused",
       ],
       published: ["published", "publishedTrial", "commented", "dryRunPublish", "dryRunComment", "results"],
       inbox: ["newDrafts", "newComments", "releaseMoved"],

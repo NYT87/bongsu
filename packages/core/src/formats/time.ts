@@ -109,3 +109,9 @@ export function zoneHourStart(unix: number, tz: string): number {
   const local = unix + zoneOffset(unix * 1000, tz);
   return unix - (((local % 3600) + 3600) % 3600);
 }
+
+/** The next midnight after `nowS` on Los Angeles' clock, unix seconds: when YouTube's daily quota resets. */
+export function nextPacificMidnight(nowS: number): number {
+  const tz = "America/Los_Angeles";
+  return zoneToUnix(shiftDate(zoneDate(new Date(nowS * 1000), tz), 1), "00:00", tz) as number;
+}

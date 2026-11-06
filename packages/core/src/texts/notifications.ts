@@ -42,10 +42,33 @@ export const jobHeld = (key: string, hours: number): Note => ({
   text: `not published within ${hours} h of its time`,
   target: key,
 });
-export const providerFailed = (key: string, platformName: string, error: string): Note => ({
+/** `keptVideo`: the job had uploaded a private video, which stays on the platform (it is never deleted on a failure). */
+export const providerFailed = (key: string, platformName: string, error: string, keptVideo = false): Note => ({
   group: "problems",
   title: `${key}: failed`,
-  text: `${platformName} reported: ${error}`,
+  text: `${platformName} reported: ${error}${keptVideo ? `\nThe video is still on ${platformName}, private: inspect it there or publish it by hand.` : ""}`,
+  target: key,
+});
+/** YouTube's audit lock (providers/youtube.ts YouTubeLocked): the job's last_error is this text too. */
+export const YOUTUBE_LOCKED =
+  "YouTube keeps this video private until your Google project passes YouTube's audit (see the YouTube guide)";
+export const youtubeLocked = (key: string): Note => ({
+  group: "problems",
+  title: `${key}: failed`,
+  text: YOUTUBE_LOCKED,
+  target: key,
+});
+export const YOUTUBE_QUOTA = "YouTube's daily quota is used up: uploads continue after midnight Pacific time";
+/** Sent once per workspace per Pacific day (the tick dedupes it in settings). */
+export const youtubeQuota = (): Note => ({
+  group: "problems",
+  title: "YouTube quota used up",
+  text: YOUTUBE_QUOTA,
+});
+export const youtubeThumbnailRefused = (key: string): Note => ({
+  group: "problems",
+  title: `${key}: thumbnail refused`,
+  text: "YouTube refused the thumbnail: the channel needs YouTube's verified features (the video still goes out)",
   target: key,
 });
 export const processingTimeout = (key: string, platformName: string): Note => ({

@@ -1,10 +1,12 @@
 // A YouTube video is uploaded private 6 h ahead of its time, waits unseen, and goes public at its due time; the tick
 // advances the other jobs first, so an upload never delays an Instagram post.
 import { env } from "cloudflare:workers";
+import { planRemove } from "@bongsu/api/agent/ops";
 import { addApproval, latestApprovals } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex, youtubeSha } from "@bongsu/core/formats/approved";
 import { captionText } from "@bongsu/core/formats/texts";
+import { nextPacificMidnight } from "@bongsu/core/formats/time";
 import { parseTexts } from "@bongsu/core/formats/youtube-texts";
 import { tick } from "@bongsu/core/tick";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -82,7 +84,9 @@ async function seedVideo(o: { key?: string; time?: string } = {}) {
 }
 
 /** The owner's approval of exactly the seeded item (what the app's approval stores). */
-async function approveVideo(o: { approvedAt?: string; key?: string; time?: string; texts?: typeof TEXTS } = {}) {
+async function approveVideo(
+  o: { approvedAt?: string; key?: string; time?: string; texts?: typeof TEXTS; clipMd5?: string } = {},
+) {
   await addApproval(env.DB, {
     key: o.key ?? KEY,
     account: "main",
@@ -96,7 +100,7 @@ async function approveVideo(o: { approvedAt?: string; key?: string; time?: strin
       `thumbnail:${ids.thumb}`,
     ]),
     media: [
-      { store: "drive", id: ids.clip, checksum: MD5S.clip },
+      { store: "drive", id: ids.clip, checksum: o.clipMd5 ?? MD5S.clip },
       { store: "drive", id: ids.es, checksum: MD5S.es },
       { store: "drive", id: ids.thumb, checksum: MD5S.thumb },
     ],
@@ -312,5 +316,174 @@ describe("YouTube uploads: the tick", () => {
     expect(await job()).toMatchObject({ state: "done", dry_run: 1, last_error: "dry run: nothing published" });
     expect(w.notifications.some((n) => n.title.includes(`would publish ${KEY}`))).toBe(true);
     expect(w.ytSessions.size).toBe(0);
+  });
+});
+
+const LOCKED =
+  "YouTube keeps this video private until your Google project passes YouTube's audit (see the YouTube guide)";
+const QUOTA = "YouTube's daily quota is used up: uploads continue after midnight Pacific time";
+const step = async (key = KEY) =>
+  JSON.parse(
+    (await env.DB.prepare("SELECT payload FROM jobs WHERE item_key = ?1").bind(key).first<{ payload: string }>())!
+      .payload,
+  ) as { step?: { data: Record<string, unknown> }; notBefore?: number };
+const notes = (re: RegExp) => w.notifications.filter((n) => re.test(`${n.title}\n${n.body}`));
+const s = (d: Date) => Math.floor(d.getTime() / 1000);
+
+describe("YouTube uploads: changes, removal, quota and errors", () => {
+  it("a texts-only edit after the upload updates the video", async () => {
+    await uploadAhead();
+    const changed = { ...TEXTS, title: "A better title" };
+    await env.DB.prepare("UPDATE plan_items SET texts = ?1 WHERE item_key = ?2")
+      .bind(JSON.stringify(changed), KEY)
+      .run();
+    await approveVideo({ approvedAt: "2026-10-20T08:00:00Z", texts: changed });
+    await run(at(-3600));
+    expect(await job()).toMatchObject({ state: "container_created", phase: "extras", videoId: "vid-1" });
+    expect(w.ytVideos.get("vid-1")?.meta.title).toBe("A better title"); // videos.update
+    expect(w.ytVideos.get("vid-1")?.status.privacyStatus).toBe("private");
+    expect(w.ytSessions.size).toBe(1); // no second upload
+  });
+
+  it("a new video file uploads again", async () => {
+    await uploadAhead();
+    w.drive.get(ids.clip)!.md5 = "d".repeat(32);
+    await approveVideo({ approvedAt: "2026-10-20T08:00:00Z", clipMd5: "d".repeat(32) });
+    await run(at(-3600));
+    expect(w.ytVideos.has("vid-1")).toBe(false); // the old one deleted
+    expect(w.ytSessions.size).toBe(2); // a new session
+    expect(await job()).toMatchObject({ state: "container_created", phase: "uploading" });
+    expect((await job())?.videoId).toBeUndefined();
+  });
+
+  it("removing the item deletes the private video", async () => {
+    await uploadAhead();
+    await planRemove(
+      {
+        env: e,
+        fetch: w.fetch,
+        now: at(-4000),
+        caller: { id: "agent", name: "agent", workspaceId: "default", scopes: ["plan" as const] },
+      } as never,
+      KEY,
+    );
+    await run(at(-3600));
+    expect(await job()).toMatchObject({ state: "refused", last_error: "removed from the plan" });
+    expect(w.ytVideos.has("vid-1")).toBe(false);
+    const rows = await env.DB.prepare("SELECT target, detail FROM audit WHERE action = 'youtube_video_deleted'").all<{
+      target: string;
+      detail: string;
+    }>();
+    expect(rows.results.map((r) => ({ target: r.target, detail: JSON.parse(r.detail) }))).toEqual([
+      { target: KEY, detail: { videoId: "vid-1" } },
+    ]);
+  });
+
+  it("a reschedule keeps the private video for the next approval", async () => {
+    await uploadAhead();
+    await env.DB.prepare("UPDATE plan_items SET due_at = ?1 WHERE item_key = ?2")
+      .bind(await localToUnix("2026-10-20", "19:00"), KEY)
+      .run();
+    await run(at(-3600));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    expect(w.ytVideos.get("vid-1")?.status.privacyStatus).toBe("private");
+    await approveVideo({ approvedAt: "2026-10-20T08:00:00Z", time: "19:00" });
+    await run(at(-3300));
+    // revised, not uploaded again
+    expect(await job()).toMatchObject({ state: "container_created", phase: "extras", videoId: "vid-1" });
+    expect(w.ytSessions.size).toBe(1);
+  });
+
+  it("quota waits until midnight Pacific without counting attempts", async () => {
+    await setup({ JOBS_PER_TICK: "1" });
+    await seedVideo();
+    await approveVideo();
+    await run(at(-LEAD));
+    await run(at(-LEAD + 300));
+    expect(await job()).toMatchObject({ phase: "extras" });
+    w.ytQuota = true;
+    await run(at(-LEAD + 600));
+    const midnight = nextPacificMidnight(s(at(-LEAD + 600)));
+    expect((await step()).step?.data.notBefore).toBe(midnight);
+    expect(await job()).toMatchObject({ state: "container_created", phase: "extras", attempts: 0 });
+    // the waiting job takes no slot: another video, due later, is started (and meets the quota at its start)
+    const B = "post:20261020_DEMO/clip_b";
+    await seedVideo({ key: B, time: "18:30" });
+    await approveVideo({ key: B, time: "18:30" });
+    await run(at(-19200));
+    expect(await job(B)).toMatchObject({ state: "pending", attempts: 0 });
+    expect((await step(B)).notBefore).toBe(nextPacificMidnight(s(at(-19200))));
+    expect(await job()).toMatchObject({ phase: "extras", attempts: 0 });
+    expect(notes(/quota/)).toHaveLength(1);
+    expect(notes(/quota/)[0].body).toContain(QUOTA);
+    // after midnight Pacific it goes on
+    w.ytQuota = false;
+    expect(midnight).toBeLessThanOrEqual(s(at(-7200)));
+    await run(at(-7200));
+    expect(await job()).toMatchObject({ phase: "processing", attempts: 0 });
+  });
+
+  it("a gone session starts again from start", async () => {
+    await seedVideo();
+    await approveVideo();
+    await run(at(-LEAD));
+    w.ytSessions.delete("up-1"); // YouTube forgot it
+    await run(at(-LEAD + 300));
+    expect(await job()).toMatchObject({ state: "pending", attempts: 0, videoId: undefined });
+    await run(at(-LEAD + 600));
+    const j = await job();
+    expect(j).toMatchObject({ state: "container_created", phase: "uploading", attempts: 0, last_error: null });
+    expect(w.ytSessions.has(String((await step()).step?.data.session).split("upload_id=")[1])).toBe(true);
+    expect(j?.videoId).toBeUndefined();
+  });
+
+  it("the audit lock fails the job with its note, and a new approval publishes it once unlocked", async () => {
+    await uploadAhead();
+    w.ytKeepPrivate = true;
+    await run(T);
+    expect(await job()).toMatchObject({ state: "failed", last_error: LOCKED, videoId: "vid-1" });
+    expect(privacy()).toBe("private");
+    expect(notes(/audit/).map((n) => n.body)).toEqual([expect.stringContaining(LOCKED)]);
+    // the project passes the audit; the owner approves again
+    w.ytKeepPrivate = false;
+    await approveVideo({ approvedAt: "2026-10-20T09:05:00Z" });
+    for (const t of [600, 900, 1200, 1500]) if ((await job())?.state !== "published") await run(at(t));
+    expect(await job()).toMatchObject({ state: "published", videoId: "vid-1" });
+    expect(privacy()).toBe("public");
+    expect(w.ytSessions.size).toBe(1);
+  });
+
+  it("a job that fails for good keeps its private video", async () => {
+    await seedVideo();
+    await approveVideo();
+    await run(at(-LEAD));
+    await run(at(-LEAD + 300));
+    await run(at(-LEAD + 600));
+    expect(await job()).toMatchObject({ phase: "processing" });
+    const real = w.fetch;
+    w.fetch = async (input, init) => {
+      const req = new Request(input, init);
+      const u = new URL(req.url);
+      if (req.method === "GET" && u.hostname === "www.googleapis.com" && u.pathname === "/youtube/v3/videos")
+        return Response.json({ error: { code: 500, message: "backendError" } }, { status: 500 });
+      return real(input, init);
+    };
+    for (const t of [900, 1200, 1500]) await run(at(-LEAD + t));
+    expect(await job()).toMatchObject({ state: "failed", attempts: 3, videoId: "vid-1" });
+    expect(w.ytVideos.has("vid-1")).toBe(true); // not deleted
+    const failed = notes(/failed/);
+    expect(failed).toHaveLength(1);
+    expect(failed[0].body).toContain("private");
+  });
+
+  it("a refused thumbnail is noted once", async () => {
+    w.ytThumbnailRefused = true;
+    await uploadAhead();
+    await run(at(-3600));
+    expect(notes(/thumbnail/).map((n) => n.body)).toEqual([
+      expect.stringContaining(
+        "YouTube refused the thumbnail: the channel needs YouTube's verified features (the video still goes out)",
+      ),
+    ]);
   });
 });

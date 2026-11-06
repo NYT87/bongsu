@@ -21,6 +21,7 @@
 // dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
 
 import { type Account, findAccount, listAccounts } from "./accounts";
+import { QuotaExceeded, SessionGone } from "./clients/youtube";
 import { AUDIT_KEEP_S, CATCH_UP_S, JOBS_PER_TICK, JOBS_PER_TICK_MAX, LINK_TTL_S, MAX_POLLS } from "./constants";
 import {
   contentPaths,
@@ -43,6 +44,7 @@ import {
 import type { Env } from "./env";
 import { type Approval, type MediaRef, sha256Hex, youtubeSha } from "./formats/approved";
 import { altLines, captionText, comment2Text, commentText } from "./formats/texts";
+import { nextPacificMidnight, zoneDate } from "./formats/time";
 import { parseTexts, type YouTubeTexts } from "./formats/youtube-texts";
 import { acquire, release } from "./lock";
 import { mediaUrl } from "./media";
@@ -56,6 +58,7 @@ import { providerFor } from "./providers/index";
 import { ComposioInstagram } from "./providers/instagram-composio";
 import { InstagramProvider } from "./providers/instagram-publish";
 import type { OutgoingMedia, OutgoingPost, Provider, Step } from "./providers/types";
+import { YouTubeLocked } from "./providers/youtube";
 import { jsonList } from "./sql";
 import * as N from "./texts/notifications";
 import { workspaceSettings, workspaceZone } from "./workspaces";
@@ -123,6 +126,8 @@ export interface Payload {
   publishing?: boolean;
   /** The provider's publishing state between runs (providers/types.ts Step). */
   step?: Step;
+  /** A job waiting out the platform's quota before its first step (unix seconds); with a step, step.data.notBefore. */
+  notBefore?: number;
   mediaId?: string;
   permalink?: string;
   publishedAt?: number; // unix seconds, Instagram's timestamp
@@ -304,10 +309,14 @@ async function activeJobs(c: Ctx, accounts: Account[]): Promise<JobRow[]> {
   const jobs = r.results.map((job) => ({ job, p: JSON.parse(job.payload) as Payload }));
   return jobs
     .filter(({ job, p }) => job.due_at - leadOf(platforms.get(`${job.workspace_id}/${p.username}`)) <= c.nowS)
+    .filter(({ p }) => notBefore(p) <= c.nowS) // waiting out a quota: no slot taken
     .sort((a, b) => group(c, a.job, a.p) - group(c, b.job, b.p)) // stable: due order kept within a group
     .slice(0, jobsPerTick(c.env))
     .map(({ job }) => job);
 }
+
+/** Until when a job waits out its platform's quota (0: it doesn't). */
+const notBefore = (p: Payload): number => Number(p.step?.data.notBefore ?? p.notBefore ?? 0);
 
 /** 0: work to do (anything due, a start, extras, processing), 1: an upload step, 2: a video waiting for its time. An
  *  upload goes after the rest even when late, so it never delays an Instagram post. */
@@ -513,11 +522,37 @@ async function advance(c: Ctx, job: JobRow) {
     const msg = String((e as Error).message ?? e).slice(0, 500);
     if (attempts >= 3) {
       await c.setJob(job.id, { state: "failed", attempts, last_error: msg });
-      await c.note.send(N.jobFailed(job.item_key, msg), job.workspace_id);
+      await c.note.send(await failedNote(c, job, p, msg), job.workspace_id);
     } else {
       await c.setJob(job.id, { attempts, last_error: msg });
     }
   }
+}
+
+/** A job that failed for good: a private video it uploaded is kept (never deleted on a failure), and the note says
+ *  where it is. */
+async function failedNote(c: Ctx, job: JobRow, p: Payload, msg: string) {
+  if (!previousUpload(p)) return N.jobFailed(job.item_key, msg);
+  const a = await c.account(p, job.workspace_id);
+  return N.providerFailed(job.item_key, platform(a?.platform ?? "")?.name ?? "the platform", msg, true);
+}
+
+/** A platform's daily quota is used up (YouTube's resets at midnight Pacific time): the job waits until then without
+ *  counting an attempt, its step (or, before the first one, the payload) carrying the time; one note per workspace
+ *  per Pacific day. */
+async function waitQuota(c: Ctx, job: JobRow, p: Payload) {
+  const until = nextPacificMidnight(c.nowS);
+  const payload: Payload = p.step
+    ? { ...p, step: { ...p.step, data: { ...p.step.data, notBefore: until } } }
+    : { ...p, notBefore: until };
+  await c.setJob(job.id, { payload });
+  const day = zoneDate(c.deps.now, "America/Los_Angeles");
+  const first = await c.env.DB.prepare(
+    "INSERT INTO settings (key, value, updated_at) VALUES (?1, '1', ?2) ON CONFLICT (key) DO NOTHING RETURNING key",
+  )
+    .bind(`youtube_quota:${job.workspace_id}:${day}`, c.nowS)
+    .first();
+  if (first) await c.note.send(N.youtubeQuota(), job.workspace_id);
 }
 
 /** `payload`: the job's state to keep with the refusal (a step that left a private video, for the next approval). */
@@ -526,17 +561,16 @@ async function refuse(c: Ctx, job: JobRow, reason: string, payload?: Payload) {
   await c.note.send(N.jobRefused(job.item_key, reason), job.workspace_id);
 }
 
+/** recheck's finding; `removed`: the item is gone from the plan, so nothing it left on the platform will be needed. */
+type Recheck = { state: "done" | "refused" | "wait"; reason: string; removed?: boolean };
+
 /** The plan's current word on a queued job, asked before each step that reaches the platform: the item is still
  *  there, at the same time, for the same account, released and not posted, and its account enabled (a Trial Reel
  *  copy: its Reel is still planned, with the trial switch on). Null when the job may go on. */
-async function recheck(
-  c: Ctx,
-  job: JobRow,
-  p: Payload,
-): Promise<{ state: "done" | "refused" | "wait"; reason: string } | null> {
+async function recheck(c: Ctx, job: JobRow, p: Payload): Promise<Recheck | null> {
   const key = p.trial ? job.item_key.replace(/^trial:/, "") : job.item_key;
   const item = await getItem(c.env.DB, key);
-  if (!item) return { state: "refused", reason: "removed from the plan" };
+  if (!item) return { state: "refused", reason: "removed from the plan", removed: true };
   if (p.trial) {
     if (!(await trialFor(c.env.DB, item)).on) return { state: "done", reason: "trial copy switched off" };
   } else {
@@ -560,11 +594,25 @@ async function recheck(
 }
 
 /** What recheck found: the job settles (done, refused), or is held until the item is released (discover brings it
- *  back; a held job doesn't take one of the tick's slots while it waits). */
-async function settle(c: Ctx, job: JobRow, p: Payload, r: { state: "done" | "refused" | "wait"; reason: string }) {
+ *  back; a held job doesn't take one of the tick's slots while it waits). A refusal keeps the step (a private video,
+ *  for the next approval to revise), except when the item is gone: then the video is deleted. */
+async function settle(c: Ctx, job: JobRow, p: Payload, r: Recheck) {
+  if (r.state === "refused" && r.removed && previousUpload(p))
+    return refuse(c, job, r.reason, await discard(c, job, p));
   if (r.state === "refused") return refuse(c, job, r.reason, p);
   if (r.state === "done") return c.setJob(job.id, { state: "done", last_error: r.reason });
   await c.setJob(job.id, { state: "held", last_error: r.reason, payload: { ...p, onHold: true } });
+}
+
+/** Deletes the private video a job uploaded for an item that is gone, best effort; the audit row records a video
+ *  that is gone now. Returns the payload without the step when it is (else kept, so nothing claims it was deleted). */
+async function discard(c: Ctx, job: JobRow, p: Payload): Promise<Payload> {
+  const pr = await c.provider(p, job.workspace_id);
+  const videoId = p.step?.data.videoId;
+  if (!(await pr.discard?.(p.step!))) return p;
+  await audit(c.env.DB, c.nowS, "youtube_video_deleted", job.item_key, { videoId }, job.workspace_id);
+  const { step: _gone, ...rest } = p;
+  return rest;
 }
 
 /** Every fingerprint again, just before publishing: the texts and each media file's checksum in its store. */
@@ -750,9 +798,16 @@ const previousUpload = (p: Payload): Step | undefined => (p.step?.data.videoId ?
 /** The provider's first step; its state goes with the job (payload.step) for check and finish on the next runs. */
 async function startPublishing(c: Ctx, job: JobRow, p: Payload, post: OutgoingPost) {
   const pr = await c.provider(p, job.workspace_id);
-  const step = await pr.start(post, previousUpload(p));
+  let step: Step;
+  try {
+    step = await pr.start(post, previousUpload(p));
+  } catch (e) {
+    if (e instanceof QuotaExceeded) return waitQuota(c, job, p);
+    throw e;
+  }
+  const { notBefore: _waited, ...rest } = p;
   const next: Payload = {
-    ...p,
+    ...rest,
     step,
     ...(step.data.locationDropped ? { locationDropped: true } : {}),
     ...(post.format === "video" ? { reel: true } : {}),
@@ -834,7 +889,16 @@ async function queueTrial(c: Ctx, job: JobRow, p: Payload) {
 async function stepContainer(c: Ctx, job: JobRow, p: Payload) {
   const pr = await c.provider(p, job.workspace_id);
   const step = await withLinks(c, job, p, p.step ?? (await legacyStep(c, job, p)));
-  const next = await pr.check(step);
+  let next: Step;
+  try {
+    next = await pr.check(step);
+  } catch (e) {
+    if (e instanceof QuotaExceeded) return waitQuota(c, job, p);
+    if (e instanceof SessionGone) return restart(c, job, p);
+    throw e;
+  }
+  if (next.data.thumbnailRefused && !step.data.thumbnailRefused)
+    await c.note.send(N.youtubeThumbnailRefused(job.item_key), job.workspace_id);
   if (next.state === "failed") return failStep(c, job, p, pr, next);
   if (next.state === "processing") {
     const container = typeof next.data.container === "string" ? next.data.container : null;
@@ -875,6 +939,13 @@ async function stepAhead(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: St
   return publish(c, job, p, pr, step);
 }
 
+/** The upload session is gone (expired, or YouTube forgot it): the job starts again from start on the next run, with
+ *  no video yet (a session exists only before one) and no attempt counted. */
+async function restart(c: Ctx, job: JobRow, p: Payload) {
+  const { step: _gone, ...rest } = p;
+  await c.setJob(job.id, { state: "pending", container_id: null, payload: rest });
+}
+
 /** Whether a provider's step moved on (a new phase, more bytes sent): such a run is progress, not a poll. Instagram's
  *  steps have neither, so its polls count as before. */
 const progressed = (a: Step, b: Step) => a.data.phase !== b.data.phase || a.data.offset !== b.data.offset;
@@ -896,7 +967,10 @@ async function withLinks(c: Ctx, job: JobRow, p: Payload, step: Step): Promise<S
 
 async function failStep(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step) {
   await c.setJob(job.id, { state: "failed", last_error: step.error ?? "failed", payload: { ...p, step } });
-  await c.note.send(N.providerFailed(job.item_key, platformName(pr), step.error ?? "failed"), job.workspace_id);
+  await c.note.send(
+    N.providerFailed(job.item_key, platformName(pr), step.error ?? "failed", !!step.data.videoId),
+    job.workspace_id,
+  );
 }
 
 /** The provider's last step: the post goes live; comments and the record follow on the next run. In dry run (switched
@@ -920,9 +994,21 @@ async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step
     await c.note.send(N.dryRunPublish(job.item_key, job.kind, p.account), job.workspace_id);
     return;
   }
-  // From here the post may go live even if the call fails: a failed job never reopens after this (reopens()).
+  // From here the post may go live even if the call fails: a failed job never reopens after this (reopens()), except
+  // one YouTube read back as still private (YouTubeLocked below).
   await c.setJob(job.id, { payload: { ...p, step, publishing: true } });
-  const got = await pr.finish(step);
+  let got: Awaited<ReturnType<Provider["finish"]>>;
+  try {
+    got = await pr.finish(step);
+  } catch (e) {
+    // the quota: the call may have landed before the error (a read after the update), so it stays "publishing"
+    if (e instanceof QuotaExceeded) return waitQuota(c, job, { ...p, step, publishing: true });
+    if (!(e instanceof YouTubeLocked)) throw e;
+    // read back still private, so not live: a new approval may reopen it once the project passes the audit
+    await c.setJob(job.id, { state: "failed", last_error: e.message, payload: { ...p, step } });
+    await c.note.send(N.youtubeLocked(job.item_key), job.workspace_id);
+    return;
+  }
   await c.setJob(job.id, {
     state: "published",
     attempts: 0,

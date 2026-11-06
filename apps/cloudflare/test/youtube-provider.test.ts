@@ -247,9 +247,11 @@ describe("YouTube provider", () => {
 
   it("discard deletes the uploaded video, best effort", async () => {
     const { step } = await walk(await pr.start(post()));
-    await pr.discard(step);
+    expect(await pr.discard(step)).toBe(true);
     expect(w.ytVideos.has("vid-1")).toBe(false);
-    await pr.discard(step); // already gone: no error
-    await pr.discard({ state: "processing", data: { phase: "uploading" } });
+    expect(await pr.discard(step)).toBe(true); // already gone (404): no error
+    expect(await pr.discard({ state: "processing", data: { phase: "uploading" } })).toBe(false);
+    w.ytQuota = true; // a delete YouTube refuses: no error, reported
+    expect(await pr.discard({ state: "processing", data: { videoId: "vid-9" } })).toBe(false);
   });
 });
