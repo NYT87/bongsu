@@ -523,6 +523,10 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     // bea is admin of B only: a member of the default workspace isn't hers to change, and its invite isn't there
     expect((await send("bea", "dashboard", "/admin-api/members/dan", { role: "admin" })).status).toBe(404);
     expect((await send("bea", "dashboard", "/admin-api/members/dan/remove")).status).toBe(404);
+    // another workspace's channel defaults (or any settings of its accounts) can't be set
+    expect(
+      (await send("bea", "dashboard", "/admin-api/accounts/demo_travel", { youtube: { category: "10" } })).status,
+    ).toBe(404);
     expect((await send("bea", "dashboard", "/admin-api/invites/inviteA000000000/revoke")).status).toBe(404);
     expect(await role("default", "dan")).toBe("editor");
     expect(
