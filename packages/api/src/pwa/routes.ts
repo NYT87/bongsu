@@ -2,7 +2,7 @@
 // assets) and talks only to these routes, same origin. Sign-in is a passkey (the first one registered with a
 // one-time code made in the dashboard's Devices & passkeys); approving needs a fresh passkey assertion every time.
 
-import { instagramAccounts, listAccounts } from "@bongsu/core/accounts";
+import { findAccount, listAccounts } from "@bongsu/core/accounts";
 import { calendar } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import { replyToComment } from "@bongsu/core/comments";
@@ -18,8 +18,9 @@ import { mediaUrl } from "@bongsu/core/media";
 import { defaultIds, mediaStores, storeRows } from "@bongsu/core/media/index";
 import { isVideo, type MediaStore } from "@bongsu/core/media/store";
 import { effectivePrefs, isNoteGroup, setPref } from "@bongsu/core/notify-prefs";
-import { platforms } from "@bongsu/core/platforms/index";
-import { describePlatform } from "@bongsu/core/platforms/types";
+import { platform, platforms } from "@bongsu/core/platforms/index";
+import { describePlatform, OptionsError, validateOptions } from "@bongsu/core/platforms/types";
+import { youtubeSettings } from "@bongsu/core/platforms/youtube";
 import { connectSpecs } from "@bongsu/core/providers/index";
 import { isPushEndpoint, sendPush } from "@bongsu/core/push";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
@@ -457,7 +458,10 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       const r = await ops.listDrafts(opctx(c), { status: c.req.query("status") });
       const stores = await mediaStores(c.env, fetcher, me(c).workspaceId);
       return {
-        accounts: (await instagramAccounts(c.env.DB, me(c).workspaceId)).map((a) => a.id),
+        // the accounts a draft can be scheduled to: every one that publishes (Instagram accounts, YouTube channels)
+        accounts: (await listAccounts(c.env.DB, { workspaceId: me(c).workspaceId }))
+          .filter((a) => platform(a.platform)?.formats.length)
+          .map((a) => a.id),
         drafts: await Promise.all(
           r.drafts.map(async (d) => {
             const files = (d.payload as { files?: { store: string; id: string; name: string; mime: string }[] }).files;
@@ -942,6 +946,31 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       if (!r) throw new ops.ApiError(404, `${key} isn't planned`);
       await audit(c, "item_trial", key, { on });
       return { key, ...(await trialFor(c.env.DB, r)) };
+    }),
+  );
+  // A YouTube video's settings (visibility, made for kids, category); null clears one back to the channel's default.
+  app.post(
+    "/app-api/item/youtube",
+    wrap(async (c) => {
+      const b = await body(c);
+      const key = String(b.key ?? "");
+      const i = await getItem(c.env.DB, key, me(c).workspaceId);
+      if (!i) throw new ops.ApiError(404, `${key} isn't planned`);
+      const acc = await findAccount(c.env.DB, i.account, me(c).workspaceId);
+      const plat = platform(acc?.platform ?? "");
+      if (plat?.id !== "youtube") throw new ops.ApiError(400, "only a YouTube video has these settings");
+      if (await isPosted(c.env.DB, key)) throw new ops.ApiError(409, "it was already published");
+      const patch: Record<string, unknown> = {};
+      for (const k of ["madeForKids", "privacy", "category"]) if (k in b) patch[k] = b[k];
+      try {
+        validateOptions(plat, "video", patch);
+      } catch (e) {
+        if (e instanceof OptionsError) throw new ops.ApiError(400, e.message);
+        throw e;
+      }
+      let latest: typeof i | null = i;
+      for (const [k, v] of Object.entries(patch)) latest = await setOption(c, key, k, v ?? null);
+      return { key, settings: youtubeSettings(itemOptions(latest ?? i), acc?.settings ?? {}) };
     }),
   );
   app.post(

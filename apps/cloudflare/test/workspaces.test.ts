@@ -145,6 +145,49 @@ describe("an agent key in workspace B", () => {
     expect((await call(KEY_A, "/v1/status")).json).toMatchObject({ timezone: "Asia/Seoul" });
   });
 
+  it("another workspace can't set a video's settings, edit its texts or schedule its draft in the app", async () => {
+    const key = "reel:20261101_DEMO/clip2";
+    await env.DB.batch(
+      [
+        `INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id, content, caption, texts) VALUES ('${key}', 'video', 'main', '20261101_DEMO', 'clip2', 1893456000, '{}', 0, 1, 0, 0, 'default', 'db', 'Description', '{"title":"Private title"}')`,
+        "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES ('d_yt_a', 'reel', 'main', '{\"media\":[]}', 'api', 'key:k', 'draft', 0, 0, 'default')",
+        "INSERT INTO users (id, email, name, created_at) VALUES ('ytb', 'ytb@example.com', 'ytb', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ytb', 'admin', 0) ON CONFLICT DO NOTHING",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    const e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test" } as Partial<Env>);
+    const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { userId: "ytb" });
+    await setSessionWorkspace(env.DB, token, "b");
+    const app = async (path: string, body: unknown) =>
+      (
+        await appRoutes(w.fetch).request(
+          `https://bongsu.test${path}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Cookie: `bongsu_session=${token}` },
+            body: JSON.stringify(body),
+          },
+          e,
+        )
+      ).status;
+    expect(await app("/app-api/item/youtube", { key, privacy: "unlisted" })).toBe(404);
+    expect(await app("/app-api/item/texts", { key, caption: "Taken", texts: { title: "Taken over" } })).toBe(404);
+    expect(await app("/app-api/drafts/d_yt_a/schedule", { date: "2026-11-02", time: "18:00" })).toBe(404);
+    const r = await env.DB.prepare("SELECT options, caption, texts FROM plan_items WHERE item_key = ?1")
+      .bind(key)
+      .first();
+    expect(r).toEqual({ options: "{}", caption: "Description", texts: '{"title":"Private title"}' });
+    expect(await env.DB.prepare("SELECT status FROM drafts WHERE id = 'd_yt_a'").first("status")).toBe("draft");
+    // the member list tests below count B's members
+    await env.DB.batch(
+      [
+        "DELETE FROM sessions WHERE user_id = 'ytb'",
+        "DELETE FROM memberships WHERE user_id = 'ytb'",
+        "DELETE FROM users WHERE id = 'ytb'",
+      ].map((q) => env.DB.prepare(q)),
+    );
+  });
+
   it("can't move workspace A's YouTube video", async () => {
     w.ytUploads = [
       {
