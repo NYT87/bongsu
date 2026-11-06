@@ -205,6 +205,10 @@ The job keeps `videoId`. When a new approval reopens it:
   upload's body, with `Content-Length` set. No JavaScript reads the bytes.
 - **The first plan task proves the cost on Cloudflare:** an upload of at least 200 MB in the cron Worker, recording
   its CPU time and wall time.
+- **Spike deferred, not measured:** the spike (plan Task 1) needs the owner's Cloudflare login and a deploy outside
+  the worktree, so it wasn't run and the cost of streaming on Workers is **not measured**. Streaming stays the
+  default and chunk mode is built and tested, behind `YOUTUBE_UPLOAD_MODE=chunk` (an operator's switch, set on the
+  cron Worker; see `site/docs/configuration.md`). If an upload fails on the CPU limit, set the variable and redeploy.
 - **Fallback:** if the CPU time exceeds what the plan allows (the free plan's limit), `check` instead sends
   `CHUNK_BYTES` (8 MiB, a multiple of 256 KiB) per request, as many as fit in `UPLOAD_BUDGET_S`. Nothing else changes.
 

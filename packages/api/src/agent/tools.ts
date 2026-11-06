@@ -242,7 +242,8 @@ export const TOOLS: Tool[] = [
         kind: { type: "string", enum: ["reel", "photo", "carousel", "shorts_comment"] },
         account: {
           type: "string",
-          description: "an account id from list_accounts: Instagram for reels and posts, YouTube for Shorts comments",
+          description:
+            "an account id from list_accounts: Instagram for reels and posts, YouTube for videos and Shorts comments",
         },
         title: { type: "string" },
         caption: { type: "string", description: "for a YouTube video: its description" },

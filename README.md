@@ -9,8 +9,8 @@
 </p>
 
 **Bongsu (봉수)** is a self-hosted publishing scheduler for creators: you approve, it posts on time. You plan Instagram
-Reels, posts, carousels, Stories and Trial Reels, and comments on your YouTube Shorts, approve each one with your
-passkey, and Bongsu publishes them at the planned minute from your own Cloudflare account or server, with your computer
+Reels, posts, carousels, Stories and Trial Reels, YouTube videos and comments on your Shorts, approve each one with
+your passkey, and Bongsu publishes them at the planned minute from your own Cloudflare account or server, with your computer
 off. Agents such as Claude can plan with you; only you can say go. (In Joseon-era Korea, *bongsu* was the chain of
 beacon towers that carried a signal from peak to peak across the country.)
 
@@ -37,7 +37,9 @@ beacon towers that carried a signal from peak to peak across the country.)
 
 - **Instagram:** Reels, photos, carousels and Stories, with a first and second comment, alt texts and Trial Reels
   (shown to non-followers first) for accounts that qualify. Through Instagram's own API, or Composio.
-- **YouTube:** your comment on each Short once it's public, and moving a scheduled video's release date.
+- **YouTube:** videos and Shorts uploaded private ahead of time and made public at the planned minute, with titles,
+  translations, subtitles and a thumbnail; your comment on each Short once it's public; moving a scheduled video's
+  release date.
 - **Approval with a passkey.** Nothing goes out until you approve it in the app. The approval covers the exact texts
   and media: change either and it waits for you again.
 - **Agents that plan, never publish.** A built-in MCP server and REST API let Claude or a script read the queue, write

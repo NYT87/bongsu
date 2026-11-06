@@ -1,7 +1,7 @@
 # Bongsu: instructions for agents
 
 Bongsu is a self-hosted publishing scheduler: Instagram Reels, posts, carousels, stories and Trial Reels, plus YouTube
-Shorts comments, posted on time after the owner approves them with a passkey. Read `README.md` for the product,
+videos and Shorts comments, posted on time after the owner approves them with a passkey. Read `README.md` for the product,
 `docs/` for how it works and `docs/PLAN.md` for the roadmap (tick its boxes as work gets done).
 
 ## Layout
