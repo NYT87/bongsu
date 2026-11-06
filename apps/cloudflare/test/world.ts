@@ -119,6 +119,35 @@ export class World {
   /** Every `videos.update` call the fake accepted or refused, for assertions. */
   ytUpdates: { id: string; status: Record<string, unknown> }[] = [];
   ytComments: { video: string; text: string }[] = [];
+  /** Videos uploaded through the resumable API (the provider's uploads), by id. `processing` is what a test moves
+   *  along; `seconds`, `width` and `height` are answered once set. */
+  ytVideos = new Map<
+    string,
+    {
+      size: number;
+      received: number;
+      meta: Record<string, any>;
+      status: Record<string, unknown>;
+      processing: "processing" | "succeeded" | "failed" | "rejected";
+      captions: Map<string, { lang: string }>;
+      thumbnail?: { bytes: number; type: string };
+      seconds?: number;
+      width?: number;
+      height?: number;
+    }
+  >();
+  /** Resumable sessions by upload id → video id. */
+  ytSessions = new Map<string, string>();
+  /** Every session PUT: its Content-Range and body length (the query PUTs have length 0). */
+  ytPuts: { range: string; length: number }[] = [];
+  /** Bytes kept of a session PUT before it is cut off (the fetch then aborts); null: PUTs complete. */
+  ytUploadCut: number | null = null;
+  /** The daily quota is used up: inserts, updates, captions and thumbnails answer 403 quotaExceeded. */
+  ytQuota = false;
+  /** The audit lock: a project that hasn't passed YouTube's audit keeps every upload private. */
+  ytKeepPrivate = false;
+  /** Files the uploads read as sources (path → bytes), served at https://files.example.com/<path> with Range. */
+  ytFiles = new Map<string, Uint8Array>();
   notifications: { title: string; body: string; actions?: string }[] = [];
   /** Emails sent through the fake Resend API. */
   mails: { from: string; to: string[]; subject: string; text: string }[] = [];
@@ -322,6 +351,150 @@ export class World {
           },
         ],
       });
+    }
+    if (url.hostname === "files.example.com") {
+      const f = this.ytFiles.get(url.pathname.slice(1));
+      if (!f) return new Response("not found", { status: 404 });
+      const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.get("Range") ?? "");
+      if (!m) return new Response(f, { headers: { "Content-Type": "application/octet-stream" } });
+      const start = Number(m[1]);
+      const end = Math.min(f.length - 1, m[2] ? Number(m[2]) : f.length - 1);
+      return new Response(f.slice(start, end + 1), {
+        status: 206,
+        headers: { "Content-Range": `bytes ${start}-${end}/${f.length}`, "Content-Type": "application/octet-stream" },
+      });
+    }
+    if (url.hostname === "www.googleapis.com" && url.pathname.startsWith("/upload/youtube/v3/")) {
+      const quota = () => json({ error: { code: 403, message: "quota", errors: [{ reason: "quotaExceeded" }] } }, 403);
+      const sessionId = url.searchParams.get("upload_id");
+      if (req.method === "PUT" && sessionId) {
+        const vid = this.ytSessions.get(sessionId);
+        const v = vid ? this.ytVideos.get(vid) : undefined;
+        if (!vid || !v) return json({ error: { code: 404, message: "session" } }, 404);
+        const range = req.headers.get("Content-Range") ?? "";
+        const body = new Uint8Array(await req.arrayBuffer());
+        this.ytPuts.push({ range, length: body.length });
+        const resume = () =>
+          new Response(null, {
+            status: 308,
+            headers: v.received ? { Range: `bytes=0-${v.received - 1}` } : {},
+          });
+        const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(range);
+        if (!m) return v.received >= v.size ? json({ id: vid }) : resume();
+        if (Number(m[1]) !== v.received) return resume();
+        if (this.ytUploadCut !== null && body.length > this.ytUploadCut) {
+          v.received += this.ytUploadCut;
+          throw new DOMException("The operation timed out", "TimeoutError");
+        }
+        v.received += body.length;
+        return v.received >= v.size ? json({ id: vid }) : resume();
+      }
+      if (req.method === "POST" && url.pathname === "/upload/youtube/v3/videos") {
+        if (this.ytQuota) return quota();
+        const b = (await req.json()) as { snippet: Record<string, any>; status: Record<string, any> };
+        const id = `vid-${this.ytVideos.size + 1}`;
+        const up = `up-${this.ytSessions.size + 1}`;
+        this.ytVideos.set(id, {
+          size: Number(req.headers.get("X-Upload-Content-Length")),
+          received: 0,
+          meta: { ...b.snippet, localizations: (b as any).localizations },
+          status: { ...b.status, privacyStatus: "private", uploadStatus: "uploaded" },
+          processing: "processing",
+          captions: new Map(),
+        });
+        this.ytSessions.set(up, id);
+        return new Response("{}", {
+          headers: {
+            Location: `https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=${up}`,
+          },
+        });
+      }
+      if (req.method === "POST" && url.pathname === "/upload/youtube/v3/thumbnails/set") {
+        if (this.ytQuota) return quota();
+        const v = this.ytVideos.get(url.searchParams.get("videoId") ?? "");
+        if (!v) return json({ error: { code: 404, message: "videoNotFound" } }, 404);
+        const bytes = (await req.arrayBuffer()).byteLength;
+        v.thumbnail = { bytes, type: req.headers.get("Content-Type") ?? "" };
+        return json({ items: [] });
+      }
+      if (req.method === "POST" && url.pathname === "/upload/youtube/v3/captions") {
+        if (this.ytQuota) return quota();
+        const text = new TextDecoder("latin1").decode(await req.arrayBuffer());
+        const meta = JSON.parse(/\r\n\r\n(\{.*?\})\r\n--/s.exec(text)?.[1] ?? "{}") as {
+          snippet?: { videoId: string; language: string };
+        };
+        const v = this.ytVideos.get(meta.snippet?.videoId ?? "");
+        if (!v || !meta.snippet) return json({ error: { code: 404, message: "videoNotFound" } }, 404);
+        const id = `cap-${this.ytVideos.size}-${v.captions.size + 1}`;
+        v.captions.set(id, { lang: meta.snippet.language });
+        return json({ id, snippet: meta.snippet });
+      }
+      return json({ error: { code: 404, message: "no such upload endpoint" } }, 404);
+    }
+    if (url.hostname === "www.googleapis.com" && url.pathname === "/youtube/v3/captions" && req.method === "DELETE") {
+      if (this.ytQuota) return json({ error: { code: 403, errors: [{ reason: "quotaExceeded" }] } }, 403);
+      const id = url.searchParams.get("id") ?? "";
+      for (const v of this.ytVideos.values()) if (v.captions.delete(id)) return new Response(null, { status: 204 });
+      return json({ error: { code: 404, message: "captionNotFound" } }, 404);
+    }
+    if (url.hostname === "www.googleapis.com" && url.pathname === "/youtube/v3/videos" && req.method === "DELETE") {
+      if (this.ytQuota) return json({ error: { code: 403, errors: [{ reason: "quotaExceeded" }] } }, 403);
+      return this.ytVideos.delete(url.searchParams.get("id") ?? "")
+        ? new Response(null, { status: 204 })
+        : json({ error: { code: 404, message: "videoNotFound" } }, 404);
+    }
+    if (
+      url.hostname === "www.googleapis.com" &&
+      url.pathname === "/youtube/v3/videos" &&
+      req.method === "PUT" &&
+      this.ytVideos.has(((await req.clone().json()) as { id: string }).id)
+    ) {
+      if (this.ytQuota) return json({ error: { code: 403, errors: [{ reason: "quotaExceeded" }] } }, 403);
+      const b = (await req.json()) as {
+        id: string;
+        snippet: Record<string, any>;
+        status: Record<string, unknown>;
+        localizations?: Record<string, unknown>;
+      };
+      const v = this.ytVideos.get(b.id)!;
+      v.meta = { ...b.snippet, localizations: b.localizations };
+      v.status = {
+        ...v.status,
+        ...b.status,
+        // the audit lock: an unaudited project's videos stay private whatever the update asks
+        ...(this.ytKeepPrivate ? { privacyStatus: "private" } : {}),
+      };
+      return json({ id: b.id });
+    }
+    if (
+      url.hostname === "www.googleapis.com" &&
+      url.pathname === "/youtube/v3/videos" &&
+      req.method === "GET" &&
+      (url.searchParams.get("id") ?? "").split(",").some((id) => this.ytVideos.has(id))
+    ) {
+      const items = (url.searchParams.get("id") ?? "").split(",").flatMap((id) => {
+        const v = this.ytVideos.get(id);
+        if (!v) return [];
+        const status: Record<string, unknown> = {
+          ...v.status,
+          uploadStatus: { processing: "uploaded", succeeded: "processed", failed: "failed", rejected: "rejected" }[
+            v.processing
+          ],
+          ...(v.processing === "failed" ? { failureReason: "codec" } : {}),
+          ...(v.processing === "rejected" ? { rejectionReason: "duplicate" } : {}),
+        };
+        return [
+          {
+            id,
+            status,
+            processingDetails: { processingStatus: v.processing === "processing" ? "processing" : "succeeded" },
+            fileDetails:
+              v.width && v.height ? { videoStreams: [{ widthPixels: v.width, heightPixels: v.height }] } : {},
+            contentDetails: v.seconds === undefined ? {} : { duration: `PT${v.seconds}S` },
+          },
+        ];
+      });
+      return json({ items });
     }
     if (url.hostname === "www.googleapis.com" && url.pathname === "/youtube/v3/playlistItems") {
       this.ytListCalls++;

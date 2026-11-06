@@ -2,12 +2,41 @@
 import { refreshToken } from "./google";
 
 const API = "https://www.googleapis.com/youtube/v3";
+const UPLOAD = "https://www.googleapis.com/upload/youtube/v3";
 const ANALYTICS = "https://youtubeanalytics.googleapis.com/v2/reports";
 /** The scope the Analytics API needs on top of youtube.force-ssl; a channel connected without it answers 403. */
 export const ANALYTICS_SCOPE = "https://www.googleapis.com/auth/yt-analytics.readonly";
 
 /** The Analytics API refused the token: the channel was connected without the analytics scope. */
 export class AnalyticsScopeError extends Error {}
+
+/** YouTube's quota is used up (403 quotaExceeded) or the channel hit its upload limit (uploadLimitExceeded). */
+export class QuotaExceeded extends Error {}
+
+/** The resumable session no longer exists (404/410): the upload starts again from a new session. */
+export class SessionGone extends Error {}
+
+export interface VideoMeta {
+  title: string;
+  description: string;
+  tags?: string[];
+  categoryId: string;
+  defaultLanguage?: string;
+  defaultAudioLanguage?: string;
+  madeForKids: boolean;
+  localizations?: Record<string, { title: string; description: string }>;
+}
+
+export interface VideoState {
+  uploadStatus: string;
+  privacyStatus: string;
+  rejectionReason?: string;
+  failureReason?: string;
+  seconds: number | null;
+  width: number | null;
+  height: number | null;
+  status: Record<string, unknown>;
+}
 
 export interface Upload {
   id: string;
@@ -266,4 +295,208 @@ export class YouTube {
     if (!r.ok) throw new Error(`youtube commentThreads.insert: ${r.status} ${(await r.text()).slice(0, 200)}`);
     return ((await r.json()) as { id: string }).id;
   }
+
+  /** Throws QuotaExceeded or an Error for a refused call; `what` names the call in the message. */
+  private async refuse(r: Response, what: string): Promise<never> {
+    const text = (await r.text()).slice(0, 300);
+    if (r.status === 403 && /quotaExceeded|uploadLimitExceeded/.test(text))
+      throw new QuotaExceeded(`youtube ${what}: ${text}`);
+    throw new Error(`youtube ${what}: ${r.status} ${text}`);
+  }
+
+  /** The answer to a session PUT: done (the video resource), or 308 with the bytes YouTube kept in `Range`. */
+  private async sessionReply(r: Response, size: number): Promise<{ offset: number; videoId?: string }> {
+    if (r.status === 200 || r.status === 201) return { offset: size, videoId: ((await r.json()) as { id: string }).id };
+    if (r.status === 308) {
+      const m = /^bytes=0-(\d+)$/.exec(r.headers.get("Range") ?? "");
+      return { offset: m ? Number(m[1]) + 1 : 0 };
+    }
+    if (r.status === 404 || r.status === 410) throw new SessionGone(`youtube upload session: ${r.status}`);
+    return this.refuse(r, "upload");
+  }
+
+  /** Opens a resumable upload (videos.insert, 1600 units): the video starts private. Returns the session URL. */
+  async startUpload(meta: VideoMeta, size: number, mime: string): Promise<string> {
+    const r = await this.fetcher(`${UPLOAD}/videos?uploadType=resumable&part=snippet,status,localizations`, {
+      method: "POST",
+      headers: {
+        ...(await this.auth()),
+        "Content-Type": "application/json; charset=UTF-8",
+        "X-Upload-Content-Length": String(size),
+        "X-Upload-Content-Type": mime,
+      },
+      body: JSON.stringify({
+        snippet: snippetOf(meta),
+        status: { privacyStatus: "private", selfDeclaredMadeForKids: meta.madeForKids },
+        ...(meta.localizations ? { localizations: meta.localizations } : {}),
+      }),
+    });
+    if (!r.ok) return this.refuse(r, "videos.insert");
+    const session = r.headers.get("Location");
+    if (!session) throw new Error("youtube videos.insert: no session URL");
+    return session;
+  }
+
+  /** Asks the session how many bytes YouTube holds (a `*` Content-Range); videoId once the upload is complete. */
+  async uploadOffset(session: string, size: number): Promise<{ offset: number; videoId?: string }> {
+    const r = await this.fetcher(session, {
+      method: "PUT",
+      headers: { ...(await this.auth()), "Content-Range": `bytes */${size}`, "Content-Length": "0" },
+    });
+    return this.sessionReply(r, size);
+  }
+
+  /**
+   * Sends the file from `offset`, reading `source` with a Range request and PUTting it to the session. Without
+   * `chunkBytes` the rest goes in one streamed PUT; with it, pieces of that size one after another. Whatever the
+   * budget doesn't allow is left for the next run: an abort is normal and answers with the offset YouTube kept.
+   */
+  async uploadFrom(
+    session: string,
+    source: string,
+    offset: number,
+    size: number,
+    o: { budgetMs: number; chunkBytes?: number },
+  ): Promise<{ offset: number; videoId?: string }> {
+    const signal = AbortSignal.timeout(o.budgetMs);
+    const h = await this.auth();
+    try {
+      while (offset < size) {
+        const end = Math.min(size, o.chunkBytes ? offset + o.chunkBytes : size) - 1;
+        const src = await this.fetcher(source, {
+          headers: { Range: `bytes=${offset}-${o.chunkBytes ? end : ""}` },
+          signal,
+        });
+        if (src.status !== 206 && !(src.status === 200 && offset === 0)) return this.refuse(src, "upload source");
+        const put = await this.fetcher(session, {
+          method: "PUT",
+          headers: {
+            ...h,
+            "Content-Range": `bytes ${offset}-${end}/${size}`,
+            "Content-Length": String(end - offset + 1),
+          },
+          // a chunk is held in memory (8 MiB); the whole rest is streamed so a big file never is
+          body: o.chunkBytes ? await src.arrayBuffer() : src.body,
+          // @ts-expect-error: `duplex` is required for a stream body by fetch implementations, absent from the DOM types
+          duplex: "half",
+          signal,
+        });
+        const r = await this.sessionReply(put, size);
+        if (r.videoId || !o.chunkBytes || r.offset <= offset) return r;
+        offset = r.offset;
+      }
+      return { offset };
+    } catch (e) {
+      if (e instanceof Error && (e.name === "AbortError" || e.name === "TimeoutError"))
+        return this.uploadOffset(session, size);
+      throw e;
+    }
+  }
+
+  /** A video's state while it processes: status, processing and file details (1 unit); null when it is gone. */
+  async videoState(id: string): Promise<VideoState | null> {
+    const r = await this.fetcher(
+      `${API}/videos?part=status,processingDetails,fileDetails,contentDetails&id=${encodeURIComponent(id)}`,
+      { headers: await this.auth() },
+    );
+    if (!r.ok) return this.refuse(r, "videos.list");
+    const v = ((await r.json()) as { items?: Record<string, any>[] }).items?.[0];
+    if (!v) return null;
+    const stream = v.fileDetails?.videoStreams?.[0];
+    const num = (n: unknown) => (typeof n === "number" ? n : null);
+    return {
+      uploadStatus: v.status?.uploadStatus ?? "",
+      privacyStatus: v.status?.privacyStatus ?? "",
+      rejectionReason: v.status?.rejectionReason,
+      failureReason: v.status?.failureReason,
+      seconds: v.contentDetails?.duration ? isoSeconds(v.contentDetails.duration) : null,
+      width: num(stream?.widthPixels),
+      height: num(stream?.heightPixels),
+      status: v.status ?? {},
+    };
+  }
+
+  /** videos.update (50 units) of snippet, status and localizations: each part replaces what YouTube holds. */
+  async updateVideo(id: string, meta: VideoMeta, status: Record<string, unknown>): Promise<void> {
+    const r = await this.fetcher(`${API}/videos?part=snippet,status,localizations`, {
+      method: "PUT",
+      headers: { ...(await this.auth()), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id,
+        snippet: snippetOf(meta),
+        status: { ...status, selfDeclaredMadeForKids: meta.madeForKids },
+        localizations: meta.localizations ?? {},
+      }),
+    });
+    if (!r.ok) return this.refuse(r, "videos.update");
+  }
+
+  /** thumbnails.set (50 units) with the image read from `source`. */
+  async setThumbnail(videoId: string, source: string): Promise<void> {
+    const src = await this.fetcher(source);
+    if (!src.ok) return this.refuse(src, "thumbnail source");
+    const r = await this.fetcher(`${UPLOAD}/thumbnails/set?videoId=${encodeURIComponent(videoId)}`, {
+      method: "POST",
+      headers: { ...(await this.auth()), "Content-Type": src.headers.get("Content-Type") ?? "image/jpeg" },
+      body: await src.arrayBuffer(),
+    });
+    if (!r.ok) return this.refuse(r, "thumbnails.set");
+  }
+
+  /** captions.insert (400 units): a subtitle file for one language, sent as multipart/related. Returns the track id. */
+  async insertCaption(videoId: string, lang: string, source: string, name: string): Promise<string> {
+    const src = await this.fetcher(source);
+    if (!src.ok) return this.refuse(src, "caption source");
+    const boundary = `bongsu-${crypto.randomUUID()}`;
+    const enc = new TextEncoder();
+    const meta = JSON.stringify({ snippet: { videoId, language: lang, name, isDraft: false } });
+    const parts = [
+      enc.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n`),
+      enc.encode(`--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`),
+      new Uint8Array(await src.arrayBuffer()),
+      enc.encode(`\r\n--${boundary}--`),
+    ];
+    const body = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let at = 0;
+    for (const p of parts) {
+      body.set(p, at);
+      at += p.length;
+    }
+    const r = await this.fetcher(`${UPLOAD}/captions?uploadType=multipart&part=snippet`, {
+      method: "POST",
+      headers: { ...(await this.auth()), "Content-Type": `multipart/related; boundary=${boundary}` },
+      body,
+    });
+    if (!r.ok) return this.refuse(r, "captions.insert");
+    return ((await r.json()) as { id: string }).id;
+  }
+
+  /** captions.delete (50 units); a track already gone counts as deleted. */
+  async deleteCaption(trackId: string): Promise<void> {
+    const r = await this.fetcher(`${API}/captions?id=${encodeURIComponent(trackId)}`, {
+      method: "DELETE",
+      headers: await this.auth(),
+    });
+    if (!r.ok && r.status !== 404) return this.refuse(r, "captions.delete");
+  }
+
+  /** videos.delete (50 units); a video already gone (404) counts as deleted. */
+  async deleteVideo(id: string): Promise<void> {
+    const r = await this.fetcher(`${API}/videos?id=${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: await this.auth(),
+    });
+    if (!r.ok && r.status !== 404) return this.refuse(r, "videos.delete");
+  }
+}
+
+function snippetOf(m: VideoMeta) {
+  return {
+    title: m.title,
+    description: m.description,
+    ...(m.tags?.length ? { tags: m.tags } : {}),
+    categoryId: m.categoryId,
+    ...(m.defaultLanguage ? { defaultLanguage: m.defaultLanguage } : {}),
+    ...(m.defaultAudioLanguage ? { defaultAudioLanguage: m.defaultAudioLanguage } : {}),
+  };
 }
