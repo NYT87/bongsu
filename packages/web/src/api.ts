@@ -152,6 +152,8 @@ export interface Item {
     thumbnail: string | null;
     roles: string[];
     settings: YouTubeSettings;
+    /** The channel's own defaults: a setting equal to one is sent as null, so the video follows the channel. */
+    channel: YouTubeSettings;
   } | null;
   /** A YouTube upload's phase while its job runs (core/upload-progress.ts); null otherwise. */
   progress?: UploadProgress;

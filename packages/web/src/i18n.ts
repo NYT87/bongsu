@@ -477,6 +477,9 @@ export const en = {
   "upload.processing": "YouTube is processing",
   "upload.ready": "Ready: goes public at {time}",
   "upload.locked": "Private: needs YouTube's audit",
+  "upload.readyWaiting": "Ready: waiting to go public",
+  "upload.lockedNote": "YouTube keeps it private until your Google project passes YouTube's audit.",
+  "upload.guide": "See the YouTube guide.",
 
   // a YouTube video's own fields: the editor and what the approval covers
   "yt.title": "Title",

@@ -42,7 +42,7 @@ const item = async (key: string) =>
   (await (await call(`/app-api/item?key=${encodeURIComponent(key)}`)).json()) as {
     problems: string[];
     approved: { matches: boolean } | null;
-    youtube: { texts: unknown; settings: unknown; subtitles: unknown[]; thumbnail: string | null };
+    youtube: { texts: unknown; settings: unknown; channel: unknown; subtitles: unknown[]; thumbnail: string | null };
   };
 const row = (key: string) =>
   env.DB.prepare("SELECT * FROM plan_items WHERE item_key = ?1")
@@ -152,6 +152,29 @@ describe("scheduling a draft to a YouTube channel", () => {
     expect((await schedule()).status).toBe(400);
   });
 
+  it("a video draft with subtitles can't be scheduled to Instagram", async () => {
+    await seedDraft("d_video", { texts: null });
+    const r = await schedule({ account: "demo_travel", caption: "A caption" });
+    expect(r.status).toBe(400);
+    expect((await json(r)).error).toBe(
+      "Instagram takes the video alone: remove the subtitle and thumbnail files, or schedule it to a YouTube channel",
+    );
+    expect(await row("reel:drafts/clip")).toBeNull();
+  });
+
+  it("approval flags a multi-file Instagram video", async () => {
+    const clip = w.drivePut("UPLOADS/_uploads/ig.mp4", { md5: MD5, mimeType: "video/mp4" });
+    const sub = w.drivePut("UPLOADS/_uploads/es.srt", { md5: "b".repeat(32), mimeType: "application/x-subrip" });
+    await env.DB.prepare(
+      "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id, content, caption, media) VALUES ('reel:x/ig2', 'video', 'demo_travel', 'x', 'ig2', 1893456000, '{}', 0, 1, 0, 0, 'default', 'db', 'A caption', ?1)",
+    )
+      .bind(JSON.stringify([clip, sub].map((id) => ({ store: "drive", id }))))
+      .run();
+    expect((await item("reel:x/ig2")).problems).toContain(
+      "Instagram takes the video alone: remove the subtitle and thumbnail files, or schedule it to a YouTube channel",
+    );
+  });
+
   it("the drafts list returns texts and offers the channels", async () => {
     await seedDraft();
     const d = (await json(await call("/app-api/drafts"))) as {
@@ -218,6 +241,8 @@ describe("editing a YouTube video in the app", () => {
       settings: { madeForKids: true, privacy: "public", category: "10" },
     });
     expect((await item(key)).youtube.settings).toEqual({ madeForKids: true, privacy: "public", category: "10" });
+    // the channel's own defaults come along, so the form can set a value back to them (null)
+    expect((await item(key)).youtube.channel).toEqual({ madeForKids: false, privacy: "public", category: "22" });
   });
 
   it("a caption edit leaves the texts alone, and a description may be long", async () => {

@@ -22,6 +22,7 @@ import { assertOwns, MediaError } from "@bongsu/core/media/owns";
 import { platform } from "@bongsu/core/platforms/index";
 import { type Format, OptionsError, type Platform, validateOptions } from "@bongsu/core/platforms/types";
 import { workspaceSettings } from "@bongsu/core/workspaces";
+import { videoAlone } from "./approve";
 
 export class ScheduleError extends Error {
   constructor(
@@ -119,6 +120,9 @@ export async function scheduleDraft(
   const tube = plat.id === "youtube";
   if (tube && d.kind !== "reel") throw new ScheduleError(400, `${plat.name} takes a video draft`);
   if (!tube && media.length > 10) throw new ScheduleError(400, "a carousel takes 10 media at most");
+  // a video draft with its subtitle files and thumbnail is a YouTube video: elsewhere the first file would go out as
+  // the Reel, and that may be the .srt or the .jpg
+  if (!tube && d.kind === "reel" && media.length > 1) throw new ScheduleError(400, videoAlone(plat.name));
   if (tube && b.format === "story") throw new ScheduleError(400, `${plat.name} has no Stories`);
   // The video's own texts: the body's, else the draft's. Instagram refuses them (checkTexts says so).
   const texts = checked(plat, "texts" in b ? b.texts : parseTexts(d.texts));

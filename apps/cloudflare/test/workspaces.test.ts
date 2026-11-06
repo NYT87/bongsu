@@ -173,6 +173,16 @@ describe("an agent key in workspace B", () => {
     expect(await app("/app-api/item/youtube", { key, privacy: "unlisted" })).toBe(404);
     expect(await app("/app-api/item/texts", { key, caption: "Taken", texts: { title: "Taken over" } })).toBe(404);
     expect(await app("/app-api/drafts/d_yt_a/schedule", { date: "2026-11-02", time: "18:00" })).toBe(404);
+    // the drafts page offers B's accounts only: A's channel isn't among them
+    const drafts = (await (
+      await appRoutes(w.fetch).request(
+        "https://bongsu.test/app-api/drafts",
+        { headers: { Cookie: `bongsu_session=${token}` } },
+        e,
+      )
+    ).json()) as { accounts: string[]; accountInfo: Record<string, unknown> };
+    expect(Object.keys(drafts.accountInfo)).toEqual(drafts.accounts);
+    expect(drafts.accountInfo).not.toHaveProperty("main");
     const r = await env.DB.prepare("SELECT options, caption, texts FROM plan_items WHERE item_key = ?1")
       .bind(key)
       .first();

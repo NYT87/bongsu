@@ -73,6 +73,8 @@ export interface Resolved {
     /** Each file's role by id (`video:<id>`…): what the approval binds the file names to. */
     roles: string[];
     settings: YouTubeSettings;
+    /** The channel's own defaults (no post option): the app sets a setting back to one as null. */
+    channel: YouTubeSettings;
   } | null;
   approved: { at: string; matches: boolean; commentsOnly?: boolean; by: string | null } | null; // commentsOnly: just the comments differ
   problems: string[]; // anything that blocks approval
@@ -96,6 +98,10 @@ export interface Snapshot {
 /** An item of the workspace, with its texts and media checked for approving (null: not one of its items); `tz` is the
  *  viewer's zone, for showing its time. A Shorts comment ("comment:<video id>") resolves the same way: its text is the
  *  caption, there's no media and no time (it goes out once the video is public). */
+/** Why a video with other files beside it can't go out on a platform that takes the video alone (Instagram). */
+export const videoAlone = (name: string) =>
+  `${name} takes the video alone: remove the subtitle and thumbnail files, or schedule it to a YouTube channel`;
+
 export async function resolveItem(
   env: Env,
   fetcher: typeof fetch,
@@ -210,8 +216,11 @@ export async function resolveItem(
       thumbnail: roles?.thumbnail?.name ?? null,
       roles: roles ? roleKeys(roles) : [],
       settings: youtubeSettings(itemOptions(i), acc.settings),
+      channel: youtubeSettings({}, acc.settings),
     };
   }
+  // a Reel is its one video: the files after it would be ignored, or worse, a subtitle file would go out first
+  if (!yt && plat && db && i.format === "video" && files.length > 1) problems.push(videoAlone(plat.name));
   if (!yt && (db ? files.length > 0 : !!node) && !paths.single && !(files.length >= 1 && files.length <= mediaMax))
     problems.push(`${paths.media} has ${files.length} media files (1–${mediaMax})`);
   if (files.some((f) => !f.checksum))

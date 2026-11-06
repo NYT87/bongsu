@@ -140,6 +140,7 @@ describe("approving a YouTube video", () => {
       subtitles: [{ lang: "es", name: "es.srt" }],
       thumbnail: "thumbnail.jpg",
       settings: { madeForKids: false, privacy: "public", category: "22" },
+      channel: { madeForKids: false, privacy: "public", category: "22" },
     });
   });
 

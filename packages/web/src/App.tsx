@@ -35,6 +35,7 @@ import {
 import { type ChartSeries, LineChart } from "./Chart";
 import { dateLocale, type Key, setLocale, t } from "./i18n";
 import { takeWorkspaceParam } from "./workspace-link";
+import { changedSettings } from "./youtube-form";
 
 type Me = {
   signedIn: boolean;
@@ -1914,7 +1915,7 @@ function ItemPage({
           )}
         </div>
       )}
-      {!item.published && item.progress && <UploadLine p={item.progress} />}
+      {!item.published && item.progress && <UploadLine p={item.progress} again={!!item.failed?.again} />}
       {item.trial && item.published && (item.trial.on || item.trial.state !== "planned") && (
         <div className="card published">
           <p className="small">
@@ -2011,7 +2012,7 @@ function ItemPage({
                 const { alt: _alt, ...words } = texts;
                 await api("item/texts", { key: keyId, ...words, texts: ytTexts(edited.texts) });
                 // the settings aren't part of the approval: saved on their own, after the texts
-                const changed = changedSettings(edited.settings, yt.settings);
+                const changed = changedSettings(edited.settings, yt.settings, yt.channel);
                 if (Object.keys(changed).length)
                   try {
                     await api("item/youtube", { key: keyId, ...changed });
@@ -2056,7 +2057,7 @@ function ItemPage({
           ))}
       </div>
 
-      {item.failed && !item.posted && !done && (
+      {item.failed && !item.posted && !done && item.progress?.phase !== "locked" && (
         <p className="notice bad" role="status">
           {item.failed.error ? t("item.failedWith", { error: item.failed.error }) : t("item.failed")}{" "}
           {item.failed.again
@@ -3365,13 +3366,6 @@ function ytTexts(x: YouTubeTexts): YouTubeTexts {
   return out;
 }
 
-/** The settings that differ from where the form started: what to send (the rest keeps the channel's default). */
-function changedSettings(now: YouTubeSettings, start: YouTubeSettings): Partial<YouTubeSettings> {
-  return Object.fromEntries(
-    (Object.keys(now) as (keyof YouTubeSettings)[]).filter((k) => now[k] !== start[k]).map((k) => [k, now[k]]),
-  );
-}
-
 /** What stops the form saving (the server would refuse it); an empty title only stops approving. */
 function ytBlocked(x: YouTubeTexts): boolean {
   const bad = (c?: string) => !!c && !LANG.test(c.trim());
@@ -3692,13 +3686,14 @@ function YtSummary({ yt, files }: { yt: NonNullable<Item["youtube"]>; files: YtF
   );
 }
 
-/** The upload's phase on the item page: uploading (with how far), adding subtitles, processing, ready, or locked. */
-function UploadLine({ p }: { p: NonNullable<UploadProgress> }) {
+/** The upload's phase on the item page: uploading (with how far), adding subtitles, processing, ready, or locked.
+ *  `again`: a locked job starts over on a new approval (the failed notice isn't shown beside this card). */
+function UploadLine({ p, again }: { p: NonNullable<UploadProgress>; again?: boolean }) {
   const text =
     p.phase === "uploading"
       ? t("upload.uploading", { percent: p.percent })
       : p.phase === "ready"
-        ? t("upload.ready", { time: `${zoneClock(p.at * 1000)} ${zoneLabel()}` })
+        ? readyText(p.at)
         : t(`upload.${p.phase}`);
   const tone = p.phase === "ready" ? " ok" : p.phase === "locked" ? " bad" : "";
   return (
@@ -3707,8 +3702,35 @@ function UploadLine({ p }: { p: NonNullable<UploadProgress> }) {
         <span className={`pill${tone}`}>{t("upload.progress")}</span> {text}
       </p>
       {p.phase === "uploading" && <progress className="upload-bar" max={100} value={p.percent} aria-hidden="true" />}
+      {p.phase === "locked" && (
+        <p className="small">
+          {t("upload.lockedNote")}{" "}
+          <a href="/dashboard/docs/youtube" target="_blank" rel="noopener">
+            {t("upload.guide")}
+          </a>
+          {again ? ` ${t("item.failedAgain")}` : ""}
+        </p>
+      )}
     </div>
   );
+}
+
+/** "Ready: goes public at 18:00 GMT+9" today, with the day otherwise; once the time has passed it only waits (the
+ *  next run publishes it, or a paused workspace holds it), so it names no time it can't keep. */
+function readyText(at: number): string {
+  const ms = at * 1000;
+  if (ms <= Date.now()) return t("upload.readyWaiting");
+  const p = zoneParts(ms);
+  const date = `${p.year}-${p.month}-${p.day}`;
+  const time = `${zoneClock(ms)} ${zoneLabel()}`;
+  return t("upload.ready", { time: date === zoneToday() ? time : `${dayName(date)} ${time}` });
+}
+
+/** A draft's previews as media: a YouTube video's subtitle files and thumbnail aren't slides (the item page shows
+ *  only the video too); a lone thumbnail.jpg of a photo post stays. */
+function shownPreviews<T extends { name: string; mime: string }>(list: T[]): T[] {
+  const extras = videoWithExtras(list);
+  return list.filter((m) => !isSubtitle(m.name) && !(extras && THUMBNAIL.test(m.name)));
 }
 
 /** Caption / self-comment / alt texts (posts only), as they'll be published; a YouTube video's title, settings,
@@ -3892,7 +3914,11 @@ function ScheduleForm({
             time,
             name,
             ...(yt && start
-              ? { ...words, texts: ytTexts(yt.texts), options: changedSettings(yt.settings, start.settings) }
+              ? {
+                  ...words,
+                  texts: ytTexts(yt.texts),
+                  options: changedSettings(yt.settings, start.settings, channel ?? start.settings),
+                }
               : story
                 ? { format: "story" }
                 : texts),
@@ -4432,23 +4458,21 @@ function DraftsPage() {
               </span>
             </div>
             {d.previews && (
-              <div className={d.previews.filter((m) => !isSubtitle(m.name)).length > 1 ? "media carousel" : "media"}>
-                {d.previews
-                  .filter((m) => !isSubtitle(m.name))
-                  .map((m) =>
-                    m.mime.startsWith("video/") ? (
-                      <video
-                        key={m.url}
-                        src={`${m.url}#t=0.1`}
-                        controls
-                        playsInline
-                        preload="metadata"
-                        aria-label={t("drafts.video", { name: m.name })}
-                      />
-                    ) : (
-                      <img key={m.url} src={m.url} alt={m.name} loading="lazy" />
-                    ),
-                  )}
+              <div className={shownPreviews(d.previews).length > 1 ? "media carousel" : "media"}>
+                {shownPreviews(d.previews).map((m) =>
+                  m.mime.startsWith("video/") ? (
+                    <video
+                      key={m.url}
+                      src={`${m.url}#t=0.1`}
+                      controls
+                      playsInline
+                      preload="metadata"
+                      aria-label={t("drafts.video", { name: m.name })}
+                    />
+                  ) : (
+                    <img key={m.url} src={m.url} alt={m.name} loading="lazy" />
+                  ),
+                )}
               </div>
             )}
             {d.previews?.some((m) => isSubtitle(m.name)) && (
