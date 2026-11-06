@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { cleanMedia } from "@bongsu/core/cleanup";
-import { nextWorkspaces, scanInbox } from "@bongsu/core/inbox";
+import { inboxTexts, nextWorkspaces, scanInbox } from "@bongsu/core/inbox";
 import { saveStore } from "@bongsu/core/media/manage";
 import { createWorkspace } from "@bongsu/core/people";
 import { workspaceSettings } from "@bongsu/core/workspaces";
@@ -165,6 +165,93 @@ describe("the Drive inbox", () => {
     const { d } = await yt();
     expect(d.results[0].texts).toBeNull();
     expect(d.results[0].kind).toBe("reel");
+  });
+
+  /** A folder of a video with a caption, a title and `langs` complete translations: 1 + 1 + 2 * langs reads. */
+  const heavy = (project: string, name: string, langs: string[]) => {
+    const P = `UPLOADS/inbox/${project}/${name}`;
+    w.drivePut(`${P}/clip.mp4`, { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    txt(`${P}/caption.txt`, "About");
+    txt(`${P}/title.txt`, "Title");
+    for (const l of langs) {
+      txt(`${P}/caption.${l}.txt`, `About ${l}`);
+      txt(`${P}/title.${l}.txt`, `Title ${l}`);
+    }
+  };
+  const FIVE = ["de", "es", "fr", "it", "pt"];
+
+  it("keeps its store reads inside the run's budget, leaving the rest for the next run", async () => {
+    for (const n of ["a1", "a2", "a3", "a4"]) heavy("demo", n, FIVE);
+    const first = await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
+    expect(first.drafted).toEqual(["demo/a1", "demo/a2"]);
+    expect(first.waiting).toBe(2);
+    const second = await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
+    expect(second.drafted).toEqual(["demo/a3", "demo/a4"]);
+  });
+
+  it("always drafts the run's first item, however heavy", async () => {
+    heavy("demo", "b1", [...FIVE, "ja", "ko", "nl"]);
+    const r = await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
+    expect(r.drafted).toEqual(["demo/b1"]);
+  });
+
+  it("notifies of the drafts made so far when a later item fails", async () => {
+    heavy("demo", "c1", ["es"]);
+    heavy("demo", "c2", ["es"]);
+    const bad = w.drivePut("UPLOADS/inbox/demo/c2/title.txt", { md5: "q", mimeType: "text/plain", modified: OLD });
+    const broken: typeof fetch = (input, init) => {
+      const url = new Request(input, init).url;
+      return url.includes(bad) && url.includes("alt=media")
+        ? Promise.resolve(new Response("boom", { status: 500 }))
+        : w.fetch(input, init);
+    };
+    await expect(scanInbox(await testEnv(env), { fetch: broken, now: NOW })).rejects.toThrow();
+    expect((await drafts()).map((d) => d.payload.title)).toEqual(["demo/c1"]);
+    expect(w.notifications.at(-1)).toMatchObject({ title: expect.stringMatching(/new draft/) });
+  });
+
+  it("says when it read only the first five translations", async () => {
+    heavy("demo", "d1", [...FIVE, "ja"]);
+    const { d } = await yt();
+    expect(Object.keys(JSON.parse(d.results[0].texts as string).translations)).toEqual(["de", "es", "fr", "it", "ja"]);
+    expect(JSON.parse(d.results[0].payload).note).toMatch(/only the first 5 translations were read/);
+  });
+
+  it("skips texts YouTube would refuse and says why", async () => {
+    const P = "UPLOADS/inbox/demo/e1";
+    w.drivePut(`${P}/clip.mp4`, { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    txt(`${P}/title.txt`, "x".repeat(101));
+    const { d } = await yt();
+    expect(d.results[0].texts).toBeNull();
+    expect(JSON.parse(d.results[0].payload).note).toMatch(/YouTube texts skipped/);
+  });
+
+  it("leaves a carousel's media as before: subtitles and a thumbnail don't change it", async () => {
+    const P = "UPLOADS/inbox/demo/f1";
+    w.drivePut(`${P}/1.jpg`, { md5: "a", mimeType: "image/jpeg", modified: OLD });
+    w.drivePut(`${P}/2.jpg`, { md5: "b", mimeType: "image/jpeg", modified: OLD });
+    w.drivePut(`${P}/thumbnail.jpg`, { md5: "c", mimeType: "image/jpeg", modified: OLD });
+    w.drivePut(`${P}/en.vtt`, { md5: "d", mimeType: "text/vtt", modified: OLD });
+    const { d } = await yt();
+    expect(d.results[0].kind).toBe("carousel");
+    expect(JSON.parse(d.results[0].payload).files.map((f: { name: string }) => f.name)).toEqual([
+      "1.jpg",
+      "2.jpg",
+      "thumbnail.jpg",
+    ]);
+  });
+
+  it("inboxTexts maps title and translation files", () => {
+    const f = (name: string, text: string) => ({ name, text });
+    expect(inboxTexts([f("caption.txt", "c")], null)).toBeNull();
+    expect(inboxTexts([f("title.txt", " T ")], null)).toEqual({ title: "T" });
+    expect(inboxTexts([f("title.es.txt", "t"), f("caption.es.txt", "c")], null)).toEqual({
+      title: "",
+      translations: { es: { title: "t", description: "c" } },
+    });
+    expect(inboxTexts([f("title.es.txt", "t")], null)).toBeNull();
+    expect(inboxTexts([f("clip.title.txt", "T"), f("title.txt", "no")], "clip")).toEqual({ title: "T" });
+    expect(inboxTexts([f("title.txt", "T"), f("title.es.txt", "t"), f("caption.es.txt", "c")], "clip")).toBeNull();
   });
 
   it("drafts into the workspace whose folder it is in, whatever other workspaces plan", async () => {

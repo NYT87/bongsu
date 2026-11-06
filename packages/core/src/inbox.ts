@@ -48,30 +48,42 @@ interface Item {
   /** The YouTube title and translation files (text, not media); `stem` is the video's name for a single file. */
   titles: MediaEntry[];
   stem: string | null;
+  /** More translation languages were there than are read. */
+  capped: boolean;
 }
 
-/** Languages whose translation files are read per item: each costs two reads, and a run has 50 subrequests. */
+/** Languages whose translation files are read per item: each costs two store reads. */
 const MAX_TRANSLATIONS = 5;
+/** Store reads (lists and file reads) a run makes at most. The free plan allows 50 subrequests per invocation and the
+ *  run's other calls (settings, the notification, the media-store token) need room, so this stays well under. */
+export const INBOX_READ_BUDGET = 30;
 
 const isSubtitle = (n: string) => {
   const m = SUBTITLE.exec(n);
   return !!m && LANG.test(m[1]);
 };
-/** The files that make a folder's media besides images and videos. */
-const isYouTubeMedia = (e: MediaEntry) => isMedia(e) || isSubtitle(e.name);
 
 const TEXT_FILE = /^(caption|title)\.([^.]+(?:\.[^.]+)*)\.txt$/;
+/** The language code in a translation file's name, or "" when it isn't one. */
+const langOf = (n: string) => {
+  const c = TEXT_FILE.exec(n)?.[2] ?? "";
+  return LANG.test(c) ? c : "";
+};
 
-/** The title and translation files of an item: title.txt (or <stem>.title.txt) and the caption.<lang>.txt / title.<lang>.txt
- *  pairs, as the names the texts are read by. */
-export function inboxTextFiles<T extends { name: string }>(files: T[], stem: string | null): T[] {
+/** The title and translation files of an item: title.txt (or <stem>.title.txt) and the first MAX_TRANSLATIONS
+ *  caption.<lang>.txt / title.<lang>.txt pairs (only in a folder); `capped` says more languages were left out. */
+export function inboxTextFiles<T extends { name: string }>(
+  files: T[],
+  stem: string | null,
+): { files: T[]; capped: boolean } {
   const own = stem === null ? "title.txt" : `${stem}.title.txt`;
-  const codes = [...new Set(files.filter((f) => stem === null && LANG.test(lang(f.name))).map((f) => lang(f.name)))]
-    .sort()
-    .slice(0, MAX_TRANSLATIONS);
-  return files.filter((f) => f.name === own || (stem === null && codes.includes(lang(f.name))));
+  const all = [...new Set(files.filter((f) => stem === null).map((f) => langOf(f.name)))].filter(Boolean).sort();
+  const codes = all.slice(0, MAX_TRANSLATIONS);
+  return {
+    files: files.filter((f) => f.name === own || (stem === null && codes.includes(langOf(f.name)))),
+    capped: all.length > MAX_TRANSLATIONS,
+  };
 }
-const lang = (n: string) => TEXT_FILE.exec(n)?.[2] ?? "";
 
 /** A video's YouTube texts from its text files. null when there is no title or translation file; a translation
  *  needs both of its files, so a lone half is left out (`partial` names it). */
@@ -84,7 +96,7 @@ function readTexts(files: { name: string; text: string }[], stem: string | null)
   const title = files.find((f) => f.name === own)?.text.trim();
   const translations: Record<string, { title: string; description: string }> = {};
   const partial: string[] = [];
-  for (const code of new Set(files.map((f) => (stem === null ? lang(f.name) : "")).filter(Boolean))) {
+  for (const code of new Set(files.map((f) => (stem === null ? langOf(f.name) : "")).filter(Boolean))) {
     const t = files.find((f) => f.name === `title.${code}.txt`);
     const c = files.find((f) => f.name === `caption.${code}.txt`);
     if (t && c) translations[code] = { title: t.text.trim(), description: c.text.trim() };
@@ -154,9 +166,16 @@ async function inboxId(env: Env, store: MediaStore, folder: string): Promise<str
 }
 
 /** What's waiting in one store's inbox: a Reel or photo per media file, a post per folder. */
-async function inboxItems(store: MediaStore, workspaceId: string, root: string): Promise<Item[]> {
+async function inboxItems(
+  store: MediaStore,
+  workspaceId: string,
+  root: string,
+  reads: { used: number },
+): Promise<Item[]> {
   const items: Item[] = [];
+  reads.used++;
   for (const proj of (await store.list(root)).filter((f) => f.folder && !f.name.startsWith("_"))) {
+    reads.used++;
     const kids = await store.list(proj.id);
     for (const f of kids.filter((k) => isMedia(k))) {
       const s = stem(f.name);
@@ -174,23 +193,33 @@ async function inboxItems(store: MediaStore, workspaceId: string, root: string):
           comment2: t(`${s}.comment2.txt`),
           alt: undefined,
         },
-        titles: inboxTextFiles(kids, s),
+        titles: inboxTextFiles(kids, s).files,
         stem: s,
+        capped: false,
       });
     }
     for (const dir of kids.filter((k) => k.folder && !k.name.startsWith("_"))) {
+      reads.used++;
       const inner = await store.list(dir.id);
       const t = (n: string) => inner.find((k) => k.name === n);
+      const images = inner.filter((k) => isMedia(k));
+      // subtitles and a thumbnail belong to a folder of exactly one video; anything else is a post as before
+      const one = images.filter((k) => !THUMBNAIL.test(k.name)).length === 1 && images.some((k) => isVideo(k));
+      const media = (one ? [...images, ...inner.filter((k) => isSubtitle(k.name))] : images).sort((a, b) =>
+        a.name.localeCompare(b.name),
+      );
+      const text = inboxTextFiles(inner, null);
       items.push({
         workspaceId,
         store,
         key: dir.id,
         project: proj.name,
         name: dir.name,
-        media: inner.filter((k) => isYouTubeMedia(k)).sort((a, b) => a.name.localeCompare(b.name)),
+        media,
         texts: { caption: t("caption.txt"), comment: t("comment.txt"), comment2: t("comment2.txt"), alt: t("alt.txt") },
-        titles: inboxTextFiles(inner, null),
+        titles: text.files,
         stem: null,
+        capped: text.capped,
       });
     }
   }
@@ -233,6 +262,7 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
   const items: Item[] = [];
   const stores = new Map<string, MediaStore>();
   let inboxes = 0;
+  const reads = { used: 0 };
   const failed: string[] = [];
   for (const workspaceId of reached) {
     const folder = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
@@ -244,7 +274,7 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
         if (!root) continue;
         inboxes++;
         stores.set(store.id, store);
-        items.push(...(await inboxItems(store, workspaceId, root)));
+        items.push(...(await inboxItems(store, workspaceId, root, reads)));
       } catch (e) {
         failed.push(`${workspaceId}/${store.id}: ${(e as Error).message.slice(0, 200)}`);
       }
@@ -287,7 +317,24 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
     if (!firsts.has(ws)) firsts.set(ws, (await instagramAccounts(env.DB, ws))[0]?.id ?? "");
     return firsts.get(ws) as string;
   };
-  for (const i of ready) {
+  // sent even when a later item throws (a store failing midway): the drafts already made still get announced
+  try {
+    for (const i of ready) {
+      // what reading this item's texts will cost, from the names already listed; the run's first item always goes, so
+      // one heavy item can't stall the inbox, the ones after it wait for the next run
+      const cost = Object.values(i.texts).filter(Boolean).length + i.titles.length;
+      if (drafted.length && reads.used + cost > INBOX_READ_BUDGET) break;
+      reads.used += cost;
+      await draftItem(i);
+    }
+  } finally {
+    const note = notifier(env, deps.fetch, nowS);
+    for (const ws of new Set(drafted.map((d) => d.workspaceId)))
+      await note.send(newDrafts(drafted.filter((d) => d.workspaceId === ws).map((d) => d.title)), ws);
+  }
+  return run({ drafted: drafted.map((d) => d.title), waiting: fresh.length - drafted.length });
+
+  async function draftItem(i: Item) {
     const store = i.store;
     const account = await accountOf(env.DB, i.project, i.workspaceId);
     const video = i.media.some((m) => isVideo(m));
@@ -299,6 +346,7 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
     const read = await Promise.all(i.titles.map(async (f) => ({ name: f.name, text: await store.readText(f.id) })));
     const { texts, partial } = readTexts(read, i.stem);
     const notes: string[] = [];
+    if (i.capped) notes.push(`only the first ${MAX_TRANSLATIONS} translations were read`);
     if (partial.length)
       notes.push(`${partial.map((c) => `${c}: needs both caption.${c}.txt and title.${c}.txt`).join("; ")}`);
     let checked: YouTubeTexts | null = null;
@@ -344,9 +392,4 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
     ]);
     drafted.push({ title: `${i.project}/${i.name}`, workspaceId: i.workspaceId });
   }
-  // each workspace hears of its own drafts
-  const note = notifier(env, deps.fetch, nowS);
-  for (const ws of new Set(drafted.map((d) => d.workspaceId)))
-    await note.send(newDrafts(drafted.filter((d) => d.workspaceId === ws).map((d) => d.title)), ws);
-  return run({ drafted: drafted.map((d) => d.title), waiting: fresh.length - drafted.length });
 }
