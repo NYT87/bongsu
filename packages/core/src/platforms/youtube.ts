@@ -55,8 +55,8 @@ export interface MediaRoles<T> {
 
 export class MediaRolesError extends Error {}
 
-const SUBTITLE = /^(.+)\.(srt|vtt)$/;
-const THUMBNAIL = /^thumbnail\.(jpg|png)$/;
+export const SUBTITLE = /^(.+)\.(srt|vtt)$/;
+export const THUMBNAIL = /^thumbnail\.(jpg|png)$/;
 
 /** Tells the files of a YouTube item apart by name: the video, `<lang>.srt|vtt` subtitles, `thumbnail.jpg|png`. */
 export function mediaRoles<T>(entries: RoleEntry<T>[]): MediaRoles<T> {

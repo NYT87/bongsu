@@ -106,6 +106,67 @@ describe("the Drive inbox", () => {
     ]);
   });
 
+  const yt = async () => {
+    const r = await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
+    return {
+      r,
+      d: await env.DB.prepare("SELECT kind, payload, texts FROM drafts").all<{
+        kind: string;
+        payload: string;
+        texts: string | null;
+      }>(),
+    };
+  };
+  const txt = (path: string, bytes: string) =>
+    w.drivePut(path, { md5: "x" + path, mimeType: "text/plain", bytes, modified: OLD });
+
+  it("a YouTube folder becomes a draft with its title, translations, subtitles and thumbnail", async () => {
+    const P = "UPLOADS/inbox/demo/clip1";
+    w.drivePut(`${P}/clip.mp4`, { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    txt(`${P}/caption.txt`, "About the clip");
+    txt(`${P}/title.txt`, "The clip");
+    txt(`${P}/caption.es.txt`, "Sobre el clip");
+    txt(`${P}/title.es.txt`, "El clip");
+    w.drivePut(`${P}/es.srt`, { md5: "s", mimeType: "application/x-subrip", modified: OLD });
+    w.drivePut(`${P}/thumbnail.jpg`, { md5: "j", mimeType: "image/jpeg", modified: OLD });
+    const { d } = await yt();
+    expect(d.results).toHaveLength(1);
+    expect(d.results[0].kind).toBe("reel");
+    expect(JSON.parse(d.results[0].texts as string)).toEqual({
+      title: "The clip",
+      translations: { es: { title: "El clip", description: "Sobre el clip" } },
+    });
+    const p = JSON.parse(d.results[0].payload);
+    expect(p.media).toHaveLength(3);
+    expect(p.caption).toBe("About the clip");
+  });
+
+  it("a translation needs both files", async () => {
+    const P = "UPLOADS/inbox/demo/clip2";
+    w.drivePut(`${P}/clip.mp4`, { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    txt(`${P}/title.es.txt`, "El clip");
+    const { d } = await yt();
+    expect(d.results[0].texts).toBeNull();
+    expect(JSON.parse(d.results[0].payload).note).toMatch(/es: needs both caption\.es\.txt and title\.es\.txt/);
+  });
+
+  it("a single video takes its title file", async () => {
+    const P = "UPLOADS/inbox/demo";
+    w.drivePut(`${P}/clip.mp4`, { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    txt(`${P}/clip.title.txt`, "Just the title");
+    txt(`${P}/other.title.txt`, "Not mine");
+    const { d } = await yt();
+    expect(JSON.parse(d.results[0].texts as string)).toEqual({ title: "Just the title" });
+  });
+
+  it("an Instagram project is unchanged", async () => {
+    w.drivePut("UPLOADS/inbox/demo/reel.mp4", { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    txt("UPLOADS/inbox/demo/reel.txt", "Hi");
+    const { d } = await yt();
+    expect(d.results[0].texts).toBeNull();
+    expect(d.results[0].kind).toBe("reel");
+  });
+
   it("drafts into the workspace whose folder it is in, whatever other workspaces plan", async () => {
     const e = await testEnv(env);
     await workspace("b");

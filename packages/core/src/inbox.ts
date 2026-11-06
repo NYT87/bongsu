@@ -9,6 +9,9 @@
 //   inbox/<project>/<post>/*.jpg|*.mp4      a carousel draft, or a photo with one image (+ caption.txt,
 //                                           comment.txt, comment2.txt, alt.txt), like a project's posts/<post>/
 //
+// A YouTube video also takes title.txt (or <name>.title.txt beside a single file), caption.<lang>.txt + title.<lang>.txt
+// pairs (translations) and, in a folder, <lang>.srt|.vtt subtitles and thumbnail.jpg|png: they stay with the video.
+//
 // The repo's naming, so a draft maps onto the queue later. Folders starting with "_" are skipped (_posted/, _uploads/). An item
 // waits until the store has its checksum and nothing in it changed for SETTLE_S, so a caption uploaded a minute after the
 // video still makes it in. Each item makes one draft only (inbox_seen), even if the draft is refused.
@@ -17,10 +20,13 @@ import { instagramAccounts } from "./accounts";
 import { INBOX_WORKSPACES_PER_RUN, INBOX_WORKSPACES_PER_RUN_MAX } from "./constants";
 import type { Db } from "./db";
 import type { Env } from "./env";
+import { checkTexts, LANG, type YouTubeTexts } from "./formats/youtube-texts";
 import { mediaPath } from "./media/folders";
 import { mediaStores } from "./media/index";
 import { isMedia, isVideo, type MediaEntry, type MediaStore } from "./media/store";
 import { notifier } from "./notify";
+import { platform } from "./platforms/index";
+import { SUBTITLE, THUMBNAIL } from "./platforms/youtube";
 import { jsonList } from "./sql";
 import { newDrafts } from "./texts/notifications";
 import { workspaceSettings } from "./workspaces";
@@ -39,6 +45,59 @@ interface Item {
   name: string;
   media: MediaEntry[];
   texts: Record<"caption" | "comment" | "comment2" | "alt", MediaEntry | undefined>;
+  /** The YouTube title and translation files (text, not media); `stem` is the video's name for a single file. */
+  titles: MediaEntry[];
+  stem: string | null;
+}
+
+/** Languages whose translation files are read per item: each costs two reads, and a run has 50 subrequests. */
+const MAX_TRANSLATIONS = 5;
+
+const isSubtitle = (n: string) => {
+  const m = SUBTITLE.exec(n);
+  return !!m && LANG.test(m[1]);
+};
+/** The files that make a folder's media besides images and videos. */
+const isYouTubeMedia = (e: MediaEntry) => isMedia(e) || isSubtitle(e.name);
+
+const TEXT_FILE = /^(caption|title)\.([^.]+(?:\.[^.]+)*)\.txt$/;
+
+/** The title and translation files of an item: title.txt (or <stem>.title.txt) and the caption.<lang>.txt / title.<lang>.txt
+ *  pairs, as the names the texts are read by. */
+export function inboxTextFiles<T extends { name: string }>(files: T[], stem: string | null): T[] {
+  const own = stem === null ? "title.txt" : `${stem}.title.txt`;
+  const codes = [...new Set(files.filter((f) => stem === null && LANG.test(lang(f.name))).map((f) => lang(f.name)))]
+    .sort()
+    .slice(0, MAX_TRANSLATIONS);
+  return files.filter((f) => f.name === own || (stem === null && codes.includes(lang(f.name))));
+}
+const lang = (n: string) => TEXT_FILE.exec(n)?.[2] ?? "";
+
+/** A video's YouTube texts from its text files. null when there is no title or translation file; a translation
+ *  needs both of its files, so a lone half is left out (`partial` names it). */
+export function inboxTexts(files: { name: string; text: string }[], stem: string | null): YouTubeTexts | null {
+  return readTexts(files, stem).texts;
+}
+
+function readTexts(files: { name: string; text: string }[], stem: string | null) {
+  const own = stem === null ? "title.txt" : `${stem}.title.txt`;
+  const title = files.find((f) => f.name === own)?.text.trim();
+  const translations: Record<string, { title: string; description: string }> = {};
+  const partial: string[] = [];
+  for (const code of new Set(files.map((f) => (stem === null ? lang(f.name) : "")).filter(Boolean))) {
+    const t = files.find((f) => f.name === `title.${code}.txt`);
+    const c = files.find((f) => f.name === `caption.${code}.txt`);
+    if (t && c) translations[code] = { title: t.text.trim(), description: c.text.trim() };
+    else partial.push(code);
+  }
+  const any = title !== undefined || Object.keys(translations).length > 0;
+  const texts: YouTubeTexts | null = any
+    ? {
+        title: title ?? "",
+        ...(Object.keys(translations).length ? { translations } : {}),
+      }
+    : null;
+  return { texts, partial };
 }
 
 const unix = (t?: string) => (t ? Math.floor(Date.parse(t) / 1000) : 0);
@@ -115,6 +174,8 @@ async function inboxItems(store: MediaStore, workspaceId: string, root: string):
           comment2: t(`${s}.comment2.txt`),
           alt: undefined,
         },
+        titles: inboxTextFiles(kids, s),
+        stem: s,
       });
     }
     for (const dir of kids.filter((k) => k.folder && !k.name.startsWith("_"))) {
@@ -126,8 +187,10 @@ async function inboxItems(store: MediaStore, workspaceId: string, root: string):
         key: dir.id,
         project: proj.name,
         name: dir.name,
-        media: inner.filter((k) => isMedia(k)).sort((a, b) => a.name.localeCompare(b.name)),
+        media: inner.filter((k) => isYouTubeMedia(k)).sort((a, b) => a.name.localeCompare(b.name)),
         texts: { caption: t("caption.txt"), comment: t("comment.txt"), comment2: t("comment2.txt"), alt: t("alt.txt") },
+        titles: inboxTextFiles(inner, null),
+        stem: null,
       });
     }
   }
@@ -204,7 +267,7 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
   }
   const fresh = items.filter((i) => !done.has(`${i.store.id}:${i.key}`) && i.media.length);
   const settled = (i: Item) => {
-    const files = [...i.media, ...Object.values(i.texts).filter((x): x is MediaEntry => !!x)];
+    const files = [...i.media, ...i.titles, ...Object.values(i.texts).filter((x): x is MediaEntry => !!x)];
     return i.media.every((m) => m.checksum) && Math.max(...files.map((f) => unix(f.modifiedAt))) <= nowS - SETTLE_S;
   };
   // each workspace reached gets its share (at least one), what one doesn't use going to the ones after it: a backlog
@@ -228,7 +291,24 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
     const store = i.store;
     const account = await accountOf(env.DB, i.project, i.workspaceId);
     const video = i.media.some((m) => isVideo(m));
-    const kind = i.media.length > 1 ? "carousel" : video ? "reel" : "photo";
+    // a video with only subtitles and a thumbnail beside it is one YouTube video, not a carousel
+    const aside = (m: MediaEntry) => isSubtitle(m.name) || THUMBNAIL.test(m.name);
+    const lone = i.media.filter((m) => !aside(m));
+    const asideOnly = lone.length === 1 && isVideo(lone[0]) && i.media.length > 1;
+    const kind = asideOnly ? "reel" : i.media.length > 1 ? "carousel" : video ? "reel" : "photo";
+    const read = await Promise.all(i.titles.map(async (f) => ({ name: f.name, text: await store.readText(f.id) })));
+    const { texts, partial } = readTexts(read, i.stem);
+    const notes: string[] = [];
+    if (partial.length)
+      notes.push(`${partial.map((c) => `${c}: needs both caption.${c}.txt and title.${c}.txt`).join("; ")}`);
+    let checked: YouTubeTexts | null = null;
+    const yt = platform("youtube");
+    if (texts && yt)
+      try {
+        checked = checkTexts(yt, texts);
+      } catch (e) {
+        notes.push(`YouTube texts skipped: ${(e as Error).message}`);
+      }
     const text = async (f?: MediaEntry) => (f ? (await store.readText(f.id)).trim() : undefined);
     const payload: Record<string, unknown> = {
       title: `${i.project}/${i.name}`,
@@ -240,13 +320,14 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
       alt: await text(i.texts.alt),
       media: i.media.map((m) => ({ store: store.id, id: m.id })),
       files: i.media.map((m) => ({ store: store.id, id: m.id, name: m.name, mime: m.mime, checksum: m.checksum })),
-      ...(i.media.length > 10 ? { note: `${i.media.length} media files: a carousel takes 10 at most` } : {}),
-      ...(account ? {} : { note: `no planned items in ${i.project} yet: pick the account when scheduling it` }),
     };
+    if (i.media.length > 10 && !asideOnly) notes.push(`${i.media.length} media files: a carousel takes 10 at most`);
+    if (!account) notes.push(`no planned items in ${i.project} yet: pick the account when scheduling it`);
+    if (notes.length) payload.note = notes.join(". ");
     const id = `d_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
     await env.DB.batch([
       env.DB.prepare(
-        "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'drive', ?7, 'draft', ?5, ?5, ?6)",
+        "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id, texts) VALUES (?1, ?2, ?3, ?4, 'drive', ?7, 'draft', ?5, ?5, ?6, ?8)",
       ).bind(
         id,
         kind,
@@ -255,6 +336,7 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
         nowS,
         i.workspaceId,
         `${store.id}-inbox`,
+        checked === null ? null : JSON.stringify(checked),
       ),
       env.DB.prepare(
         "INSERT INTO inbox_seen (store, media_id, draft_id, at) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (store, media_id) DO NOTHING",
