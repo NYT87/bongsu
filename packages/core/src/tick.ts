@@ -36,8 +36,9 @@ import {
   trialFor,
 } from "./data";
 import type { Env } from "./env";
-import { type Approval, type MediaRef, sha256Hex } from "./formats/approved";
+import { type Approval, type MediaRef, sha256Hex, textsSha } from "./formats/approved";
 import { altLines, captionText, comment2Text, commentText } from "./formats/texts";
+import { parseTexts, type YouTubeTexts } from "./formats/youtube-texts";
 import { acquire, release } from "./lock";
 import { mediaUrl } from "./media";
 import { type MediaStores, mediaStores } from "./media/index";
@@ -80,12 +81,16 @@ export interface Payload {
   /** The second comment's text (posted after the first); absent on jobs queued before it existed. */
   comment2Path?: string;
   altPath?: string;
+  /** A YouTube video's texts (title, translations): the item's `texts` column. */
+  textsPath?: string;
   approvedAt?: string;
   approval?: {
     captionSha256: string;
     commentSha256: string | null;
     comment2Sha256?: string | null;
     altSha256: string | null;
+    /** sha256 of the approved YouTube texts; absent/null: the item has none. */
+    textsSha256?: string | null;
     media: MediaRef[];
   };
   children?: string[];
@@ -315,6 +320,7 @@ async function discover(c: Ctx, a: Account) {
         commentPath: paths.comment,
         comment2Path: paths.comment2,
         ...(paths.alt ? { altPath: paths.alt } : {}),
+        textsPath: paths.texts,
         ...(i.format === "story" ? { story: true } : {}),
         format: i.format ?? null,
         options: itemOptions(i),
@@ -373,6 +379,7 @@ function withApproval(cand: Candidate, a: Approval): { payload: Payload; kind: K
       commentSha256: a.commentSha256,
       comment2Sha256: a.comment2Sha256 ?? null,
       altSha256: a.altSha256,
+      textsSha256: a.textsSha256 ?? null,
       media: a.media,
     },
   };
@@ -508,7 +515,14 @@ async function verify(
   c: Ctx,
   p: Payload,
   workspaceId: string,
-): Promise<{ problem: string | null; caption: string; comment: string | null; alts: string[] }> {
+): Promise<{
+  problem: string | null;
+  caption: string;
+  comment: string | null;
+  alts: string[];
+  /** A YouTube video's texts as approved (null: the job has none). */
+  texts: YouTubeTexts | null;
+}> {
   const ap = p.approval!;
   const captionRaw = p.story ? "" : await c.read(p.captionPath); // a Story has no caption or comments
   if (captionRaw === null) {
@@ -520,20 +534,27 @@ async function verify(
       caption: "",
       comment: null,
       alts: [],
+      texts: null,
     };
   }
   const caption = captionText(captionRaw);
   const comment = p.story ? null : commentText(caption, await c.read(p.commentPath));
   const alt = p.altPath ? ((await c.read(p.altPath)) ?? "").trim() : "";
   if ((await sha256Hex(caption)) !== ap.captionSha256)
-    return { problem: "the caption changed after approval", caption, comment, alts: [] };
+    return { problem: "the caption changed after approval", caption, comment, alts: [], texts: null };
   if ((comment ? await sha256Hex(comment) : null) !== ap.commentSha256)
-    return { problem: "the self-comment changed after approval", caption, comment, alts: [] };
+    return { problem: "the self-comment changed after approval", caption, comment, alts: [], texts: null };
   if ((alt ? await sha256Hex(alt) : null) !== ap.altSha256)
-    return { problem: "the alt text changed after approval", caption, comment, alts: [] };
+    return { problem: "the alt text changed after approval", caption, comment, alts: [], texts: null };
   const comment2 = p.comment2Path && !p.story ? comment2Text(await c.read(p.comment2Path)) : null;
   if ((comment2 ? await sha256Hex(comment2) : null) !== (ap.comment2Sha256 ?? null))
-    return { problem: "the second comment changed after approval", caption, comment, alts: [] };
+    return { problem: "the second comment changed after approval", caption, comment, alts: [], texts: null };
+  // a YouTube video's title and translations: read when the approval covers them or the item has some now
+  const textsRaw = p.textsPath ? await c.read(p.textsPath) : null;
+  const texts = parseTexts(textsRaw);
+  if (ap.textsSha256 || textsRaw)
+    if ((await textsSha(texts)) !== (ap.textsSha256 ?? null))
+      return { problem: "the title or translations changed after approval", caption, comment, alts: [], texts: null };
   const stores = await c.storesFor(workspaceId);
   for (const m of ap.media) {
     const store = stores.for(m);
@@ -543,13 +564,14 @@ async function verify(
         caption,
         comment,
         alts: [],
+        texts: null,
       };
     const meta = await store.stat(m.id);
-    if (!meta) return { problem: `media file ${m.id} is gone`, caption, comment, alts: [] };
+    if (!meta) return { problem: `media file ${m.id} is gone`, caption, comment, alts: [], texts: null };
     if (meta.checksum !== m.checksum)
-      return { problem: `media file ${m.id} changed after approval`, caption, comment, alts: [] };
+      return { problem: `media file ${m.id} changed after approval`, caption, comment, alts: [], texts: null };
   }
-  return { problem: null, caption, comment, alts: altLines(alt) };
+  return { problem: null, caption, comment, alts: altLines(alt), texts };
 }
 
 async function link(c: Ctx, m: MediaRef, video: boolean, workspaceId: string) {

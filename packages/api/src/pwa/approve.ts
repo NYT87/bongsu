@@ -16,13 +16,15 @@ import {
   readText,
 } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
-import { sha256Hex } from "@bongsu/core/formats/approved";
+import { sha256Hex, textsSha } from "@bongsu/core/formats/approved";
 import type { Check } from "@bongsu/core/formats/caption-lint";
-import { altLines, captionText, comment2Text, commentText } from "@bongsu/core/formats/texts";
+import { altLines, captionText, comment2Text, commentText, TextsError } from "@bongsu/core/formats/texts";
+import { checkTexts, parseTexts, type YouTubeTexts } from "@bongsu/core/formats/youtube-texts";
 import { mediaStores } from "@bongsu/core/media/index";
 import { isMedia, isVideo, type MediaEntry } from "@bongsu/core/media/store";
 import { platform } from "@bongsu/core/platforms/index";
 import { type Format, formatLabel } from "@bongsu/core/platforms/types";
+import { MediaRolesError, mediaRoles, type YouTubeSettings, youtubeSettings } from "@bongsu/core/platforms/youtube";
 import { memberName, workspaceSettings } from "@bongsu/core/workspaces";
 
 export interface Resolved {
@@ -56,6 +58,14 @@ export interface Resolved {
   comment2: string | null; // the second comment, posted right after the first (none when null)
   alt: string; // alt.txt as stored (fingerprinted); altLines() is what's published
   media: { store: string; id: string; checksum: string; mime: string; name: string }[];
+  /** What a YouTube video adds to the approval (its title and translations, the subtitle files and thumbnail among
+   *  `media`, the settings it goes out with); null off YouTube. */
+  youtube: {
+    texts: YouTubeTexts | null;
+    subtitles: { lang: string; name: string }[];
+    thumbnail: string | null;
+    settings: YouTubeSettings;
+  } | null;
   approved: { at: string; matches: boolean; commentsOnly?: boolean; by: string | null } | null; // commentsOnly: just the comments differ
   problems: string[]; // anything that blocks approval
   lint: Check[]; // the caption check's warnings (its failures are in problems)
@@ -70,6 +80,8 @@ export interface Snapshot {
   commentSha256: string | null;
   comment2Sha256: string | null;
   altSha256: string | null;
+  /** sha256 of a YouTube video's texts (canonical JSON); null off YouTube. */
+  textsSha256: string | null;
   media: string[];
 }
 
@@ -97,6 +109,7 @@ export async function resolveItem(
     readText(env.DB, paths.comment),
     paths.alt ? readText(env.DB, paths.alt) : null,
     readText(env.DB, paths.comment2),
+    readText(env.DB, paths.texts),
   ]);
   type File = MediaEntry & { store: string };
   const mediaP = (async (): Promise<{ files: File[]; node: MediaEntry | null; missing: string[] }> => {
@@ -137,7 +150,10 @@ export async function resolveItem(
       missing: [],
     };
   })();
-  const [[captionRaw, commentRaw, altRaw, comment2Raw], { files, node, missing }] = await Promise.all([textsP, mediaP]);
+  const [[captionRaw, commentRaw, altRaw, comment2Raw, textsRaw], { files, node, missing }] = await Promise.all([
+    textsP,
+    mediaP,
+  ]);
   const story = i.format === "story";
   if (captionRaw === null && !story)
     problems.push(
@@ -159,7 +175,35 @@ export async function resolveItem(
   for (const f of checks.filter((x) => x.status === "FAIL"))
     problems.push(`caption ${f.check.toLowerCase()}: ${f.detail}`);
   const mediaMax = plat?.limits.mediaMax ?? 10;
-  if ((db ? files.length > 0 : !!node) && !paths.single && !(files.length >= 1 && files.length <= mediaMax))
+  const yt = plat?.id === "youtube";
+  let youtube: Resolved["youtube"] = null;
+  if (yt && acc) {
+    // the video, its subtitle files and thumbnail are told apart by name; the texts are checked like on write, and a
+    // title is required here (it may be empty while editing)
+    const texts = parseTexts(textsRaw);
+    try {
+      checkTexts(plat, texts);
+    } catch (e) {
+      if (!(e instanceof TextsError)) throw e;
+      problems.push(e.message);
+    }
+    if (!texts?.title) problems.push("a YouTube video needs a title");
+    let roles: ReturnType<typeof mediaRoles<File>> | null = null;
+    if (files.length)
+      try {
+        roles = mediaRoles(files.map((f) => ({ name: f.name, mime: f.mime, size: f.size, ref: f })));
+      } catch (e) {
+        if (!(e instanceof MediaRolesError)) throw e;
+        problems.push(e.message);
+      }
+    youtube = {
+      texts,
+      subtitles: (roles?.subtitles ?? []).map((s) => ({ lang: s.lang, name: s.ref.name })),
+      thumbnail: roles?.thumbnail?.name ?? null,
+      settings: youtubeSettings(itemOptions(i), acc.settings),
+    };
+  }
+  if (!yt && (db ? files.length > 0 : !!node) && !paths.single && !(files.length >= 1 && files.length <= mediaMax))
     problems.push(`${paths.media} has ${files.length} media files (1–${mediaMax})`);
   if (files.some((f) => !f.checksum))
     problems.push("the store hasn't finished processing a file: try again in a minute");
@@ -195,6 +239,7 @@ export async function resolveItem(
     comment2,
     alt,
     media,
+    youtube,
     approved: null,
     problems,
     lint: checks.filter((x) => x.status === "WARN"),
@@ -207,6 +252,7 @@ export async function resolveItem(
       a.dueAt === at0 &&
       a.captionSha256 === snap.captionSha256 &&
       (a.altSha256 ?? null) === snap.altSha256 &&
+      (a.textsSha256 ?? null) === snap.textsSha256 &&
       a.media.map((x) => `${x.store}:${x.id}:${x.checksum}`).join(" ") === snap.media.join(" ");
     const comments = a.commentSha256 === snap.commentSha256 && (a.comment2Sha256 ?? null) === snap.comment2Sha256;
     const by = a.approvedByUser ? await memberName(env.DB, a.approvedByUser, workspaceId) : null;
@@ -259,6 +305,7 @@ async function resolveShort(env: Env, key: string, workspaceId: string): Promise
     comment2: null,
     alt: "",
     media: [],
+    youtube: null,
     approved: null,
     problems,
     lint: [],
@@ -281,6 +328,7 @@ export async function snapshot(r: Resolved): Promise<Snapshot> {
     commentSha256: r.comment ? await sha256Hex(r.comment) : null,
     comment2Sha256: r.comment2 ? await sha256Hex(r.comment2) : null,
     altSha256: r.alt ? await sha256Hex(r.alt) : null,
+    textsSha256: await textsSha(r.youtube?.texts ?? null),
     media: r.media.map((m) => `${m.store}:${m.id}:${m.checksum}`),
   };
 }
@@ -305,6 +353,7 @@ export async function writeApproval(
     commentSha256: s.commentSha256,
     comment2Sha256: s.comment2Sha256,
     altSha256: s.altSha256,
+    textsSha256: s.textsSha256,
     media: s.media.map((x) => {
       const [store, id, ...rest] = x.split(":");
       return { store, id, checksum: rest.join(":") };
