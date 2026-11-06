@@ -76,6 +76,61 @@ describe("YouTube client uploads", () => {
     await expect(yt.uploadFrom(gone, SRC, 0, 10, { budgetMs: 10_000 })).rejects.toBeInstanceOf(SessionGone);
   });
 
+  it("an upload limit refused with 400 throws QuotaExceeded", async () => {
+    w.ytUploadLimit = true;
+    await expect(start(10)).rejects.toBeInstanceOf(QuotaExceeded);
+  });
+
+  it("uploadFrom at the end of a finished upload returns the video id", async () => {
+    file("clip.mp4", 3000);
+    const session = await start(3000);
+    await yt.uploadFrom(session, SRC, 0, 3000, { budgetMs: 10_000 });
+    const putsBefore = w.ytPuts.length;
+    const r = await yt.uploadFrom(session, SRC, 3000, 3000, { budgetMs: 10_000 });
+    expect(r).toEqual({ offset: 3000, videoId: "vid-1" });
+    expect(w.ytPuts.length).toBe(putsBefore + 1); // only the offset query
+  });
+
+  it("each resumed PUT starts from the server's offset, not the client's guess", async () => {
+    file("clip.mp4", 3000);
+    w.ytCuts = [1000, 500];
+    const session = await start(3000);
+    const a = await yt.uploadFrom(session, SRC, 0, 3000, { budgetMs: 10_000 });
+    const b = await yt.uploadFrom(session, SRC, a.offset, 3000, { budgetMs: 10_000 });
+    const c = await yt.uploadFrom(session, SRC, b.offset, 3000, { budgetMs: 10_000 });
+    expect([a.offset, b.offset, c.offset]).toEqual([1000, 1500, 3000]);
+    expect(w.ytPuts.map((p) => p.range).filter((r) => !r.includes("*"))).toEqual([
+      "bytes 0-2999/3000",
+      "bytes 1000-2999/3000",
+      "bytes 1500-2999/3000",
+    ]);
+  });
+
+  it("a network error is rethrown, not turned into an offset query", async () => {
+    file("clip.mp4", 10);
+    const session = await start(10);
+    const failing = new YouTube(OAUTH, (async (input, init) => {
+      if (String(input).startsWith("https://files.example.com")) throw new TypeError("network down");
+      return w.fetch(input, init);
+    }) as typeof fetch);
+    const putsBefore = w.ytPuts.length;
+    await expect(failing.uploadFrom(session, SRC, 0, 10, { budgetMs: 10_000 })).rejects.toBeInstanceOf(TypeError);
+    expect(w.ytPuts.length).toBe(putsBefore);
+  });
+
+  it("chunk mode refuses a source that ignores Range", async () => {
+    file("clip.mp4", 100);
+    const session = await start(100);
+    const ignoring = new YouTube(OAUTH, (async (input, init) => {
+      if (String(input).startsWith("https://files.example.com"))
+        return new Response(w.ytFiles.get("clip.mp4"), { status: 200 });
+      return w.fetch(input, init);
+    }) as typeof fetch);
+    await expect(ignoring.uploadFrom(session, SRC, 0, 100, { budgetMs: 10_000, chunkBytes: 40 })).rejects.toThrow(
+      /Range/,
+    );
+  });
+
   it("chunk mode sends 8 MiB pieces", async () => {
     const size = 20 * MIB;
     file("clip.mp4", size);

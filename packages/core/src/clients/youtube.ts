@@ -299,7 +299,13 @@ export class YouTube {
   /** Throws QuotaExceeded or an Error for a refused call; `what` names the call in the message. */
   private async refuse(r: Response, what: string): Promise<never> {
     const text = (await r.text()).slice(0, 300);
-    if (r.status === 403 && /quotaExceeded|uploadLimitExceeded/.test(text))
+    // the reasons come from the parsed error: uploadLimitExceeded arrives as a 400 or a 403, quotaExceeded as a 403
+    let reasons: string[] = [];
+    try {
+      const e = (JSON.parse(text) as { error?: { errors?: { reason?: string }[]; status?: string } }).error;
+      reasons = [...(e?.errors ?? []).map((x) => x.reason ?? ""), e?.status ?? ""];
+    } catch {}
+    if (reasons.includes("uploadLimitExceeded") || (r.status === 403 && reasons.includes("quotaExceeded")))
       throw new QuotaExceeded(`youtube ${what}: ${text}`);
     throw new Error(`youtube ${what}: ${r.status} ${text}`);
   }
@@ -359,6 +365,8 @@ export class YouTube {
     o: { budgetMs: number; chunkBytes?: number },
   ): Promise<{ offset: number; videoId?: string }> {
     const signal = AbortSignal.timeout(o.budgetMs);
+    // a finished upload only needs its id (an earlier run may have ended right after the last byte)
+    if (offset >= size) return this.uploadOffset(session, size);
     const h = await this.auth();
     try {
       while (offset < size) {
@@ -367,6 +375,9 @@ export class YouTube {
           headers: { Range: `bytes=${offset}-${o.chunkBytes ? end : ""}` },
           signal,
         });
+        // a chunk read from a source that ignores Range would send the wrong bytes
+        if (o.chunkBytes && src.status !== 206)
+          throw new Error(`youtube upload source ignored the Range request: ${src.status}`);
         if (src.status !== 206 && !(src.status === 200 && offset === 0)) return this.refuse(src, "upload source");
         const put = await this.fetcher(session, {
           method: "PUT",

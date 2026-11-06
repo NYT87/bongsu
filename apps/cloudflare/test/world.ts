@@ -142,6 +142,10 @@ export class World {
   ytPuts: { range: string; length: number }[] = [];
   /** Bytes kept of a session PUT before it is cut off (the fetch then aborts); null: PUTs complete. */
   ytUploadCut: number | null = null;
+  /** Bytes kept per cut PUT in order (then `ytUploadCut`): the server may keep less than the client guesses. */
+  ytCuts: number[] = [];
+  /** The channel's upload limit is reached: videos.insert answers 400 uploadLimitExceeded. */
+  ytUploadLimit = false;
   /** The daily quota is used up: inserts, updates, captions and thumbnails answer 403 quotaExceeded. */
   ytQuota = false;
   /** The audit lock: a project that hasn't passed YouTube's audit keeps every upload private. */
@@ -382,8 +386,9 @@ export class World {
         const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(range);
         if (!m) return v.received >= v.size ? json({ id: vid }) : resume();
         if (Number(m[1]) !== v.received) return resume();
-        if (this.ytUploadCut !== null && body.length > this.ytUploadCut) {
-          v.received += this.ytUploadCut;
+        const cut = this.ytCuts.length ? (this.ytCuts.shift() as number) : this.ytUploadCut;
+        if (cut !== null && body.length > cut) {
+          v.received += cut;
           throw new DOMException("The operation timed out", "TimeoutError");
         }
         v.received += body.length;
@@ -391,6 +396,8 @@ export class World {
       }
       if (req.method === "POST" && url.pathname === "/upload/youtube/v3/videos") {
         if (this.ytQuota) return quota();
+        if (this.ytUploadLimit)
+          return json({ error: { code: 400, message: "limit", errors: [{ reason: "uploadLimitExceeded" }] } }, 400);
         const b = (await req.json()) as { snippet: Record<string, any>; status: Record<string, any> };
         const id = `vid-${this.ytVideos.size + 1}`;
         const up = `up-${this.ytSessions.size + 1}`;
