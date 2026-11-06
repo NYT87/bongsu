@@ -450,6 +450,39 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect((await as("bea", "pwa", video)).json.samples).toMatchObject([{ views: 7 }]);
   });
 
+  it("a Bongsu upload's video id points to its item only in its own workspace", async () => {
+    await env.DB.prepare("DELETE FROM post_metrics").run();
+    const { key } = await seedReel(w, { date: "2026-10-30" }); // the default workspace's item
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, media_id, dry_run, payload, created_at, updated_at, workspace_id) VALUES (?1, 'video', 'conn-main', 1, 'done', 'vidU00000004', 0, '{\"username\":\"main\"}', 0, 0, 'default')",
+    )
+      .bind(key)
+      .run();
+    await upsertConnection(
+      env.DB,
+      { id: "c_b_tube", workspaceId: "b", provider: "youtube", kind: "oauth", secretName: "YT_B_OAUTH" },
+      0,
+    );
+    await upsertAccount(
+      env.DB,
+      { id: "b_tube", workspaceId: "b", platform: "youtube", handle: "b_tube", connectionId: "c_b_tube" },
+      0,
+    );
+    // workspace B's channel lists a video with the same id (a channel both connect), and has its series
+    const upload = { id: "vidU00000004", title: "U", privacy: "public", when: "2026-10-01T10:00:00Z", short: true };
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('yt_uploads:b_tube', ?1, ?2)")
+      .bind(JSON.stringify([upload]), Math.floor(Date.now() / 1000))
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO post_metrics (item_key, account, platform, media_id, taken_at, views, workspace_id) VALUES ('video:vidU00000004', 'b_tube', 'youtube', 'vidU00000004', 1, 4, 'b')",
+    ).run();
+    const video = "/app-api/video/metrics?video=vidU00000004";
+    expect((await as("owner", "pwa", video)).json).toEqual({ item: key });
+    const own = await as("bea", "pwa", video);
+    expect(own.json.item).toMatchObject({ key: "video:vidU00000004", account: "b_tube" });
+    expect(own.json.samples).toMatchObject([{ views: 4 }]);
+  });
+
   // Phase 13 part 1's routes (members, invites, workspaces, connecting from the app): workspace B's people reach
   // only workspace B. invites.test.ts and workspaces-admin.test.ts try each route's behaviour; here it's the boundary.
   const send = async (userId: string, app: "dashboard" | "pwa", path: string, body: unknown = {}) => {

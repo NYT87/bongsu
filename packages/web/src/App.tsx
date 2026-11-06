@@ -2979,6 +2979,17 @@ function VideoPage({ route }: { route: string }) {
   const [moved, setMoved] = useState<string | null>(null);
   const canReschedule = useCan("reschedule"); // the server refuses other roles anyway; the card is for who can use it
   const e = m && data?.events.find((x) => external(x) && x.account === m[1] && x.url?.endsWith(`/${m[2]}`));
+  // a video Bongsu uploaded isn't a separate video: its page is its item's Results (the calendar lists the item)
+  const videoId = m?.[2];
+  const missing = !!data && !e;
+  useEffect(() => {
+    if (!missing || !videoId) return;
+    api<{ item?: unknown }>(`video/metrics?video=${encodeURIComponent(videoId)}`)
+      .then((d) => {
+        if (typeof d.item === "string") location.replace(`#/item/${encodeURIComponent(d.item)}/results`);
+      })
+      .catch(() => {}); // the "not in the calendar" note stands
+  }, [missing, videoId]);
   // its metrics series, once the calendar knows the video: Results | Video when it has samples
   const metrics = useMetrics(e && m ? `video/metrics?video=${encodeURIComponent(m[2])}` : null);
   // Results first when the series is at hand as the page opens (cached), as an item opens on its Results; when it
@@ -3999,6 +4010,8 @@ type StatsOverview = {
     platform: string;
     title: string;
     label: string | null;
+    /** A YouTube video's origin: uploaded by Bongsu (counted under its item) or elsewhere. */
+    source?: "bongsu" | "elsewhere";
     published_at: string | null;
     views: number | null;
     likes: number | null;
@@ -4064,6 +4077,7 @@ function StatsPage() {
                 <div className="muted small">
                   {r.label ?? (r.platform === "youtube" ? t("results.video") : t("channel.post"))}
                   {r.published_at ? ` · ${shortDay(r.published_at)}` : ""}
+                  {r.source === "bongsu" ? ` · ${t("video.bongsu")}` : ""}
                 </div>
                 <div className="muted small num">
                   {count(r.likes, "stats.likes")} · {count(r.comments, "stats.comments")}
@@ -4189,6 +4203,7 @@ function ChannelPage({ route }: { route: string }) {
               <a className="aud" href={b.href}>
                 <div className="clip">
                   <strong className="small">{b.title}</strong>
+                  {b.source === "bongsu" && <span className="muted small"> · {t("video.bongsu")}</span>}
                 </div>
                 <div className="small num aud-n">
                   <span className="ok-text">+{b.follows}</span>

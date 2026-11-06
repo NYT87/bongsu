@@ -153,7 +153,15 @@ export interface ChannelStats {
   };
   followers: { total: { at: number; value: number | null }[]; daily: { at: number; value: number | null }[] };
   views: { at: number; value: number | null }[];
-  brought: { key: string; title: string; platform: string; follows: number; share: number | null; href: string }[];
+  brought: {
+    key: string;
+    title: string;
+    platform: string;
+    follows: number;
+    share: number | null;
+    href: string;
+    source?: "bongsu" | "elsewhere";
+  }[];
   /** A YouTube channel's: whether its connection holds the analytics scope; null for Instagram. */
   analytics: boolean | null;
 }

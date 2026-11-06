@@ -53,6 +53,7 @@ import { youtubeAnalytics } from "@bongsu/core/providers/youtube";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { jsonList } from "@bongsu/core/sql";
 import { callerZone, memberName, memberNames, workspaceSettings } from "@bongsu/core/workspaces";
+import { bongsuVideos } from "@bongsu/core/youtube-videos";
 import type { Caller } from "./auth";
 
 export class ApiError extends Error {
@@ -486,8 +487,26 @@ export async function itemMetrics(c: OpCtx, o: MetricsQuery & { key: string }) {
   };
 }
 
-/** A YouTube upload's metrics series (`video:<id>`), when a channel of the caller's workspace lists it. */
+/** Video id → item key for the Bongsu uploads of these channels in the caller's workspace (D6). */
+const bongsuOf = (c: OpCtx, channels: { id: string }[]) =>
+  bongsuVideos(
+    c.env.DB,
+    channels.map((a) => a.id),
+    c.caller.workspaceId,
+  );
+
+/** The same for every YouTube channel of the caller's workspace: two accounts on one channel list the same video. */
+const workspaceBongsu = async (c: OpCtx) => bongsuOf(c, await youtubeAccounts(c.env.DB, c.caller.workspaceId));
+
+/** The video page's answer: a Bongsu upload answers `{ item: key }` (the app opens the item), any other video its
+ *  series, as `uploadMetrics`. */
 export async function videoMetrics(c: OpCtx, o: MetricsQuery & { video: string }) {
+  const key = (await workspaceBongsu(c)).get(o.video);
+  return key ? { item: key } : await uploadMetrics(c, o);
+}
+
+/** A YouTube upload's metrics series (`video:<id>`), when a channel of the caller's workspace lists it. */
+async function uploadMetrics(c: OpCtx, o: MetricsQuery & { video: string }) {
   for (const account of await youtubeAccounts(c.env.DB, c.caller.workspaceId)) {
     let upload: Awaited<ReturnType<typeof channelUploads>>[number] | undefined;
     try {
@@ -1134,8 +1153,11 @@ export async function channelStats(c: OpCtx, o: { account: string; days?: string
     .bind(a.id, ws)
     .all<{ taken_at: number; followers: number | null }>();
   const fpts: Point[] = acct.results.map((r) => ({ at: r.taken_at, value: r.followers }));
+  const mine = a.platform === "youtube" ? await workspaceBongsu(c) : new Map<string, string>();
   const byItem = await postRows(c, a.id, from - 8 * 86400);
-  const uploads = a.platform === "youtube" ? await cachedUploads(c, a.id) : [];
+  // a Bongsu upload counts once, under its item: an older video: series of it is left out
+  for (const id of mine.keys()) byItem.delete(`video:${id}`);
+  const uploads = (a.platform === "youtube" ? await cachedUploads(c, a.id) : []).filter((u) => !mine.has(u.id));
   const published = await publishedTimes(c, a.id, uploads);
   const viewDays = viewsPerDay(byItem, published, from, nowS, tz);
 
@@ -1172,6 +1194,7 @@ export async function channelStats(c: OpCtx, o: { account: string; days?: string
       title,
       platform: a.platform,
       follows: r.follows,
+      source: a.platform === "youtube" ? sourceOf(r.key) : undefined,
       // follows are gross and the change net (and YouTube rounds its count): a share over 100% would mislead
       share: periodChange && periodChange > 0 && r.follows <= periodChange ? r.follows / periodChange : null,
       href,
@@ -1194,6 +1217,9 @@ export async function channelStats(c: OpCtx, o: { account: string; days?: string
     analytics: a.platform === "youtube" ? await youtubeAnalytics(c.env, a.connection) : null,
   };
 }
+
+/** Where a YouTube video row comes from: an item key is a Bongsu upload, a `video:` key one uploaded elsewhere. */
+const sourceOf = (key: string): "bongsu" | "elsewhere" => (key.startsWith("video:") ? "elsewhere" : "bongsu");
 
 const OVERVIEW_DAYS = 7;
 const OVERVIEW_MAX = 10;
@@ -1239,6 +1265,7 @@ export async function statsOverview(c: OpCtx) {
       account: r.account as string,
       title: r.title as string,
       label: r.label as string | null,
+      source: r.platform === "youtube" ? sourceOf(r.key) : undefined,
       published_at: pub,
       views: r.views as number | null,
       likes: r.likes as number | null,
@@ -1360,8 +1387,12 @@ export async function agentItemMetrics(c: OpCtx, o: MetricsQuery & { key: string
   const pick = pickMetrics(o.metrics);
   const shape = (pts: Sample[]) => (pick ? pts.map(pick) : pts);
   if (o.key.startsWith("video:")) {
-    const v = await videoMetrics(c, { ...o, video: o.key.slice(6) });
-    return { ...v, samples: shape(v.samples) };
+    const mapped = (await workspaceBongsu(c)).get(o.key.slice(6));
+    if (!mapped) {
+      const v = await uploadMetrics(c, { ...o, video: o.key.slice(6) });
+      return { ...v, samples: shape(v.samples) };
+    }
+    return agentItemMetrics(c, { ...o, key: mapped }); // a Bongsu upload's series is its item's
   }
   const m = await itemMetrics(c, o);
   const posted = await getPosted(c.env.DB, o.key);
@@ -1451,8 +1482,11 @@ export async function performanceList(
   );
   const published = new Map<string, number>();
   const titles = new Map<string, { title: string; label: string }>();
+  const mine = await workspaceBongsu(c); // Bongsu uploads, counted under their item (D6)
+  const mineVideos = new Set<string>();
   for (const a of accounts) {
-    const uploads = a.platform === "youtube" ? await cachedUploads(c, a.id) : [];
+    for (const id of mine.keys()) mineVideos.add(`video:${id}`);
+    const uploads = (a.platform === "youtube" ? await cachedUploads(c, a.id) : []).filter((u) => !mine.has(u.id));
     for (const [k, v] of await publishedTimes(c, a.id, uploads)) published.set(k, v);
     for (const u of uploads)
       titles.set(`video:${u.id}`, { title: u.title, label: (u as { short?: boolean }).short ? "Short" : "Video" });
@@ -1475,7 +1509,8 @@ export async function performanceList(
   );
   const byKey = new Map<string, typeof rows.results>();
   for (const r of rows.results)
-    if (accountOf.has(r.account)) byKey.set(r.item_key, [...(byKey.get(r.item_key) ?? []), { ...r, at: r.taken_at }]);
+    if (accountOf.has(r.account) && !mineVideos.has(r.item_key))
+      byKey.set(r.item_key, [...(byKey.get(r.item_key) ?? []), { ...r, at: r.taken_at }]);
   const keys = [...byKey.keys()].filter((k) => {
     const pub = published.get(k) ?? firsts.get(k);
     return pub !== undefined && pub >= lo && pub <= hi;
@@ -1484,14 +1519,14 @@ export async function performanceList(
   const bases = [...new Set(keys.filter((k) => !k.startsWith("video:")).map((k) => k.replace(/^trial:/, "")))];
   if (bases.length) {
     const items = await c.env.DB.prepare(
-      `SELECT item_key, name, title, format FROM plan_items WHERE workspace_id = ?1 AND item_key IN ${jsonList(c.env.DB, 2)}`,
+      `SELECT item_key, account, name, title, format FROM plan_items WHERE workspace_id = ?1 AND item_key IN ${jsonList(c.env.DB, 2)}`,
     )
       .bind(ws, JSON.stringify(bases))
-      .all<{ item_key: string; name: string; title: string | null; format: string | null }>();
+      .all<{ item_key: string; account: string; name: string; title: string | null; format: string | null }>();
     for (const i of items.results)
       titles.set(i.item_key, {
         title: i.title || i.name,
-        label: formatLabel(platform("instagram"), i.format as PlanItem["format"]),
+        label: formatLabel(platform(accountOf.get(i.account)?.platform ?? "instagram"), i.format as PlanItem["format"]),
       });
   }
   const all = keys.map((k) => {
@@ -1506,6 +1541,7 @@ export async function performanceList(
       account: last.account,
       title: t ? `${t.title}${k.startsWith("trial:") ? " · Trial Reel" : ""}` : base,
       label: k.startsWith("trial:") ? "Trial Reel" : (t?.label ?? null),
+      ...(last.platform === "youtube" ? { source: sourceOf(k) } : {}),
       published_at: iso(pub),
       at: last.at,
       ...Object.fromEntries(STAT_FIELDS.map((f) => [f, last[f]])),

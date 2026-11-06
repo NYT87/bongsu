@@ -433,6 +433,7 @@ export const en = {
   // a YouTube video's release date and page
   "release.cancelled": "The passkey prompt was closed or timed out. Nothing was moved: tap Save new date to try again.",
   "video.unknown": "Unknown video link.",
+  "video.bongsu": "Bongsu",
   "video.gone": "This video isn't in the calendar for {month} any more.",
   "video.note":
     "YouTube videos are published by YouTube itself; the scheduler only adds the pinned-comment text to Shorts, once you approve it.",

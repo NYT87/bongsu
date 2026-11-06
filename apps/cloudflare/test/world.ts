@@ -510,6 +510,8 @@ export class World {
       url.hostname === "www.googleapis.com" &&
       url.pathname === "/youtube/v3/videos" &&
       req.method === "GET" &&
+      // a channel's uploads list (snippet) and statistics are the ytUploads ones, even for a video the provider uploaded
+      !/snippet|statistics/.test(url.searchParams.get("part") ?? "") &&
       (url.searchParams.get("id") ?? "").split(",").some((id) => this.ytVideos.has(id))
     ) {
       const items = (url.searchParams.get("id") ?? "").split(",").flatMap((id) => {
