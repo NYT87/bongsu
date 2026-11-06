@@ -101,7 +101,9 @@ describe("platform names for the app and agents", () => {
     const ig = r.platforms.find((p) => p.id === "instagram")!;
     expect(ig.formats).toContainEqual({ format: "video", name: "Reel", plural: "Reels" });
     expect(ig.features.trial).toBe(true);
-    expect(r.platforms.find((p) => p.id === "youtube")?.formats).toEqual([]);
+    expect(r.platforms.find((p) => p.id === "youtube")?.formats).toEqual([
+      { format: "video", name: "Video", plural: "Videos" },
+    ]);
     // and how each kind of account gets connected (for the dashboard's Connect screens)
     const conns = (r as unknown as { connections: { provider: string; kind: string; scopes?: string[] }[] })
       .connections;

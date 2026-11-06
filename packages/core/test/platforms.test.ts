@@ -10,7 +10,7 @@ describe("platforms", () => {
     expect(ig.features).toMatchObject({ firstComment: true, trial: true, coverFrame: true });
     expect(requirePlatform("youtube").features.commentOnExisting).toBe(true);
     expect(publishing().map((p) => p.id)).toContain("instagram");
-    expect(publishing().map((p) => p.id)).not.toContain("youtube"); // comments only, for now
+    expect(publishing().map((p) => p.id)).toContain("youtube");
     expect(platform("myspace")).toBeNull();
     expect(() => requirePlatform("myspace")).toThrow(/unknown platform/);
   });

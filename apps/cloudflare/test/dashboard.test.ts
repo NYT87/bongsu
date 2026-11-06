@@ -441,7 +441,9 @@ describe("signed in", () => {
       ((await call("/admin-api/accounts")).json.accounts as Acc[]).find((x) => x.id === id)?.captionRules;
     const defaults = { hashtagMax: 5, foldChars: 125, languageChecks: true };
     expect(await rules("demo_travel")).toEqual({ ...defaults, defaults });
-    expect(await rules("main")).toBeNull(); // YouTube lints nothing
+    // YouTube publishes now, so its rules show too, with the "checks nothing" defaults
+    const none = { hashtagMax: 0, foldChars: 0, languageChecks: false };
+    expect(await rules("main")).toEqual({ ...none, defaults: none });
     expect((await call("/admin-api/accounts/demo_travel", { captionRules: { hashtagMax: 10 } })).status).toBe(200);
     expect(await rules("demo_travel")).toEqual({ ...defaults, hashtagMax: 10, defaults }); // foldChars still 125
     // one field at a time: a later change keeps the earlier one, null puts a field back to the default
