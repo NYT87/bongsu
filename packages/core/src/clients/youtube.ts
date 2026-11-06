@@ -298,11 +298,13 @@ export class YouTube {
 
   /** Throws QuotaExceeded or an Error for a refused call; `what` names the call in the message. */
   private async refuse(r: Response, what: string): Promise<never> {
-    const text = (await r.text()).slice(0, 300);
-    // the reasons come from the parsed error: uploadLimitExceeded arrives as a 400 or a 403, quotaExceeded as a 403
+    const body = await r.text();
+    const text = body.slice(0, 300);
+    // the reasons come from the whole parsed body (Google's errors run past 300 characters):
+    // uploadLimitExceeded arrives as a 400 or a 403, quotaExceeded as a 403
     let reasons: string[] = [];
     try {
-      const e = (JSON.parse(text) as { error?: { errors?: { reason?: string }[]; status?: string } }).error;
+      const e = (JSON.parse(body) as { error?: { errors?: { reason?: string }[]; status?: string } }).error;
       reasons = [...(e?.errors ?? []).map((x) => x.reason ?? ""), e?.status ?? ""];
     } catch {}
     if (reasons.includes("uploadLimitExceeded") || (r.status === 403 && reasons.includes("quotaExceeded")))

@@ -369,7 +369,19 @@ export class World {
       });
     }
     if (url.hostname === "www.googleapis.com" && url.pathname.startsWith("/upload/youtube/v3/")) {
-      const quota = () => json({ error: { code: 403, message: "quota", errors: [{ reason: "quotaExceeded" }] } }, 403);
+      // as long as Google's real errors (past 300 characters), so the client must parse the whole body
+      const quotaMessage = "The request cannot be completed because you have exceeded your quota. ".repeat(4);
+      const quota = () =>
+        json(
+          {
+            error: {
+              code: 403,
+              message: quotaMessage,
+              errors: [{ message: quotaMessage, domain: "youtube.quota", reason: "quotaExceeded" }],
+            },
+          },
+          403,
+        );
       const sessionId = url.searchParams.get("upload_id");
       if (req.method === "PUT" && sessionId) {
         const vid = this.ytSessions.get(sessionId);
