@@ -90,6 +90,40 @@ describe("an agent key in workspace B", () => {
     });
   });
 
+  it("another workspace can't read or write an item's texts", async () => {
+    // a YouTube channel item with texts, in workspace A
+    const key = "reel:20261101_DEMO/clip1";
+    expect(
+      (
+        await call(KEY_A, "/v1/plan", {
+          account: "main",
+          format: "video",
+          folder: "vlogs/CONTENT/20261101_DEMO",
+          name: "clip1",
+          date: "2026-11-01",
+          texts: { title: "Private title" },
+        })
+      ).status,
+    ).toBe(200);
+    await call(KEY_A, "/v1/drafts", { kind: "reel", account: "main", texts: { title: "Draft title" } });
+    expect((await call(KEY_A, `/v1/items/${encodeURIComponent(key)}`)).json).toMatchObject({
+      texts: { title: "Private title" },
+    });
+    expect((await call(KEY_B, `/v1/items/${encodeURIComponent(key)}`)).status).toBe(404);
+    expect((await call(KEY_B, "/v1/plan/update", { key, texts: { title: "Taken over" } })).status).toBe(404);
+    expect(
+      JSON.parse(
+        (await env.DB.prepare("SELECT texts FROM plan_items WHERE item_key = ?1").bind(key).first<{ texts: string }>())
+          ?.texts ?? "null",
+      ),
+    ).toEqual({ title: "Private title" });
+    expect(JSON.stringify((await call(KEY_B, "/v1/drafts")).json)).not.toContain("Draft title");
+    // nor can it draft for A's channel
+    expect((await call(KEY_B, "/v1/drafts", { kind: "reel", account: "main", texts: { title: "x" } })).status).toBe(
+      400,
+    );
+  });
+
   it("plans only for its own accounts, and its items stay its own", async () => {
     const own = {
       kind: "reel",
