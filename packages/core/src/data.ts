@@ -4,6 +4,7 @@
 import { findAccount, trialCapable, trialDefaultOn } from "./accounts";
 import type { Db } from "./db";
 import type { Approval, MediaRef } from "./formats/approved";
+import { TextsError } from "./formats/texts";
 import {
   parseInstant,
   shiftDate,
@@ -247,7 +248,7 @@ export async function writeTexts(
     .run();
   return true;
 }
-export class TextsError extends Error {}
+export { TextsError } from "./formats/texts";
 
 /** A 'db' item's media (store and id), in slide order. */
 export async function dbMedia(db: Db, path: string): Promise<Pick<MediaRef, "store" | "id">[]> {

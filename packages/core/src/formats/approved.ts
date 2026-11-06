@@ -40,7 +40,9 @@ export function canonicalJson(v: unknown): string {
   if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
   if (v && typeof v === "object") {
     const o = v as Record<string, unknown>;
+    // undefined values drop out, as JSON.stringify drops them, so texts hash the same after a round trip through the column.
     return `{${Object.keys(o)
+      .filter((k) => o[k] !== undefined)
       .sort()
       .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
       .join(",")}}`;
