@@ -57,7 +57,7 @@ const run = (d: Date) => {
 };
 
 /** A draft-made YouTube item (content 'db'): the video, Spanish subtitles and a thumbnail in the Drive store. */
-async function seedVideo() {
+async function seedVideo(o: { key?: string; time?: string } = {}) {
   ids = {
     clip: w.drivePut("UPLOADS/_uploads/clip.mp4", { md5: MD5S.clip, mimeType: "video/mp4", bytes: "0123456789" }),
     es: w.drivePut("UPLOADS/_uploads/es.srt", {
@@ -71,8 +71,8 @@ async function seedVideo() {
     "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id, content, media, caption, comment, texts) VALUES (?1, 'video', 'main', '20261020_DEMO', 'clip', ?2, '{}', 0, 1, 0, 0, 'default', 'db', ?3, ?4, ?5, ?6)",
   )
     .bind(
-      KEY,
-      await localToUnix("2026-10-20", "18:00"),
+      o.key ?? KEY,
+      await localToUnix("2026-10-20", o.time ?? "18:00"),
       JSON.stringify(Object.values(ids).map((id) => ({ store: "drive", id }))),
       CAPTION,
       COMMENT,
@@ -82,15 +82,15 @@ async function seedVideo() {
 }
 
 /** The owner's approval of exactly the seeded item (what the app's approval stores). */
-async function approveVideo(approvedAt = "2026-10-17T01:00:00Z") {
+async function approveVideo(o: { approvedAt?: string; key?: string; time?: string; texts?: typeof TEXTS } = {}) {
   await addApproval(env.DB, {
-    key: KEY,
+    key: o.key ?? KEY,
     account: "main",
-    dueAt: await localToUnix("2026-10-20", "18:00"),
+    dueAt: await localToUnix("2026-10-20", o.time ?? "18:00"),
     captionSha256: await sha256Hex(captionText(CAPTION)),
     commentSha256: await sha256Hex(COMMENT),
     altSha256: null,
-    textsSha256: await youtubeSha(parseTexts(JSON.stringify(TEXTS)), [
+    textsSha256: await youtubeSha(parseTexts(JSON.stringify(o.texts ?? TEXTS)), [
       `video:${ids.clip}`,
       `subtitle:es:${ids.es}`,
       `thumbnail:${ids.thumb}`,
@@ -100,7 +100,7 @@ async function approveVideo(approvedAt = "2026-10-17T01:00:00Z") {
       { store: "drive", id: ids.es, checksum: MD5S.es },
       { store: "drive", id: ids.thumb, checksum: MD5S.thumb },
     ],
-    approvedAt,
+    approvedAt: o.approvedAt ?? "2026-10-17T01:00:00Z",
     approvedBy: "owner@test",
   });
 }
@@ -123,8 +123,8 @@ const job = async (key = KEY) => {
   return { ...r, phase: p.step?.data.phase, videoId: p.step?.data.videoId };
 };
 const privacy = () => w.ytVideos.get("vid-1")?.status.privacyStatus;
-const processed = () => {
-  w.ytVideos.get("vid-1")!.processing = "succeeded";
+const processed = (id = "vid-1") => {
+  w.ytVideos.get(id)!.processing = "succeeded";
 };
 
 /** Seeded, approved, and run from 6 h ahead until the video is processed and waits for its time. */
@@ -194,7 +194,7 @@ describe("YouTube uploads: the tick", () => {
     await seedVideo();
     await run(at(-LEAD));
     expect(await job()).toMatchObject({ state: "refused", last_error: "not approved" });
-    await approveVideo("2026-10-20T07:00:00Z"); // 2 h before it's due
+    await approveVideo({ approvedAt: "2026-10-20T07:00:00Z" }); // 2 h before it's due
     await run(at(-7200));
     expect(await job()).toMatchObject({ state: "container_created", phase: "uploading" });
     await run(at(-6900));
@@ -248,6 +248,60 @@ describe("YouTube uploads: the tick", () => {
     expect((await job(reel))?.state).toBe("container_created");
     expect(await job()).toMatchObject({ state: "container_created", phase: "uploading" });
     expect(w.ytPuts).toEqual([]);
+  });
+
+  it("a video waiting for its time doesn't hold up an upload due sooner", async () => {
+    // A, due at T + 5 h, is uploaded and waits; B, due at T + 1 h, is planned and approved meanwhile
+    const B = "post:20261020_DEMO/clip_b";
+    await seedVideo({ time: "23:00" });
+    await approveVideo({ time: "23:00" });
+    await run(at(-3600));
+    await run(at(-3300));
+    await run(at(-3000));
+    processed();
+    await run(at(-2700));
+    expect(await job()).toMatchObject({ state: "container_created", phase: "waiting" });
+    await seedVideo({ key: B, time: "19:00" });
+    await approveVideo({ key: B, time: "19:00" });
+    await run(at(-2400));
+    expect(await job(B)).toMatchObject({ state: "container_created", phase: "uploading" });
+    await setup({ JOBS_PER_TICK: "1" });
+    await run(at(-2100));
+    expect(await job(B)).toMatchObject({ phase: "extras" }); // the file went up
+  });
+
+  it("a new approval during the lead revises the uploaded video before its time", async () => {
+    await uploadAhead();
+    const changed = { ...TEXTS, title: "Changed and approved again" };
+    await env.DB.prepare("UPDATE plan_items SET texts = ?1 WHERE item_key = ?2")
+      .bind(JSON.stringify(changed), KEY)
+      .run();
+    await approveVideo({ approvedAt: "2026-10-20T08:00:00Z", texts: changed });
+    await run(at(-3600));
+    // reopened and revised: the same video, its title updated, no new upload
+    expect(await job()).toMatchObject({ state: "container_created", phase: "extras", videoId: "vid-1" });
+    expect(w.ytSessions.size).toBe(1);
+    expect(w.ytVideos.get("vid-1")?.meta.title).toBe("Changed and approved again");
+    await run(at(-3300));
+    await run(at(-3000));
+    expect(await job()).toMatchObject({ state: "container_created", phase: "waiting" });
+    await run(T);
+    expect(await job()).toMatchObject({ state: "published", last_error: null });
+    expect(privacy()).toBe("public");
+    expect(w.notifications.filter((n) => /refused|changed after approval/.test(`${n.title} ${n.body}`))).toEqual([]);
+  });
+
+  it("a job without a lead isn't advanced before its time", async () => {
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id) VALUES ('reel:early', 'video', 'instagram_conn-a', ?1, 'pending', 0, ?2, 0, 0, 'default')",
+    )
+      .bind(
+        Math.floor(T.getTime() / 1000) + 3600,
+        JSON.stringify({ username: "demo_travel", account: "instagram_conn-a" }),
+      )
+      .run();
+    await run(T);
+    expect(await job("reel:early")).toMatchObject({ state: "pending", attempts: 0, last_error: null });
   });
 
   it("dry run uploads nothing", async () => {

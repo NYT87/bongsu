@@ -287,11 +287,13 @@ export async function tick(
   }
 }
 
-/** The jobs this run advances: those due within their platform's lead, the upload steps last (one can take most of a
- *  run), cut to jobsPerTick. A held workspace's jobs wait where they are, and don't take the run's share from the
- *  others. The query takes everything within the longest lead; each job's own lead (its account's platform) is
- *  applied here. */
+/** The jobs this run advances: those due within their platform's lead, in three groups, each in due order: the
+ *  ones with work to do, then the upload steps (one can take most of a run), then the videos waiting for their time
+ *  (only a recheck until then); cut to jobsPerTick. A held workspace's jobs wait where they are, and don't take the
+ *  run's share from the others. */
 async function activeJobs(c: Ctx, accounts: Account[]): Promise<JobRow[]> {
+  // no LIMIT here: everything within the longest lead comes back, and the cut is made below, after each job's own
+  // lead (its account's platform) has filtered out the ones not yet started
   const r = await c.env.DB.prepare(
     `SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1
        AND workspace_id NOT IN ${jsonList(c.env.DB, 2)} ORDER BY due_at, id`,
@@ -302,9 +304,16 @@ async function activeJobs(c: Ctx, accounts: Account[]): Promise<JobRow[]> {
   const jobs = r.results.map((job) => ({ job, p: JSON.parse(job.payload) as Payload }));
   return jobs
     .filter(({ job, p }) => job.due_at - leadOf(platforms.get(`${job.workspace_id}/${p.username}`)) <= c.nowS)
-    .sort((a, b) => Number(isUploadStep(a.job, a.p)) - Number(isUploadStep(b.job, b.p))) // stable: due order kept
+    .sort((a, b) => group(c, a.job, a.p) - group(c, b.job, b.p)) // stable: due order kept within a group
     .slice(0, jobsPerTick(c.env))
     .map(({ job }) => job);
+}
+
+/** 0: work to do (anything due, a start, extras, processing), 1: an upload step, 2: a video waiting for its time. An
+ *  upload goes after the rest even when late, so it never delays an Instagram post. */
+function group(c: Ctx, job: JobRow, p: Payload): number {
+  if (isUploadStep(job, p)) return 1;
+  return job.state === "container_created" && p.step?.data.phase === "waiting" && job.due_at > c.nowS ? 2 : 0;
 }
 
 /** A job sending its file to the platform (YouTube's uploading phase): the run's longest step. */
@@ -401,6 +410,10 @@ export function reopens(
   if (a.dueAt === null) return false;
   const newer = a.approvedAt !== p.approvedAt;
   if (job.state === "refused") return newer;
+  // a private upload under way ahead of its time: a new approval revises it before its time (previousUpload);
+  // Instagram's containers have neither, and stay as they are
+  if (job.state === "container_created")
+    return newer && !mayBeLive(job, p) && !!(p.step?.data.videoId || p.step?.data.session);
   if (job.state === "held") return newer || !!p.onHold;
   if (job.state !== "failed" || !newer || mayBeLive(job, p)) return false;
   return job.updated_at !== undefined && Date.parse(a.approvedAt) / 1000 > job.updated_at; // NaN: never
@@ -848,8 +861,8 @@ async function stepAhead(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: St
   const r = await recheck(c, job, p);
   if (r) return settle(c, job, p, r);
   if (c.nowS < job.due_at) {
-    // reaching the wait ends the polling: a fresh count for whatever comes after
-    await c.setJob(job.id, { payload: p, ...(moved ? { attempts: 0 } : {}) });
+    // reaching the wait ends the polling: a fresh count for whatever comes after; a run that only waits writes nothing
+    if (moved) await c.setJob(job.id, { payload: p, attempts: 0 });
     return;
   }
   if (c.nowS - job.due_at > CATCH_UP_S) {
