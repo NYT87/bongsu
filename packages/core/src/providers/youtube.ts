@@ -264,14 +264,17 @@ export class YouTubeProvider implements Provider {
   }
 
   /** A thumbnail YouTube refuses (a channel without custom thumbnails, an image it won't take) doesn't stop the
-   *  video: the step records it for a note. Quota and server errors go on as any other (QuotaExceeded isn't a
-   *  YouTubeRefused). */
+   *  video: the step records it for a note. Only a 400 or 403 is a refusal; a rate limit, an auth error or a video
+   *  YouTube doesn't know yet goes on as any other error and is retried (QuotaExceeded isn't a YouTubeRefused). */
   private async thumbnail(d: UploadData, id: string, file: OutgoingMedia): Promise<UploadData> {
     try {
       await this.yt.setThumbnail(id, file.url);
       return { ...d, thumbnailMd5: file.checksum, thumbnailRefused: false };
     } catch (e) {
-      const refused = e instanceof YouTubeRefused && e.status < 500 && e.message.startsWith("youtube thumbnails.set:");
+      const refused =
+        e instanceof YouTubeRefused &&
+        (e.status === 400 || e.status === 403) &&
+        e.message.startsWith("youtube thumbnails.set:");
       if (!refused) throw e;
       return { ...d, thumbnailRefused: true };
     }

@@ -178,6 +178,22 @@ describe("YouTube provider", () => {
     expect(w.ytCaptionInserts).toHaveLength(1);
   });
 
+  it("a rate-limited thumbnail is retried, not dropped", async () => {
+    w.ytThumbnailRefused = 429;
+    let s = await pr.start(post());
+    for (let i = 0; i < 10 && data(s).phase !== "extras"; i++) s = await pr.check(s);
+    // the caption lands, the thumbnail's 429 is kept for the next run instead of counting as a refusal
+    s = await pr.check(s);
+    expect(data(s).phase).toBe("extras");
+    expect(data(s).thumbnailRefused).toBeFalsy();
+    expect(data(s).pending.thumbnail).toBe(true);
+    w.ytThumbnailRefused = false;
+    const { step } = await walk(s);
+    expect(step.data.thumbnailRefused).toBe(false);
+    expect(w.ytVideos.get("vid-1")!.thumbnail).toBeDefined();
+    expect(w.ytCaptionInserts).toHaveLength(1);
+  });
+
   it("revising with the same video updates texts and replaces only the changed track", async () => {
     const first = post({
       media: [

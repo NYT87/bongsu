@@ -155,8 +155,8 @@ export class World {
   /** captions.insert calls so far; the call with this number answers 500, once (null: none fails). */
   ytCaptionCalls = 0;
   ytCaptionFailOnce: number | null = null;
-  /** thumbnails.set answers 403 (a channel not allowed custom thumbnails). */
-  ytThumbnailRefused = false;
+  /** thumbnails.set answers 403 (a channel not allowed custom thumbnails); a number answers that status instead. */
+  ytThumbnailRefused: boolean | number = false;
   /** Every caption track inserted, in order (a duplicate shows here even after a delete). */
   ytCaptionInserts: { video: string; lang: string; id: string }[] = [];
   notifications: { title: string; body: string; actions?: string }[] = [];
@@ -438,8 +438,10 @@ export class World {
       }
       if (req.method === "POST" && url.pathname === "/upload/youtube/v3/thumbnails/set") {
         if (this.ytQuota) return quota();
-        if (this.ytThumbnailRefused)
-          return json({ error: { code: 403, errors: [{ reason: "forbidden" }], message: "custom thumbnails" } }, 403);
+        if (this.ytThumbnailRefused) {
+          const code = this.ytThumbnailRefused === true ? 403 : this.ytThumbnailRefused;
+          return json({ error: { code, errors: [{ reason: "forbidden" }], message: "custom thumbnails" } }, code);
+        }
         const v = this.ytVideos.get(url.searchParams.get("videoId") ?? "");
         if (!v) return json({ error: { code: 404, message: "videoNotFound" } }, 404);
         const bytes = (await req.arrayBuffer()).byteLength;
