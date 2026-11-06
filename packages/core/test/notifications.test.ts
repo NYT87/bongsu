@@ -32,7 +32,11 @@ describe("notification builders", () => {
       text: "Instagram reported: container EXPIRED",
       target: KEY,
     });
-    expect(N.providerFailed(KEY, "YouTube", "videos.list: 500", true)).toMatchObject({
+    expect(N.providerFailed(KEY, "YouTube", "YouTube rejected the video: duplicate", "refused")).toMatchObject({
+      group: "problems",
+      text: "YouTube reported: YouTube rejected the video: duplicate\nYouTube refused the video: it is still there, private, for you to inspect.",
+    });
+    expect(N.providerFailed(KEY, "YouTube", "videos.list: 500", "kept")).toMatchObject({
       group: "problems",
       text: "YouTube reported: videos.list: 500\nThe video is still on YouTube, private: inspect it there or publish it by hand.",
     });

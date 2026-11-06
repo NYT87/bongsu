@@ -42,11 +42,23 @@ export const jobHeld = (key: string, hours: number): Note => ({
   text: `not published within ${hours} h of its time`,
   target: key,
 });
-/** `keptVideo`: the job had uploaded a private video, which stays on the platform (it is never deleted on a failure). */
-export const providerFailed = (key: string, platformName: string, error: string, keptVideo = false): Note => ({
+/** `video`: the job had uploaded a private video, which stays on the platform (never deleted on a failure): "kept"
+ *  after errors (it can be published by hand), "refused" when the platform rejected it (only to inspect). */
+export const providerFailed = (
+  key: string,
+  platformName: string,
+  error: string,
+  video: false | "kept" | "refused" = false,
+): Note => ({
   group: "problems",
   title: `${key}: failed`,
-  text: `${platformName} reported: ${error}${keptVideo ? `\nThe video is still on ${platformName}, private: inspect it there or publish it by hand.` : ""}`,
+  text: `${platformName} reported: ${error}${
+    video === "kept"
+      ? `\nThe video is still on ${platformName}, private: inspect it there or publish it by hand.`
+      : video === "refused"
+        ? `\n${platformName} refused the video: it is still there, private, for you to inspect.`
+        : ""
+  }`,
   target: key,
 });
 /** YouTube's audit lock (providers/youtube.ts YouTubeLocked): the job's last_error is this text too. */

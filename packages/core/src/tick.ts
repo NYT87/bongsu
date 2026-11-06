@@ -283,6 +283,7 @@ export async function tick(
         await discover(c, a);
     const active = await activeJobs(c, accounts);
     for (const job of active) await advance(c, job);
+    await sweepRemoved(c);
     return {
       status: "ok",
       detail: { part, advanced: active.length, held: [...c.held.keys()], dry_run: c.dry },
@@ -534,8 +535,11 @@ async function advance(c: Ctx, job: JobRow) {
 async function failedNote(c: Ctx, job: JobRow, p: Payload, msg: string) {
   if (!previousUpload(p)) return N.jobFailed(job.item_key, msg);
   const a = await c.account(p, job.workspace_id);
-  return N.providerFailed(job.item_key, platform(a?.platform ?? "")?.name ?? "the platform", msg, true);
+  return N.providerFailed(job.item_key, platform(a?.platform ?? "")?.name ?? "the platform", msg, "kept");
 }
+
+/** How long a day's quota-note marker is kept (a Pacific day, with room for the time zones). */
+const QUOTA_NOTE_KEEP_S = 2 * 86400;
 
 /** A platform's daily quota is used up (YouTube's resets at midnight Pacific time): the job waits until then without
  *  counting an attempt, its step (or, before the first one, the payload) carrying the time; one note per workspace
@@ -553,6 +557,10 @@ async function waitQuota(c: Ctx, job: JobRow, p: Payload) {
     .bind(`youtube_quota:${job.workspace_id}:${day}`, c.nowS)
     .first();
   if (first) await c.note.send(N.youtubeQuota(), job.workspace_id);
+  // the days before are done with
+  await c.env.DB.prepare("DELETE FROM settings WHERE key LIKE ?1 AND updated_at < ?2")
+    .bind("youtube_quota:%", c.nowS - QUOTA_NOTE_KEEP_S)
+    .run();
 }
 
 /** `payload`: the job's state to keep with the refusal (a step that left a private video, for the next approval). */
@@ -605,14 +613,56 @@ async function settle(c: Ctx, job: JobRow, p: Payload, r: Recheck) {
 }
 
 /** Deletes the private video a job uploaded for an item that is gone, best effort; the audit row records a video
- *  that is gone now. Returns the payload without the step when it is (else kept, so nothing claims it was deleted). */
+ *  that is gone now. Returns the payload with the step's videoId dropped when it is (else kept: nothing claims it was
+ *  deleted, and the sweep tries again). Dry run deletes nothing: it audits what it would delete and keeps the step. */
 async function discard(c: Ctx, job: JobRow, p: Payload): Promise<Payload> {
+  const step = p.step!;
+  const videoId = step.data.videoId;
+  if (c.dry) {
+    await audit(c.env.DB, c.nowS, "would_delete", job.item_key, { videoId }, job.workspace_id);
+    return p;
+  }
   const pr = await c.provider(p, job.workspace_id);
-  const videoId = p.step?.data.videoId;
-  if (!(await pr.discard?.(p.step!))) return p;
+  if (!(await pr.discard?.(step))) return p;
   await audit(c.env.DB, c.nowS, "youtube_video_deleted", job.item_key, { videoId }, job.workspace_id);
-  const { step: _gone, ...rest } = p;
-  return rest;
+  const { videoId: _gone, ...data } = step.data;
+  return { ...p, step: { ...step, data } };
+}
+
+/** Deletes per run at most, in the sweep below: each costs a token refresh and a videos.delete, within the run's
+ *  subrequest budget; the rest go on the next runs. */
+const SWEEP_PER_RUN = 3;
+
+/**
+ * A private video left by a job that is no longer active (refused, held or failed, keeping its video for a new
+ * approval) whose item has since been removed: nothing would ever reach it, so it is deleted here, as the active path
+ * does. Never one that may be live (the publishing call was made), never in dry run, nor in a held workspace. The
+ * LIKE filters only narrow the rows; the payload decides.
+ */
+async function sweepRemoved(c: Ctx) {
+  if (c.dry) return;
+  const r = await c.env.DB.prepare(
+    `SELECT * FROM jobs WHERE state IN ('refused', 'held', 'failed') AND kind != 'comment' AND media_id IS NULL
+       AND payload LIKE '%"videoId"%' AND payload NOT LIKE '%"publishing":true%'
+       AND NOT EXISTS (SELECT 1 FROM plan_items i WHERE i.item_key = jobs.item_key)
+       AND workspace_id NOT IN ${jsonList(c.env.DB, 1)} ORDER BY updated_at, id LIMIT ?2`,
+  )
+    .bind(JSON.stringify([...c.held.keys()]), SWEEP_PER_RUN)
+    .all<JobRow>();
+  for (const job of r.results) {
+    const p = JSON.parse(job.payload) as Payload;
+    // a row the LIKE let through but the payload rules out, or a failed delete, still touches updated_at: the others
+    // get their turn first next run
+    if (!previousUpload(p) || mayBeLive(job, p)) {
+      await c.setJob(job.id, {});
+      continue;
+    }
+    try {
+      await c.setJob(job.id, { payload: await discard(c, job, p) });
+    } catch {
+      await c.setJob(job.id, {});
+    }
+  }
 }
 
 /** Every fingerprint again, just before publishing: the texts and each media file's checksum in its store. */
@@ -968,7 +1018,7 @@ async function withLinks(c: Ctx, job: JobRow, p: Payload, step: Step): Promise<S
 async function failStep(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step) {
   await c.setJob(job.id, { state: "failed", last_error: step.error ?? "failed", payload: { ...p, step } });
   await c.note.send(
-    N.providerFailed(job.item_key, platformName(pr), step.error ?? "failed", !!step.data.videoId),
+    N.providerFailed(job.item_key, platformName(pr), step.error ?? "failed", step.data.videoId ? "refused" : false),
     job.workspace_id,
   );
 }

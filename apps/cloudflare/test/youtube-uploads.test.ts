@@ -330,6 +330,38 @@ const step = async (key = KEY) =>
 const notes = (re: RegExp) => w.notifications.filter((n) => re.test(`${n.title}\n${n.body}`));
 const s = (d: Date) => Math.floor(d.getTime() / 1000);
 
+/** plan_remove, as an agent does it. */
+const removeItem = () =>
+  planRemove(
+    {
+      env: e,
+      fetch: w.fetch,
+      now,
+      caller: { id: "agent", name: "agent", workspaceId: "default", scopes: ["plan" as const] },
+    } as never,
+    KEY,
+  );
+const deletedRows = async () =>
+  (
+    await env.DB.prepare("SELECT target, detail FROM audit WHERE action = 'youtube_video_deleted'").all<{
+      target: string;
+      detail: string;
+    }>()
+  ).results.map((r) => ({ target: r.target, detail: JSON.parse(r.detail) }));
+/** Counts YouTube's videos.delete calls from here on. */
+function countDeletes() {
+  const calls = { n: 0 };
+  const real = w.fetch;
+  w.fetch = async (input, init) => {
+    const req = new Request(input, init);
+    const u = new URL(req.url);
+    if (req.method === "DELETE" && u.hostname === "www.googleapis.com" && u.pathname === "/youtube/v3/videos")
+      calls.n++;
+    return real(input, init);
+  };
+  return calls;
+}
+
 describe("YouTube uploads: changes, removal, quota and errors", () => {
   it("a texts-only edit after the upload updates the video", async () => {
     await uploadAhead();
@@ -358,15 +390,7 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
 
   it("removing the item deletes the private video", async () => {
     await uploadAhead();
-    await planRemove(
-      {
-        env: e,
-        fetch: w.fetch,
-        now: at(-4000),
-        caller: { id: "agent", name: "agent", workspaceId: "default", scopes: ["plan" as const] },
-      } as never,
-      KEY,
-    );
+    await removeItem();
     await run(at(-3600));
     expect(await job()).toMatchObject({ state: "refused", last_error: "removed from the plan" });
     expect(w.ytVideos.has("vid-1")).toBe(false);
@@ -484,6 +508,55 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
       expect.stringContaining(
         "YouTube refused the thumbnail: the channel needs YouTube's verified features (the video still goes out)",
       ),
+    ]);
+  });
+
+  it("a refused job's video is deleted once its item is removed, and only once", async () => {
+    await uploadAhead();
+    await env.DB.prepare("UPDATE plan_items SET due_at = ?1 WHERE item_key = ?2")
+      .bind(await localToUnix("2026-10-20", "19:00"), KEY)
+      .run();
+    await run(at(-3600));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" }); // kept for the next approval
+    await removeItem();
+    const deletes = countDeletes();
+    await run(at(-3300));
+    expect(w.ytVideos.has("vid-1")).toBe(false);
+    expect(await deletedRows()).toEqual([{ target: KEY, detail: { videoId: "vid-1" } }]);
+    expect((await job())?.videoId).toBeUndefined();
+    await run(at(-3000));
+    expect(deletes.n).toBe(1);
+    expect(await deletedRows()).toHaveLength(1);
+  });
+
+  it("a failed job's video is deleted once its item is removed", async () => {
+    await uploadAhead();
+    w.ytKeepPrivate = true;
+    await run(T);
+    expect(await job()).toMatchObject({ state: "failed", videoId: "vid-1" });
+    await removeItem();
+    await run(at(300));
+    expect(w.ytVideos.has("vid-1")).toBe(false);
+    expect(await deletedRows()).toEqual([{ target: KEY, detail: { videoId: "vid-1" } }]);
+  });
+
+  it("dry run never deletes a removed item's video", async () => {
+    await uploadAhead();
+    await setup({ DRY_RUN: "1" });
+    await removeItem();
+    const deletes = countDeletes();
+    await run(at(-3600)); // the active job settles
+    await run(at(-3300)); // and the sweep passes it by
+    expect(await job()).toMatchObject({ state: "refused", last_error: "removed from the plan", videoId: "vid-1" });
+    expect(w.ytVideos.has("vid-1")).toBe(true);
+    expect(deletes.n).toBe(0);
+    expect(await deletedRows()).toEqual([]);
+    const would = await env.DB.prepare("SELECT target, detail FROM audit WHERE action = 'would_delete'").all<{
+      target: string;
+      detail: string;
+    }>();
+    expect(would.results.map((r) => ({ target: r.target, detail: JSON.parse(r.detail) }))).toEqual([
+      { target: KEY, detail: { videoId: "vid-1" } },
     ]);
   });
 });
