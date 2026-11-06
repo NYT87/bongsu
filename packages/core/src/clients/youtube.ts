@@ -13,6 +13,16 @@ export class AnalyticsScopeError extends Error {}
 /** YouTube's quota is used up (403 quotaExceeded) or the channel hit its upload limit (uploadLimitExceeded). */
 export class QuotaExceeded extends Error {}
 
+/** YouTube refused a call (other than for quota): `status` is its HTTP status. */
+export class YouTubeRefused extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 /** The resumable session no longer exists (404/410): the upload starts again from a new session. */
 export class SessionGone extends Error {}
 
@@ -309,7 +319,7 @@ export class YouTube {
     } catch {}
     if (reasons.includes("uploadLimitExceeded") || (r.status === 403 && reasons.includes("quotaExceeded")))
       throw new QuotaExceeded(`youtube ${what}: ${text}`);
-    throw new Error(`youtube ${what}: ${r.status} ${text}`);
+    throw new YouTubeRefused(r.status, `youtube ${what}: ${r.status} ${text}`);
   }
 
   /** The answer to a session PUT: done (the video resource), or 308 with the bytes YouTube kept in `Range`. */

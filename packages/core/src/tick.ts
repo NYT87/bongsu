@@ -523,6 +523,8 @@ async function verify(
   alts: string[];
   /** A YouTube video's texts as approved (null: the job has none). */
   texts: YouTubeTexts | null;
+  /** Each media file's current name in its store, by id (when nothing is wrong). */
+  names?: Record<string, string>;
 }> {
   const ap = p.approval!;
   const captionRaw = p.story ? "" : await c.read(p.captionPath); // a Story has no caption or comments
@@ -585,7 +587,8 @@ async function verify(
     if ((await youtubeSha(texts, roles)) !== (ap.textsSha256 ?? null))
       return { problem: "the title or translations changed after approval", caption, comment, alts: [], texts: null };
   }
-  return { problem: null, caption, comment, alts: altLines(alt), texts };
+  const names = Object.fromEntries(entries.map((e) => [e.ref.id, e.name]));
+  return { problem: null, caption, comment, alts: altLines(alt), texts, names };
 }
 
 async function link(c: Ctx, m: MediaRef, video: boolean, workspaceId: string) {
@@ -652,7 +655,13 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
     caption: v.caption,
     alts: v.alts,
     media: await Promise.all(
-      media.map(async (m, i) => ({ id: m.id, url: await link(c, m, kinds[i], job.workspace_id), video: kinds[i] })),
+      media.map(async (m, i) => ({
+        id: m.id,
+        url: await link(c, m, kinds[i], job.workspace_id),
+        video: kinds[i],
+        name: v.names?.[m.id] ?? m.id,
+        checksum: m.checksum,
+      })),
     ),
     options: postOptions(p, format),
   });
@@ -731,7 +740,15 @@ async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
     format: "video",
     caption: v.caption,
     alts: [],
-    media: [{ id: m.id, url: await link(c, m, true, job.workspace_id), video: true }],
+    media: [
+      {
+        id: m.id,
+        url: await link(c, m, true, job.workspace_id),
+        video: true,
+        name: v.names?.[m.id] ?? m.id,
+        checksum: m.checksum,
+      },
+    ],
     options: postOptions({ ...p, trial: true }, "video"),
   });
 }

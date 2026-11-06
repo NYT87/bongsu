@@ -152,6 +152,13 @@ export class World {
   ytKeepPrivate = false;
   /** Files the uploads read as sources (path → bytes), served at https://files.example.com/<path> with Range. */
   ytFiles = new Map<string, Uint8Array>();
+  /** captions.insert calls so far; the call with this number answers 500, once (null: none fails). */
+  ytCaptionCalls = 0;
+  ytCaptionFailOnce: number | null = null;
+  /** thumbnails.set answers 403 (a channel not allowed custom thumbnails). */
+  ytThumbnailRefused = false;
+  /** Every caption track inserted, in order (a duplicate shows here even after a delete). */
+  ytCaptionInserts: { video: string; lang: string; id: string }[] = [];
   notifications: { title: string; body: string; actions?: string }[] = [];
   /** Emails sent through the fake Resend API. */
   mails: { from: string; to: string[]; subject: string; text: string }[] = [];
@@ -411,7 +418,8 @@ export class World {
         if (this.ytUploadLimit)
           return json({ error: { code: 400, message: "limit", errors: [{ reason: "uploadLimitExceeded" }] } }, 400);
         const b = (await req.json()) as { snippet: Record<string, any>; status: Record<string, any> };
-        const id = `vid-${this.ytVideos.size + 1}`;
+        // numbered by session (never removed), so a video uploaded after a delete gets a new id
+        const id = `vid-${this.ytSessions.size + 1}`;
         const up = `up-${this.ytSessions.size + 1}`;
         this.ytVideos.set(id, {
           size: Number(req.headers.get("X-Upload-Content-Length")),
@@ -430,6 +438,8 @@ export class World {
       }
       if (req.method === "POST" && url.pathname === "/upload/youtube/v3/thumbnails/set") {
         if (this.ytQuota) return quota();
+        if (this.ytThumbnailRefused)
+          return json({ error: { code: 403, errors: [{ reason: "forbidden" }], message: "custom thumbnails" } }, 403);
         const v = this.ytVideos.get(url.searchParams.get("videoId") ?? "");
         if (!v) return json({ error: { code: 404, message: "videoNotFound" } }, 404);
         const bytes = (await req.arrayBuffer()).byteLength;
@@ -438,14 +448,17 @@ export class World {
       }
       if (req.method === "POST" && url.pathname === "/upload/youtube/v3/captions") {
         if (this.ytQuota) return quota();
+        if (++this.ytCaptionCalls === this.ytCaptionFailOnce)
+          return json({ error: { code: 500, message: "backendError" } }, 500);
         const text = new TextDecoder("latin1").decode(await req.arrayBuffer());
         const meta = JSON.parse(/\r\n\r\n(\{.*?\})\r\n--/s.exec(text)?.[1] ?? "{}") as {
           snippet?: { videoId: string; language: string };
         };
         const v = this.ytVideos.get(meta.snippet?.videoId ?? "");
         if (!v || !meta.snippet) return json({ error: { code: 404, message: "videoNotFound" } }, 404);
-        const id = `cap-${this.ytVideos.size}-${v.captions.size + 1}`;
+        const id = `cap-${this.ytCaptionInserts.length + 1}`;
         v.captions.set(id, { lang: meta.snippet.language });
+        this.ytCaptionInserts.push({ video: meta.snippet.videoId, lang: meta.snippet.language, id });
         return json({ id, snippet: meta.snippet });
       }
       return json({ error: { code: 404, message: "no such upload endpoint" } }, 404);

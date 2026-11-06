@@ -123,7 +123,7 @@ registerProvider("composio", {
 registerProvider("youtube", {
   factory: async (env, fetcher, a) => {
     const oauth = await connectionSecret(env, a.connection);
-    return oauth ? new YouTubeProvider(oauth, fetcher) : null;
+    return oauth ? new YouTubeProvider(oauth, fetcher, env.YOUTUBE_UPLOAD_MODE === "chunk") : null;
   },
   connect: {
     kind: "oauth2",

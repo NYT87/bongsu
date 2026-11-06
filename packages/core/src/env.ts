@@ -43,6 +43,8 @@ export interface Env {
   JOBS_PER_TICK?: string;
   /** Workspaces the inbox run scans per run (constants.ts INBOX_WORKSPACES_PER_RUN): unset, 3 on Cloudflare and 20 on Node. */
   INBOX_WORKSPACES_PER_RUN?: string;
+  /** "chunk": YouTube uploads go in 8 MiB pieces instead of one streamed request (if streaming costs too much CPU). */
+  YOUTUBE_UPLOAD_MODE?: string;
   /** "off" on Node: the server only serves, nothing runs on a schedule (a replica, a demo). Never set on Cloudflare. */
   SCHEDULES?: string;
 }
