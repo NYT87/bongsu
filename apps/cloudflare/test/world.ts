@@ -9,8 +9,10 @@ import { addApproval, defaultTime } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneToUnix } from "@bongsu/core/formats/time";
+import { serveMedia } from "@bongsu/core/media";
 import { clearFolderCache } from "@bongsu/core/media/drive";
 import { FakeS3 } from "@bongsu/core/media/fake-s3";
+import { mediaStoreById } from "@bongsu/core/media/index";
 import { setWorkspaceNtfy } from "@bongsu/core/ntfy";
 import { setWorkspaceSettings, workspaceZone } from "@bongsu/core/workspaces";
 
@@ -152,6 +154,9 @@ export class World {
   ytKeepPrivate = false;
   /** Files the uploads read as sources (path → bytes), served at https://files.example.com/<path> with Range. */
   ytFiles = new Map<string, Uint8Array>();
+  /** The scheduler's own signed /m/ links, for a provider that fetches the files itself (YouTube): serveLinks sets
+   *  it, so the links are checked against the test's clock rather than the real one. */
+  links: ((req: Request) => Promise<Response>) | null = null;
   /** captions.insert calls so far; the call with this number answers 500, once (null: none fails). */
   ytCaptionCalls = 0;
   ytCaptionFailOnce: number | null = null;
@@ -202,6 +207,7 @@ export class World {
     const json = (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
     if (url.hostname === "s3.test" || url.hostname.endsWith(".s3.test")) return this.s3.fetch(req);
+    if (this.links && url.pathname.startsWith("/m/")) return this.links(req);
 
     if (url.hostname === "oauth2.googleapis.com" && url.pathname === "/revoke") {
       this.googleRevoked.push(url.searchParams.get("token") ?? "");
@@ -891,6 +897,13 @@ async function baseEnv(base: Env, overrides: Partial<Env> & Record<string, unkno
     ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     ...overrides,
   } as Env;
+}
+
+/** Serves the scheduler's signed /m/ links (what the tick hands a provider) from the env's media stores, at the
+ *  instant `now()` gives: the tick's clock, not the real one, decides whether a link has expired. */
+export function serveLinks(w: World, e: Env, now: () => Date) {
+  w.links = (req) =>
+    serveMedia(req, e.MEDIA_SIGNING_KEY, (id) => mediaStoreById(e, w.fetch, id), Math.floor(now().getTime() / 1000));
 }
 
 export const Q = "channels/vlogs/INSTAGRAM";

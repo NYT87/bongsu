@@ -7,7 +7,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { tick } from "@bongsu/core/tick";
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, localToUnix, MD5, seedReel, testEnv, World } from "./world";
+import { clearPlan, localToUnix, MD5, seedReel, serveLinks, testEnv, World } from "./world";
 
 const fake: Verifiers = {
   registration: (async () => ({
@@ -22,6 +22,9 @@ const fake: Verifiers = {
   })) as unknown as Verifiers["authentication"],
 };
 const KEY = "post:20261020_DEMO/clip";
+/** The item's due time (18:00 in Seoul); a YouTube job starts its upload 6 h before it. */
+const DUE = new Date("2026-10-20T09:00:00Z");
+const AHEAD = new Date(DUE.getTime() - 21600 * 1000);
 const TEXTS = {
   title: "Demo",
   translations: { es: { title: "Demostración", description: "Un vídeo de prueba" } },
@@ -102,6 +105,7 @@ beforeEach(async () => {
   w = new World();
   e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test", RP_ID: "bongsu.test" } as Partial<Env>);
   await env.DB.prepare("UPDATE accounts SET external_id = 'UCdemo000000000000000000' WHERE id = 'main'").run();
+  serveLinks(w, e, () => DUE);
   cookie = "";
   await signUp();
 });
@@ -166,17 +170,17 @@ describe("approving a YouTube video", () => {
     await seedVideo();
     await approveIt();
     await setTexts({ ...TEXTS, title: "Changed after approval" });
-    // The lead (upload ahead of the due time) comes with Task 11, so the tick runs at the due time.
-    await tick(e, { fetch: w.fetch, now: new Date("2026-10-20T09:00:00Z") });
+    await tick(e, { fetch: w.fetch, now: AHEAD });
     expect(await job()).toEqual({ state: "refused", last_error: "the title or translations changed after approval" });
   });
 
   it("the tick passes unchanged texts on to verify", async () => {
     await seedVideo();
     await approveIt();
-    await tick(e, { fetch: w.fetch, now: new Date("2026-10-20T09:00:00Z") });
-    // past verify: it reaches the provider, whose upload isn't built yet (Task 10), and is not refused
-    expect(await job()).toEqual({ state: "pending", last_error: expect.stringContaining("aren't supported yet") });
+    await tick(e, { fetch: w.fetch, now: AHEAD });
+    // past verify: the provider starts the private upload
+    expect(await job()).toEqual({ state: "container_created", last_error: null });
+    expect(w.ytSessions.size).toBe(1);
   });
 
   it("a renamed subtitle file breaks the approval, in the app and in the tick", async () => {
@@ -184,7 +188,7 @@ describe("approving a YouTube video", () => {
     await approveIt();
     w.drive.get(ids.es)!.name = "fr.srt"; // same id and checksum, another language
     expect((await item()).approved).toMatchObject({ matches: false });
-    await tick(e, { fetch: w.fetch, now: new Date("2026-10-20T09:00:00Z") });
+    await tick(e, { fetch: w.fetch, now: DUE });
     expect(await job()).toEqual({ state: "refused", last_error: "the title or translations changed after approval" });
   });
 
@@ -200,7 +204,7 @@ describe("approving a YouTube video", () => {
     await seedVideo();
     await approveIt();
     await env.DB.prepare("UPDATE plan_items SET texts = NULL WHERE item_key = ?1").bind(KEY).run();
-    await tick(e, { fetch: w.fetch, now: new Date("2026-10-20T09:00:00Z") });
+    await tick(e, { fetch: w.fetch, now: DUE });
     expect(await job()).toEqual({ state: "refused", last_error: "the title or translations changed after approval" });
   });
 

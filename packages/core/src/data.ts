@@ -297,15 +297,16 @@ export async function dbMedia(db: Db, path: string): Promise<Pick<MediaRef, "sto
 
 // ---------------------------------------------------------------- plan items
 
-/** Due (due_at ≤ now), not on hold, not posted, for one account. */
-export async function dueItems(db: Db, account: string, nowS: number): Promise<PlanItem[]> {
+/** Due (due_at ≤ now + leadS: a platform that uploads ahead takes its items that much early), not on hold, not
+ *  posted, for one account. */
+export async function dueItems(db: Db, account: string, nowS: number, leadS = 0): Promise<PlanItem[]> {
   const r = await db
     .prepare(
       `SELECT p.* FROM plan_items p LEFT JOIN posted x ON x.item_key = p.item_key
      WHERE p.account = ?1 AND p.due_at IS NOT NULL AND p.due_at <= ?2 AND p.hold = 0 AND x.item_key IS NULL
      ORDER BY p.due_at, p.sort`,
     )
-    .bind(account, nowS)
+    .bind(account, nowS + leadS)
     .all<PlanItem>();
   return r.results;
 }

@@ -3,6 +3,11 @@
 //   lock → held workspaces (paused, archived) → discover due items → advance active jobs one step each → Shorts comments
 //   → prune audit
 //
+// A platform with an upload lead (YouTube: Platform.uploadLeadS) has its items discovered and its jobs started that
+// long before they are due: the video is uploaded private and processed, waits unseen (those runs count no attempt),
+// and goes public at its due time after the usual checks. Each run advances the other jobs first and the upload steps
+// last, so a long upload never delays an Instagram post.
+//
 // A held workspace's (paused or archived) accounts aren't discovered, its jobs aren't advanced and its Shorts comments
 // wait; the other workspaces go on as usual.
 //
@@ -44,13 +49,13 @@ import { mediaUrl } from "./media";
 import { type MediaStores, mediaStores } from "./media/index";
 import { isVideo, type MediaStore } from "./media/store";
 import { audit, type Notifier, notifier } from "./notify";
-import { platform } from "./platforms/index";
+import { leadOf, MAX_LEAD_S, platform } from "./platforms/index";
 import type { Format } from "./platforms/types";
-import { MediaRolesError, mediaRoles, roleKeys } from "./platforms/youtube";
+import { MediaRolesError, mediaRoles, roleKeys, youtubeSettings } from "./platforms/youtube";
 import { providerFor } from "./providers/index";
 import { ComposioInstagram } from "./providers/instagram-composio";
 import { InstagramProvider } from "./providers/instagram-publish";
-import type { OutgoingPost, Provider, Step } from "./providers/types";
+import type { OutgoingMedia, OutgoingPost, Provider, Step } from "./providers/types";
 import { jsonList } from "./sql";
 import * as N from "./texts/notifications";
 import { workspaceSettings, workspaceZone } from "./workspaces";
@@ -155,6 +160,7 @@ class Ctx {
   nowS: number;
   private zones = new Map<string, string>();
   private providers = new Map<string, Provider>();
+  private accounts = new Map<string, Promise<Account | null>>();
   constructor(
     public env: Env,
     public deps: Deps,
@@ -178,7 +184,7 @@ class Ctx {
     const k = `${workspaceId}/${p.username ?? p.account}`;
     let pr = this.providers.get(k);
     if (!pr) {
-      const a = p.username ? await findAccount(this.env.DB, p.username, workspaceId) : null;
+      const a = await this.account(p, workspaceId);
       pr =
         (a && (await providerFor(this.env, this.deps.fetch, a))) ??
         new InstagramProvider(
@@ -187,6 +193,17 @@ class Ctx {
       this.providers.set(k, pr);
     }
     return pr;
+  }
+  /** The job's account (payload.username, in the job's workspace), looked up once per run. */
+  account(p: Payload, workspaceId: string): Promise<Account | null> {
+    if (!p.username) return Promise.resolve(null);
+    const k = `${workspaceId}/${p.username}`;
+    let a = this.accounts.get(k);
+    if (!a) {
+      a = findAccount(this.env.DB, p.username, workspaceId);
+      this.accounts.set(k, a);
+    }
+    return a;
   }
   /** The workspace's time zone (for the messages), looked up once per run. */
   async zone(workspaceId: string): Promise<string> {
@@ -253,24 +270,46 @@ export async function tick(
         .run();
       return { status: "ok", detail: { part, dry_run: c.dry } };
     }
-    // every account on a platform Bongsu publishes to (YouTube's are only commented on, below)
-    for (const a of await listAccounts(env.DB))
-      if (platform(a.platform)?.formats.length && !c.held.has(a.workspaceId)) await discover(c, a);
-    // a held workspace's jobs wait where they are, and don't take the run's share from the others
-    const active = await env.DB.prepare(
-      `SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1
-         AND workspace_id NOT IN ${jsonList(env.DB, 3)} ORDER BY due_at LIMIT ?2`,
-    )
-      .bind(nowS, jobsPerTick(env), JSON.stringify([...c.held.keys()]))
-      .all<JobRow>();
-    for (const job of active.results) await advance(c, job);
+    // disabled ones too: their jobs' leads (recheck then refuses them)
+    const accounts = await listAccounts(env.DB, { all: true });
+    // every active account on a platform Bongsu publishes to
+    for (const a of accounts)
+      if (a.status === "active" && platform(a.platform)?.formats.length && !c.held.has(a.workspaceId))
+        await discover(c, a);
+    const active = await activeJobs(c, accounts);
+    for (const job of active) await advance(c, job);
     return {
       status: "ok",
-      detail: { part, advanced: active.results.length, held: [...c.held.keys()], dry_run: c.dry },
+      detail: { part, advanced: active.length, held: [...c.held.keys()], dry_run: c.dry },
     };
   } finally {
     await release(env.DB, lock, holder);
   }
+}
+
+/** The jobs this run advances: those due within their platform's lead, the upload steps last (one can take most of a
+ *  run), cut to jobsPerTick. A held workspace's jobs wait where they are, and don't take the run's share from the
+ *  others. The query takes everything within the longest lead; each job's own lead (its account's platform) is
+ *  applied here. */
+async function activeJobs(c: Ctx, accounts: Account[]): Promise<JobRow[]> {
+  const r = await c.env.DB.prepare(
+    `SELECT * FROM jobs WHERE state IN ('pending', 'container_created', 'published') AND kind != 'comment' AND due_at <= ?1
+       AND workspace_id NOT IN ${jsonList(c.env.DB, 2)} ORDER BY due_at, id`,
+  )
+    .bind(c.nowS + MAX_LEAD_S, JSON.stringify([...c.held.keys()]))
+    .all<JobRow>();
+  const platforms = new Map(accounts.map((a) => [`${a.workspaceId}/${a.id}`, a.platform]));
+  const jobs = r.results.map((job) => ({ job, p: JSON.parse(job.payload) as Payload }));
+  return jobs
+    .filter(({ job, p }) => job.due_at - leadOf(platforms.get(`${job.workspace_id}/${p.username}`)) <= c.nowS)
+    .sort((a, b) => Number(isUploadStep(a.job, a.p)) - Number(isUploadStep(b.job, b.p))) // stable: due order kept
+    .slice(0, jobsPerTick(c.env))
+    .map(({ job }) => job);
+}
+
+/** A job sending its file to the platform (YouTube's uploading phase): the run's longest step. */
+export function isUploadStep(job: Pick<JobRow, "state">, p: Pick<Payload, "step">): boolean {
+  return job.state === "container_created" && p.step?.data.phase === "uploading";
 }
 
 /** The jobs a tick advances: the JOBS_PER_TICK variable when it is a whole number from 1 (at most
@@ -304,8 +343,8 @@ async function discover(c: Ctx, a: Account) {
   };
   const cands: Candidate[] = [];
   const folder = (await workspaceSettings(c.env.DB, a.workspaceId)).mediaFolder;
-  for (const i of await dueItems(c.env.DB, a.id, c.nowS)) {
-    const at = i.due_at as number; // dueItems: due_at ≤ now
+  for (const i of await dueItems(c.env.DB, a.id, c.nowS, leadOf(a.platform))) {
+    const at = i.due_at as number; // dueItems: due_at ≤ now + the platform's lead
     const paths = contentPaths(i, folder);
     cands.push({
       key: i.item_key,
@@ -341,7 +380,8 @@ async function discover(c: Ctx, a: Account) {
     const a = approvals.get(cand.key);
     const job = byKey.get(cand.key);
     if (job) {
-      if (a && reopens(job, JSON.parse(job.payload) as Payload, a)) await reopen(c, job.id, cand, a);
+      const p = JSON.parse(job.payload) as Payload;
+      if (a && reopens(job, p, a)) await reopen(c, job.id, cand, a, p);
       continue;
     }
     await create(c, cand, a);
@@ -435,9 +475,11 @@ async function create(c: Ctx, cand: Candidate, a: Approval | undefined) {
   }
 }
 
-async function reopen(c: Ctx, id: number, cand: Candidate, a: Approval) {
+async function reopen(c: Ctx, id: number, cand: Candidate, a: Approval, old: Payload) {
   const v = verdict(c, cand, a);
   const { payload, kind } = withApproval(cand, a);
+  // a private video uploaded earlier stays with the job: the provider revises it rather than uploading again
+  if (previousUpload(old)) payload.step = old.step;
   await c.env.DB.prepare(
     "UPDATE jobs SET state = ?1, last_error = ?2, kind = ?3, due_at = ?4, payload = ?5, attempts = 0, container_id = NULL, dry_run = ?6, updated_at = ?7 WHERE id = ?8",
   )
@@ -465,8 +507,9 @@ async function advance(c: Ctx, job: JobRow) {
   }
 }
 
-async function refuse(c: Ctx, job: JobRow, reason: string) {
-  await c.setJob(job.id, { state: "refused", last_error: reason, notified: true });
+/** `payload`: the job's state to keep with the refusal (a step that left a private video, for the next approval). */
+async function refuse(c: Ctx, job: JobRow, reason: string, payload?: Payload) {
+  await c.setJob(job.id, { state: "refused", last_error: reason, notified: true, ...(payload ? { payload } : {}) });
   await c.note.send(N.jobRefused(job.item_key, reason), job.workspace_id);
 }
 
@@ -506,7 +549,7 @@ async function recheck(
 /** What recheck found: the job settles (done, refused), or is held until the item is released (discover brings it
  *  back; a held job doesn't take one of the tick's slots while it waits). */
 async function settle(c: Ctx, job: JobRow, p: Payload, r: { state: "done" | "refused" | "wait"; reason: string }) {
-  if (r.state === "refused") return refuse(c, job, r.reason);
+  if (r.state === "refused") return refuse(c, job, r.reason, p);
   if (r.state === "done") return c.setJob(job.id, { state: "done", last_error: r.reason });
   await c.setJob(job.id, { state: "held", last_error: r.reason, payload: { ...p, onHold: true } });
 }
@@ -650,7 +693,14 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   const kinds = await Promise.all(media.map((m) => isVideoRef(c, m, job.workspace_id)));
   // an "image" whose file is a video goes out as a video (a single-video post: the slideshow Reels in posts/reelN_<name>/)
   const format: Format = p.story ? "story" : job.kind === "image" && kinds[0] ? "video" : (job.kind as Format);
+  const account = await c.account(p, job.workspace_id);
+  // a YouTube video's title and translations, and its settings: the item's options over the channel's defaults
+  const youtube =
+    account?.platform === "youtube"
+      ? { texts: v.texts, settings: youtubeSettings(p.options ?? {}, account.settings) }
+      : {};
   await startPublishing(c, job, p, {
+    ...youtube,
     format,
     caption: v.caption,
     alts: v.alts,
@@ -681,10 +731,13 @@ function postOptions(p: Payload, format: Format): Record<string, unknown> {
   return o;
 }
 
+/** The job's earlier step, when it left a private video on the platform (a job reopened by a new approval). */
+const previousUpload = (p: Payload): Step | undefined => (p.step?.data.videoId ? p.step : undefined);
+
 /** The provider's first step; its state goes with the job (payload.step) for check and finish on the next runs. */
 async function startPublishing(c: Ctx, job: JobRow, p: Payload, post: OutgoingPost) {
   const pr = await c.provider(p, job.workspace_id);
-  const step = await pr.start(post);
+  const step = await pr.start(post, previousUpload(p));
   const next: Payload = {
     ...p,
     step,
@@ -767,21 +820,65 @@ async function queueTrial(c: Ctx, job: JobRow, p: Payload) {
 
 async function stepContainer(c: Ctx, job: JobRow, p: Payload) {
   const pr = await c.provider(p, job.workspace_id);
-  const step = p.step ?? (await legacyStep(c, job, p));
+  const step = await withLinks(c, job, p, p.step ?? (await legacyStep(c, job, p)));
   const next = await pr.check(step);
   if (next.state === "failed") return failStep(c, job, p, pr, next);
   if (next.state === "processing") {
     const container = typeof next.data.container === "string" ? next.data.container : null;
-    if (container !== job.container_id) {
-      // a new container to wait for (a carousel's parent): a fresh count of polls
+    if (container !== job.container_id || progressed(step, next)) {
+      // a new container to wait for (a carousel's parent), or a step forward: a fresh count of polls
       await c.setJob(job.id, { container_id: container, attempts: 0, payload: { ...p, step: next } });
       return;
     }
-    return pollWait(c, job, pr);
+    return pollWait(c, job, pr, { ...p, step: next });
   }
+  if (leadOf(pr.platform) > 0) return stepAhead(c, job, { ...p, step: next }, pr, next, progressed(step, next));
   const r = await recheck(c, job, p);
   if (r) return settle(c, job, p, r);
   return publish(c, job, p, pr, next);
+}
+
+/**
+ * A step made ahead of its due time (a private upload) that is ready. Before the due time it waits, unseen: the plan
+ * is asked again (a removed item settles), and the run counts no attempt. At the due time: the plan, then every
+ * fingerprint again (the texts may have changed since the upload; a refusal keeps the video private, and the step for
+ * a new approval to revise), then it goes public. Past the catch-up window it is held, still private.
+ */
+async function stepAhead(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step, moved: boolean) {
+  const r = await recheck(c, job, p);
+  if (r) return settle(c, job, p, r);
+  if (c.nowS < job.due_at) {
+    // reaching the wait ends the polling: a fresh count for whatever comes after
+    await c.setJob(job.id, { payload: p, ...(moved ? { attempts: 0 } : {}) });
+    return;
+  }
+  if (c.nowS - job.due_at > CATCH_UP_S) {
+    await c.setJob(job.id, { state: "held", last_error: "missed the catch-up window", notified: true, payload: p });
+    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600), job.workspace_id);
+    return;
+  }
+  const v = await verify(c, p, job.workspace_id);
+  if (v.problem) return refuse(c, job, v.problem, p);
+  return publish(c, job, p, pr, step);
+}
+
+/** Whether a provider's step moved on (a new phase, more bytes sent): such a run is progress, not a poll. Instagram's
+ *  steps have neither, so its polls count as before. */
+const progressed = (a: Step, b: Step) => a.data.phase !== b.data.phase || a.data.offset !== b.data.offset;
+
+/** A step that fetches its files on later runs keeps their links (YouTube's post.media); a link expires (LINK_TTL_S),
+ *  so each run signs them again from the approval's media. */
+async function withLinks(c: Ctx, job: JobRow, p: Payload, step: Step): Promise<Step> {
+  const post = step.data.post as { media?: OutgoingMedia[] } | undefined;
+  if (!post?.media?.length) return step;
+  const refs = new Map((p.approval?.media ?? []).map((m) => [m.id, m]));
+  const media = await Promise.all(
+    post.media.map(async (m) => {
+      const ref = refs.get(m.id);
+      return ref ? { ...m, url: await link(c, ref, m.video, job.workspace_id) } : m;
+    }),
+  );
+  return { ...step, data: { ...step.data, post: { ...post, media } } };
 }
 
 async function failStep(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step) {
@@ -844,14 +941,15 @@ async function legacyStep(c: Ctx, job: JobRow, p: Payload): Promise<Step> {
 
 const platformName = (pr: Provider) => platform(pr.platform)?.name ?? pr.platform;
 
-async function pollWait(c: Ctx, job: JobRow, pr: Provider) {
+/** A run without progress: one poll more. The step is kept (it carries a provider's state between runs). */
+async function pollWait(c: Ctx, job: JobRow, pr: Provider, p: Payload) {
   const attempts = job.attempts + 1;
   if (attempts > MAX_POLLS) {
     const name = platformName(pr);
-    await c.setJob(job.id, { state: "failed", attempts, last_error: `${name} never finished processing` });
+    await c.setJob(job.id, { state: "failed", attempts, last_error: `${name} never finished processing`, payload: p });
     await c.note.send(N.processingTimeout(job.item_key, name), job.workspace_id);
   } else {
-    await c.setJob(job.id, { attempts });
+    await c.setJob(job.id, { attempts, payload: p });
   }
 }
 
