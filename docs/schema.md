@@ -90,6 +90,7 @@ What was approved, as fingerprints: the texts' sha256 and the media references, 
 | `user_id` | text | yes |  |  |
 | `due_at` | timestamp | yes |  |  |
 | `account` | text | yes |  | The account (its id) the approval is for; a Shorts comment's channel. NULL only on one older than this column whose item was gone: never valid. |
+| `texts_sha` | text | yes |  | sha256 of the approved texts in canonical JSON; NULL: none |
 
 Index `approvals_key`: (item_key, id).
 
@@ -201,6 +202,7 @@ Proposed posts (from agents, the app, the Drive inbox) waiting to be scheduled o
 | `updated_at` | timestamp | no | now |  |
 | `workspace_id` | text | no | "default" |  |
 | `user_id` | text | yes |  | the person who made it (app uploads); NULL for an agent key's |
+| `texts` | json | yes |  | a YouTube video's title, languages, tags and translations (JSON); NULL: none |
 
 Index `drafts_workspace`: (workspace_id, status).
 Index `drafts_status_created`: (status, created_at).
@@ -411,6 +413,7 @@ The plan: every post to publish, with its time, texts, media and options.
 | `texts_at` | timestamp | yes |  |  |
 | `texts_by` | text | yes |  |  |
 | `workspace_id` | text | no | "default" |  |
+| `texts` | json | yes |  | a YouTube video's title, languages, tags and translations (JSON); NULL: none |
 
 Index `plan_items_workspace_due`: (workspace_id, due_at).
 Index `plan_items_account_due`: (account, due_at).

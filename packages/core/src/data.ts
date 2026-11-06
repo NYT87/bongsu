@@ -49,6 +49,8 @@ export interface PlanItem {
   comment?: string | null;
   comment2?: string | null;
   alt?: string | null;
+  /** A YouTube video's title, languages, tags and translations (JSON text, migration 0024); null: none. */
+  texts?: string | null;
   media?: string | null;
   draft_id?: string | null;
 }
@@ -165,6 +167,7 @@ export function contentPaths(i: Pick<PlanItem, "item_key" | "format" | "folder" 
     comment: `db:comment:${key}`,
     comment2: `db:comment2:${key}`,
     alt: video ? null : (`db:alt:${key}` as string | null),
+    texts: `db:texts:${key}`,
   };
   if (i.content === "db") return { ...texts, files: null, media: `db:${key}`, single: video };
   // a repo item: a video is one file (the Reel layout), anything else a folder of media (the posts layout)
@@ -199,7 +202,7 @@ export function contentPaths(i: Pick<PlanItem, "item_key" | "format" | "folder" 
 /** A text by its contentPaths path, from the item's D1 column. null = missing (or a repo path from a job queued
  *  before the texts moved to D1: refused as missing, approve again). */
 export async function readText(db: Db, path: string): Promise<string | null> {
-  const m = /^db:(caption|comment2|comment|alt):(.+)$/.exec(path);
+  const m = /^db:(caption|comment2|comment|alt|texts):(.+)$/.exec(path);
   if (!m) return null;
   const r = await db
     .prepare(`SELECT ${m[1]} AS v FROM plan_items WHERE item_key = ?1`)
@@ -386,6 +389,7 @@ interface ApprovalRow {
   approved_at: string;
   approved_by: string;
   user_id?: string | null;
+  texts_sha?: string | null;
 }
 
 function toApproval(r: ApprovalRow): Approval {
@@ -402,6 +406,7 @@ function toApproval(r: ApprovalRow): Approval {
     approvedAt: r.approved_at,
     approvedBy: r.approved_by,
     approvedByUser: r.user_id ?? null,
+    textsSha256: r.texts_sha ?? null,
   };
 }
 
@@ -458,11 +463,13 @@ export async function addApproval(
     approvedBy: string;
     /** The user who approved (null when no user was recorded). */
     userId?: string | null;
+    /** sha256 of the approved texts (canonical JSON); null: the item has none. */
+    textsSha256?: string | null;
   },
 ): Promise<void> {
   await db
     .prepare(
-      "INSERT INTO approvals (item_key, due_at, caption_sha, comment_sha, alt_sha, media, approved_at, approved_by, comment2_sha, user_id, account) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+      "INSERT INTO approvals (item_key, due_at, caption_sha, comment_sha, alt_sha, media, approved_at, approved_by, comment2_sha, user_id, account, texts_sha) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
     )
     .bind(
       a.key,
@@ -476,6 +483,7 @@ export async function addApproval(
       a.comment2Sha256 ?? null,
       a.userId ?? null,
       a.account,
+      a.textsSha256 ?? null,
     )
     .run();
 }

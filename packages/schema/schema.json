@@ -204,6 +204,10 @@
         "account": {
           "type": "text",
           "description": "The account (its id) the approval is for; a Shorts comment's channel. NULL only on one older than this column whose item was gone: never valid."
+        },
+        "texts_sha": {
+          "type": "text",
+          "description": "sha256 of the approved texts in canonical JSON; NULL: none"
         }
       },
       "indexes": [
@@ -567,6 +571,10 @@
         "user_id": {
           "type": "text",
           "description": "the person who made it (app uploads); NULL for an agent key's"
+        },
+        "texts": {
+          "type": "json",
+          "description": "a YouTube video's title, languages, tags and translations (JSON); NULL: none"
         }
       },
       "indexes": [
@@ -1013,6 +1021,10 @@
           "type": "text",
           "notNull": true,
           "default": "default"
+        },
+        "texts": {
+          "type": "json",
+          "description": "a YouTube video's title, languages, tags and translations (JSON); NULL: none"
         }
       },
       "indexes": [
