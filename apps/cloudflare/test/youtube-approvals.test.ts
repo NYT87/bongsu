@@ -132,6 +132,7 @@ describe("approving a YouTube video", () => {
     expect(i.problems).toEqual([]);
     expect(i.youtube).toEqual({
       texts: TEXTS,
+      roles: [`video:${ids.clip}`, `subtitle:es:${ids.es}`, `thumbnail:${ids.thumb}`],
       subtitles: [{ lang: "es", name: "es.srt" }],
       thumbnail: "thumbnail.jpg",
       settings: { madeForKids: false, privacy: "public", category: "22" },
@@ -174,7 +175,33 @@ describe("approving a YouTube video", () => {
     await seedVideo();
     await approveIt();
     await tick(e, { fetch: w.fetch, now: new Date("2026-10-20T09:00:00Z") });
-    expect((await job())?.last_error ?? "").not.toMatch(/changed after approval/);
+    // past verify: it reaches the provider, whose upload isn't built yet (Task 10), and is not refused
+    expect(await job()).toEqual({ state: "pending", last_error: expect.stringContaining("aren't supported yet") });
+  });
+
+  it("a renamed subtitle file breaks the approval, in the app and in the tick", async () => {
+    await seedVideo();
+    await approveIt();
+    w.drive.get(ids.es)!.name = "fr.srt"; // same id and checksum, another language
+    expect((await item()).approved).toMatchObject({ matches: false });
+    await tick(e, { fetch: w.fetch, now: new Date("2026-10-20T09:00:00Z") });
+    expect(await job()).toEqual({ state: "refused", last_error: "the title or translations changed after approval" });
+  });
+
+  it("a YouTube approval stores a texts fingerprint", async () => {
+    await seedVideo();
+    await approveIt();
+    expect(
+      await env.DB.prepare("SELECT texts_sha FROM approvals WHERE item_key = ?1").bind(KEY).first("texts_sha"),
+    ).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("the tick refuses texts removed after approval", async () => {
+    await seedVideo();
+    await approveIt();
+    await env.DB.prepare("UPDATE plan_items SET texts = NULL WHERE item_key = ?1").bind(KEY).run();
+    await tick(e, { fetch: w.fetch, now: new Date("2026-10-20T09:00:00Z") });
+    expect(await job()).toEqual({ state: "refused", last_error: "the title or translations changed after approval" });
   });
 
   it("an agent key can't approve a YouTube video", async () => {

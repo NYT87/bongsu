@@ -50,7 +50,10 @@ export function canonicalJson(v: unknown): string {
   return JSON.stringify(v) ?? "null";
 }
 
-/** The texts fingerprint an approval keeps; null when the item has no texts. */
-export async function textsSha(texts: object | null): Promise<string | null> {
-  return texts ? sha256Hex(canonicalJson(texts)) : null;
+/** The fingerprint a YouTube approval keeps in texts_sha: the texts and the role each media file plays (`video:<id>`,
+ *  `subtitle:<lang>:<id>`, `thumbnail:<id>`). Roles come from file names, which the media key (id and checksum) doesn't
+ *  cover, so renaming es.srt to fr.srt must change this. null when there are neither (an Instagram item). */
+export async function youtubeSha(texts: object | null, roles: string[] | null): Promise<string | null> {
+  if (texts === null && roles === null) return null;
+  return sha256Hex(canonicalJson({ texts, roles: roles ? [...roles].sort() : null }));
 }

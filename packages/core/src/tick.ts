@@ -36,7 +36,7 @@ import {
   trialFor,
 } from "./data";
 import type { Env } from "./env";
-import { type Approval, type MediaRef, sha256Hex, textsSha } from "./formats/approved";
+import { type Approval, type MediaRef, sha256Hex, youtubeSha } from "./formats/approved";
 import { altLines, captionText, comment2Text, commentText } from "./formats/texts";
 import { parseTexts, type YouTubeTexts } from "./formats/youtube-texts";
 import { acquire, release } from "./lock";
@@ -46,6 +46,7 @@ import { isVideo, type MediaStore } from "./media/store";
 import { audit, type Notifier, notifier } from "./notify";
 import { platform } from "./platforms/index";
 import type { Format } from "./platforms/types";
+import { MediaRolesError, mediaRoles, roleKeys } from "./platforms/youtube";
 import { providerFor } from "./providers/index";
 import { ComposioInstagram } from "./providers/instagram-composio";
 import { InstagramProvider } from "./providers/instagram-publish";
@@ -552,9 +553,8 @@ async function verify(
   // a YouTube video's title and translations: read when the approval covers them or the item has some now
   const textsRaw = p.textsPath ? await c.read(p.textsPath) : null;
   const texts = parseTexts(textsRaw);
-  if (ap.textsSha256 || textsRaw)
-    if ((await textsSha(texts)) !== (ap.textsSha256 ?? null))
-      return { problem: "the title or translations changed after approval", caption, comment, alts: [], texts: null };
+  const youtube = !!(ap.textsSha256 || textsRaw);
+  const entries: { name: string; mime: string; size: number; ref: MediaRef }[] = [];
   const stores = await c.storesFor(workspaceId);
   for (const m of ap.media) {
     const store = stores.for(m);
@@ -570,6 +570,20 @@ async function verify(
     if (!meta) return { problem: `media file ${m.id} is gone`, caption, comment, alts: [], texts: null };
     if (meta.checksum !== m.checksum)
       return { problem: `media file ${m.id} changed after approval`, caption, comment, alts: [], texts: null };
+    entries.push({ name: meta.name, mime: meta.mime, size: meta.size, ref: m });
+  }
+  if (youtube) {
+    // the roles come from the files' current names: a rename (es.srt to fr.srt) changes what is uploaded
+    let roles: string[];
+    try {
+      roles = roleKeys(mediaRoles(entries));
+    } catch (e) {
+      if (!(e instanceof MediaRolesError)) throw e;
+      return { problem: e.message, caption, comment, alts: [], texts: null };
+    }
+    // one message for both: the fingerprint is a single hash of the texts and the roles
+    if ((await youtubeSha(texts, roles)) !== (ap.textsSha256 ?? null))
+      return { problem: "the title or translations changed after approval", caption, comment, alts: [], texts: null };
   }
   return { problem: null, caption, comment, alts: altLines(alt), texts };
 }

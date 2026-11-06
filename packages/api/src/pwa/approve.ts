@@ -16,7 +16,7 @@ import {
   readText,
 } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
-import { sha256Hex, textsSha } from "@bongsu/core/formats/approved";
+import { sha256Hex, youtubeSha } from "@bongsu/core/formats/approved";
 import type { Check } from "@bongsu/core/formats/caption-lint";
 import { altLines, captionText, comment2Text, commentText, TextsError } from "@bongsu/core/formats/texts";
 import { checkTexts, parseTexts, type YouTubeTexts } from "@bongsu/core/formats/youtube-texts";
@@ -24,7 +24,13 @@ import { mediaStores } from "@bongsu/core/media/index";
 import { isMedia, isVideo, type MediaEntry } from "@bongsu/core/media/store";
 import { platform } from "@bongsu/core/platforms/index";
 import { type Format, formatLabel } from "@bongsu/core/platforms/types";
-import { MediaRolesError, mediaRoles, type YouTubeSettings, youtubeSettings } from "@bongsu/core/platforms/youtube";
+import {
+  MediaRolesError,
+  mediaRoles,
+  roleKeys,
+  type YouTubeSettings,
+  youtubeSettings,
+} from "@bongsu/core/platforms/youtube";
 import { memberName, workspaceSettings } from "@bongsu/core/workspaces";
 
 export interface Resolved {
@@ -64,6 +70,8 @@ export interface Resolved {
     texts: YouTubeTexts | null;
     subtitles: { lang: string; name: string }[];
     thumbnail: string | null;
+    /** Each file's role by id (`video:<id>`…): what the approval binds the file names to. */
+    roles: string[];
     settings: YouTubeSettings;
   } | null;
   approved: { at: string; matches: boolean; commentsOnly?: boolean; by: string | null } | null; // commentsOnly: just the comments differ
@@ -200,6 +208,7 @@ export async function resolveItem(
       texts,
       subtitles: (roles?.subtitles ?? []).map((s) => ({ lang: s.lang, name: s.ref.name })),
       thumbnail: roles?.thumbnail?.name ?? null,
+      roles: roles ? roleKeys(roles) : [],
       settings: youtubeSettings(itemOptions(i), acc.settings),
     };
   }
@@ -328,7 +337,7 @@ export async function snapshot(r: Resolved): Promise<Snapshot> {
     commentSha256: r.comment ? await sha256Hex(r.comment) : null,
     comment2Sha256: r.comment2 ? await sha256Hex(r.comment2) : null,
     altSha256: r.alt ? await sha256Hex(r.alt) : null,
-    textsSha256: await textsSha(r.youtube?.texts ?? null),
+    textsSha256: r.youtube ? await youtubeSha(r.youtube.texts, r.youtube.roles) : null,
     media: r.media.map((m) => `${m.store}:${m.id}:${m.checksum}`),
   };
 }

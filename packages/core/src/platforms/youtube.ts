@@ -82,6 +82,15 @@ export function mediaRoles<T>(entries: RoleEntry<T>[]): MediaRoles<T> {
   return { video: videos[0], subtitles, ...(thumbnail !== undefined ? { thumbnail } : {}) };
 }
 
+/** The role of each file as the approval fingerprints it: `video:<id>`, `subtitle:<lang>:<id>`, `thumbnail:<id>`. */
+export function roleKeys(r: MediaRoles<{ id: string }>): string[] {
+  return [
+    `video:${r.video.id}`,
+    ...r.subtitles.map((s) => `subtitle:${s.lang}:${s.ref.id}`),
+    ...(r.thumbnail ? [`thumbnail:${r.thumbnail.id}`] : []),
+  ];
+}
+
 /** Shorts live at /shorts/ when YouTube treats them as one: up to 3 minutes and vertical. */
 export function youtubePermalink(id: string, seconds: number | null, width: number | null, height: number | null) {
   const short = seconds !== null && seconds <= SHORT_MAX_S && width !== null && height !== null && height > width;
