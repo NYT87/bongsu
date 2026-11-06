@@ -477,7 +477,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
       "INSERT INTO post_metrics (item_key, account, platform, media_id, taken_at, views, workspace_id) VALUES ('video:vidU00000004', 'b_tube', 'youtube', 'vidU00000004', 1, 4, 'b')",
     ).run();
     const video = "/app-api/video/metrics?video=vidU00000004";
-    expect((await as("owner", "pwa", video)).json).toEqual({ item: key });
+    expect((await as("owner", "pwa", video)).json).toEqual({ item_key: key });
     const own = await as("bea", "pwa", video);
     expect(own.json.item).toMatchObject({ key: "video:vidU00000004", account: "b_tube" });
     expect(own.json.samples).toMatchObject([{ views: 4 }]);

@@ -3,6 +3,7 @@ import { connectionSecret, youtubeAccounts } from "./accounts";
 import { findUpload } from "./calendar";
 import { ReleaseError, type Upload, YouTube } from "./clients/youtube";
 import { RELEASE_LEAD_S } from "./constants";
+import { freeSlots, slotMessage, slotTaken } from "./data";
 import type { Env } from "./env";
 import { utcIso, zoneStamp } from "./formats/time";
 import { notifier } from "./notify";
@@ -60,6 +61,15 @@ async function moveItem(env: Env, req: ReleaseRequest, itemKey: string) {
   if (!item) throw new ReleaseError("missing", "this video's plan item is gone");
   if (item.posted || item.due_at === null) throw new ReleaseError("not_scheduled", "The video is not scheduled");
   if (!(req.at > req.nowS)) throw new ReleaseError("past", "The new release time is not in the future");
+  // as plan_update: one item per account per hour
+  const taken = await slotTaken(env.DB, item.account, req.at, req.tz, itemKey);
+  if (taken) {
+    const free = await freeSlots(env.DB, item.account, req.at, req.tz, itemKey);
+    throw new ReleaseError(
+      "conflict",
+      `${slotMessage(item.account, taken, req.tz)}${free.length ? ` (free: ${free.map((f) => `${f.date} ${f.time}`).join(", ")})` : ""}`,
+    );
+  }
   await env.DB.prepare("UPDATE plan_items SET due_at = ?1, updated_at = ?2 WHERE item_key = ?3 AND workspace_id = ?4")
     .bind(req.at, req.nowS, itemKey, req.workspaceId)
     .run();

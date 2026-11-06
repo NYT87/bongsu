@@ -62,10 +62,10 @@ export function isoSeconds(d: string): number {
   return Number(m[1] ?? 0) * 86400 + Number(m[2] ?? 0) * 3600 + Number(m[3] ?? 0) * 60 + Number(m[4] ?? 0);
 }
 
-/** Why a release date can't be moved: no such video, not a scheduled one, a time not in the future, or too soon. */
+/** Why a release date can't be moved: no such video, not a scheduled one, a time not in the future, too soon, or an hour another item of the channel holds. */
 export class ReleaseError extends Error {
   constructor(
-    public reason: "missing" | "not_scheduled" | "past" | "lead",
+    public reason: "missing" | "not_scheduled" | "past" | "lead" | "conflict",
     message: string,
   ) {
     super(message);

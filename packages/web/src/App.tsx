@@ -2984,9 +2984,9 @@ function VideoPage({ route }: { route: string }) {
   const missing = !!data && !e;
   useEffect(() => {
     if (!missing || !videoId) return;
-    api<{ item?: unknown }>(`video/metrics?video=${encodeURIComponent(videoId)}`)
+    api<{ item_key?: string }>(`video/metrics?video=${encodeURIComponent(videoId)}`)
       .then((d) => {
-        if (typeof d.item === "string") location.replace(`#/item/${encodeURIComponent(d.item)}/results`);
+        if (d.item_key) location.replace(`#/item/${encodeURIComponent(d.item_key)}/results`);
       })
       .catch(() => {}); // the "not in the calendar" note stands
   }, [missing, videoId]);

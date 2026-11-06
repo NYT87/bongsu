@@ -12,7 +12,7 @@ import { captionText } from "@bongsu/core/formats/texts";
 import { zoneDate } from "@bongsu/core/formats/time";
 import { parseTexts } from "@bongsu/core/formats/youtube-texts";
 import { sampleMetrics } from "@bongsu/core/metrics";
-import { moveRelease } from "@bongsu/core/release";
+import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { tick } from "@bongsu/core/tick";
 import { bongsuVideos } from "@bongsu/core/youtube-videos";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -205,7 +205,7 @@ describe("one video, one place", () => {
     expect(manual.json.item).toMatchObject({ key: `video:${MANUAL}`, platform: "youtube", account: "main" });
     expect(manual.json.samples).toHaveLength(1);
     const mapped = await get("/app-api/video/metrics?video=vid-1");
-    expect(mapped).toEqual({ status: 200, json: { item: KEY } });
+    expect(mapped).toEqual({ status: 200, json: { item_key: KEY } });
   });
 
   it("moving a Bongsu upload's release date moves the item and never calls YouTube", async () => {
@@ -229,7 +229,34 @@ describe("one video, one place", () => {
       asked,
     );
     // the approval was for the old time: it needs approving again
-    expect((await latestApprovals(env.DB, [KEY])).get(KEY)?.dueAt).toBe(DUE);
+    const approved = (await latestApprovals(env.DB, [KEY])).get(KEY);
+    expect(approved?.dueAt).toBe(DUE);
+    expect(approved?.dueAt).not.toBe(asked);
+    expect(w.ytUpdates).toEqual([]);
+  });
+
+  it("a release move into an hour another item of the channel holds is a 409 and changes nothing", async () => {
+    await uploadAhead();
+    const asked = Math.floor(Date.now() / 1000) + 10 * 86400;
+    await env.DB.prepare(
+      "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id) VALUES ('reel:OTHER/x', 'video', 'main', 'OTHER', 'x', ?1, '{}', 0, 2, 0, 0, 'default')",
+    )
+      .bind(asked + 600)
+      .run();
+    const err = await moveRelease(e, w.fetch, {
+      workspaceId: "default",
+      videoId: "vid-1",
+      at: asked,
+      nowS: Math.floor(Date.now() / 1000),
+      tz: "Asia/Seoul",
+      actor: { kind: "owner", userId: null },
+    }).catch((x) => x);
+    expect(err).toMatchObject({ reason: "conflict" });
+    expect(releaseStatus(err)).toBe(409);
+    expect(err.message).toContain("reel:OTHER/x");
+    expect(await env.DB.prepare("SELECT due_at FROM plan_items WHERE item_key = ?1").bind(KEY).first("due_at")).toBe(
+      DUE,
+    );
     expect(w.ytUpdates).toEqual([]);
   });
 
@@ -251,6 +278,18 @@ describe("one video, one place", () => {
 });
 
 describe("workspaces", () => {
+  it("another workspace's own video job on a channel of the same id doesn't enter this workspace's map", async () => {
+    await publish();
+    await env.DB.prepare(
+      "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO NOTHING",
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, media_id, dry_run, payload, created_at, updated_at, workspace_id) VALUES ('reel:B/theirs', 'video', 'conn-b', 1, 'done', 'vidB-theirs', 0, '{\"username\":\"main\"}', 0, 0, 'b')",
+    ).run();
+    expect([...(await bongsuVideos(env.DB, ["main"], "default")).keys()]).toEqual(["vid-1"]);
+    expect([...(await bongsuVideos(env.DB, ["main"], "b")).entries()]).toEqual([["vidB-theirs", "reel:B/theirs"]]);
+  });
+
   it("another workspace's channel uploads don't map to this workspace's items", async () => {
     await publish();
     await env.DB.prepare(
@@ -264,6 +303,5 @@ describe("workspaces", () => {
     // workspace B's channel lists a video with the same id: it isn't the default workspace's upload
     expect((await bongsuVideos(env.DB, ["b_tube"], "b")).size).toBe(0);
     expect((await bongsuVideos(env.DB, ["main", "b_tube"], "b")).size).toBe(0);
-    expect(zoneDate(now, "UTC")).toBeTruthy();
   });
 });

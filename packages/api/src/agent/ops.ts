@@ -498,11 +498,11 @@ const bongsuOf = (c: OpCtx, channels: { id: string }[]) =>
 /** The same for every YouTube channel of the caller's workspace: two accounts on one channel list the same video. */
 const workspaceBongsu = async (c: OpCtx) => bongsuOf(c, await youtubeAccounts(c.env.DB, c.caller.workspaceId));
 
-/** The video page's answer: a Bongsu upload answers `{ item: key }` (the app opens the item), any other video its
+/** The video page's answer: a Bongsu upload answers `{ item_key }` (the app opens the item), any other video its
  *  series, as `uploadMetrics`. */
 export async function videoMetrics(c: OpCtx, o: MetricsQuery & { video: string }) {
   const key = (await workspaceBongsu(c)).get(o.video);
-  return key ? { item: key } : await uploadMetrics(c, o);
+  return key ? { item_key: key } : await uploadMetrics(c, o);
 }
 
 /** A YouTube upload's metrics series (`video:<id>`), when a channel of the caller's workspace lists it. */
@@ -1483,9 +1483,8 @@ export async function performanceList(
   const published = new Map<string, number>();
   const titles = new Map<string, { title: string; label: string }>();
   const mine = await workspaceBongsu(c); // Bongsu uploads, counted under their item (D6)
-  const mineVideos = new Set<string>();
+  const mineVideos = new Set([...mine.keys()].map((id) => `video:${id}`));
   for (const a of accounts) {
-    for (const id of mine.keys()) mineVideos.add(`video:${id}`);
     const uploads = (a.platform === "youtube" ? await cachedUploads(c, a.id) : []).filter((u) => !mine.has(u.id));
     for (const [k, v] of await publishedTimes(c, a.id, uploads)) published.set(k, v);
     for (const u of uploads)
