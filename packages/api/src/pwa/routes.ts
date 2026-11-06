@@ -970,6 +970,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       }
       let latest: typeof i | null = i;
       for (const [k, v] of Object.entries(patch)) latest = await setOption(c, key, k, v ?? null);
+      await audit(c, "item_youtube", key, patch);
       return { key, settings: youtubeSettings(itemOptions(latest ?? i), acc?.settings ?? {}) };
     }),
   );

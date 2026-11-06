@@ -13,7 +13,7 @@ import {
   slotTaken,
   TextsError,
   WhenError,
-  writeYouTubeTexts,
+  youtubeTextsStatement,
 } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { checkTexts, parseTexts, type YouTubeTexts } from "@bongsu/core/formats/youtube-texts";
@@ -226,24 +226,29 @@ export async function editTexts(
   const tube = plat.id === "youtube";
   // Checked before anything is written, so a bad title leaves the item as it was.
   const texts = "texts" in b ? checked(plat, b.texts) : undefined;
-  const caption = text(b.caption, plat.limits.captionMax);
+  // A YouTube video's form may send only some fields (a texts-only edit): what is absent keeps its stored value.
+  // Instagram's form always sends them all, so an absent one clears there.
+  const field = (name: "caption" | "comment" | "comment2" | "alt", max: number) =>
+    tube && !(name in b) ? i[name] : text(b[name], max);
+  const caption = field("caption", plat.limits.captionMax);
   if (!caption && i.format !== "story" && !tube) throw new ScheduleError(400, "a caption is needed");
   await env.DB.batch([
     env.DB.prepare(
       "UPDATE plan_items SET caption = ?1, comment = ?2, alt = ?3, comment2 = ?6, texts_at = ?4, texts_by = 'owner@app', updated_at = ?4, updated_by = 'owner@app' WHERE item_key = ?5 AND workspace_id = ?7",
     ).bind(
       caption,
-      text(b.comment, 2200),
-      i.format !== "video" && i.format !== "story" ? text(b.alt, 5000) : null,
+      field("comment", 2200),
+      i.format !== "video" && i.format !== "story" ? field("alt", 5000) : null,
       nowS,
       key,
-      text(b.comment2, 2200),
+      field("comment2", 2200),
       workspaceId,
     ),
+    // in the same batch, so the description and the texts are written together or not at all
+    ...(texts === undefined ? [] : [youtubeTextsStatement(env.DB, key, texts, "owner@app", nowS, workspaceId)]),
     env.DB.prepare(
       "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'edit_texts', ?3, '{}', ?4, ?5)",
     ).bind(nowS, `user:${userId}`, key, userId, workspaceId),
   ]);
-  if (texts !== undefined) await writeYouTubeTexts(env.DB, key, texts, "owner@app", nowS);
   return { key };
 }

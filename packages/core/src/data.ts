@@ -251,8 +251,30 @@ export async function writeTexts(
   return true;
 }
 
-/** Writes a YouTube video's own texts (already checked by checkTexts: normalised, so what is stored is what approval
- *  hashes); null clears them. Stamps who and when like the other texts. */
+/** The statement that writes a YouTube video's own texts (already checked by checkTexts: normalised, so what is stored
+ *  is what approval hashes); null clears them. Stamps who and when like the other texts. Returned unrun so a caller can
+ *  put it in a batch with its other writes. */
+export function youtubeTextsStatement(
+  db: Db,
+  key: string,
+  texts: YouTubeTexts | null,
+  by: string,
+  nowS: number,
+  workspaceId?: string,
+) {
+  return db
+    .prepare(
+      `UPDATE plan_items SET texts = ?1, texts_at = ?2, texts_by = ?3, updated_at = ?2, updated_by = ?3 WHERE item_key = ?4${workspaceId === undefined ? "" : " AND workspace_id = ?5"}`,
+    )
+    .bind(
+      texts === null ? null : JSON.stringify(texts),
+      nowS,
+      by,
+      key,
+      ...(workspaceId === undefined ? [] : [workspaceId]),
+    );
+}
+
 export async function writeYouTubeTexts(
   db: Db,
   key: string,
@@ -260,12 +282,7 @@ export async function writeYouTubeTexts(
   by: string,
   nowS: number,
 ): Promise<void> {
-  await db
-    .prepare(
-      "UPDATE plan_items SET texts = ?1, texts_at = ?2, texts_by = ?3, updated_at = ?2, updated_by = ?3 WHERE item_key = ?4",
-    )
-    .bind(texts === null ? null : JSON.stringify(texts), nowS, by, key)
-    .run();
+  await youtubeTextsStatement(db, key, texts, by, nowS).run();
 }
 export { TextsError } from "./formats/texts";
 

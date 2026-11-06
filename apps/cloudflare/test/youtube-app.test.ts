@@ -188,6 +188,38 @@ describe("editing a YouTube video in the app", () => {
     expect(JSON.parse(String(r?.texts))).toEqual(TEXTS);
   });
 
+  it("a texts-only edit keeps the description, comments and settings", async () => {
+    const key = await scheduled({ caption: "A description", comment: "A comment", comment2: "Another" });
+    expect((await post("/app-api/item/texts", { key, texts: { title: "Only the title" } })).status).toBe(200);
+    expect(await row(key)).toMatchObject({ caption: "A description", comment: "A comment", comment2: "Another" });
+    expect(JSON.parse(String((await row(key))?.texts))).toEqual({ title: "Only the title" });
+    // a field that is sent is still written, and an empty one clears
+    await post("/app-api/item/texts", { key, comment: "" });
+    expect(await row(key)).toMatchObject({ caption: "A description", comment: null, comment2: "Another" });
+  });
+
+  it("texts: null clears the texts, and madeForKids: null clears that setting", async () => {
+    const key = await scheduled({ caption: "A description" });
+    await post("/app-api/item/youtube", { key, madeForKids: true });
+    await post("/app-api/item/texts", { key, texts: null });
+    expect((await row(key))?.texts).toBeNull();
+    expect((await row(key))?.caption).toBe("A description");
+    const r = await post("/app-api/item/youtube", { key, madeForKids: null });
+    expect(await r.json()).toMatchObject({ settings: { madeForKids: false } });
+    expect((await row(key))?.options).toBe("{}");
+  });
+
+  it("the settings change is audited", async () => {
+    const key = await scheduled();
+    await post("/app-api/item/youtube", { key, privacy: "unlisted" });
+    const a = await env.DB.prepare(
+      "SELECT detail, workspace_id FROM audit WHERE action = 'item_youtube' AND target = ?1",
+    )
+      .bind(key)
+      .first<{ detail: string; workspace_id: string }>();
+    expect(a && [JSON.parse(a.detail), a.workspace_id]).toEqual([{ privacy: "unlisted" }, "default"]);
+  });
+
   it("refuses bad texts without changing anything", async () => {
     const key = await scheduled({ caption: "Keep me" });
     const r = await post("/app-api/item/texts", { key, caption: "Changed", texts: { title: "x".repeat(101) } });
