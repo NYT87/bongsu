@@ -424,6 +424,7 @@ export class World {
         if (this.ytUploadLimit)
           return json({ error: { code: 400, message: "limit", errors: [{ reason: "uploadLimitExceeded" }] } }, 400);
         const b = (await req.json()) as { snippet: Record<string, any>; status: Record<string, any> };
+        if (noDefaultLanguage(b)) return defaultLanguageNotSet();
         // numbered by session (never removed), so a video uploaded after a delete gets a new id
         const id = `vid-${this.ytSessions.size + 1}`;
         const up = `up-${this.ytSessions.size + 1}`;
@@ -496,6 +497,7 @@ export class World {
         status: Record<string, unknown>;
         localizations?: Record<string, unknown>;
       };
+      if (noDefaultLanguage(b)) return defaultLanguageNotSet();
       const v = this.ytVideos.get(b.id)!;
       v.meta = { ...b.snippet, localizations: b.localizations };
       v.status = {
@@ -903,6 +905,21 @@ async function baseEnv(base: Env, overrides: Partial<Env> & Record<string, unkno
 
 /** Serves the scheduler's signed /m/ links (what the tick hands a provider) from the env's media stores, at the
  *  instant `now()` gives: the tick's clock, not the real one, decides whether a link has expired. */
+/** YouTube refuses localizations on a video without snippet.defaultLanguage. */
+const noDefaultLanguage = (b: { snippet?: Record<string, unknown>; localizations?: unknown }) =>
+  !!b.localizations && Object.keys(b.localizations as object).length > 0 && !b.snippet?.defaultLanguage;
+const defaultLanguageNotSet = () =>
+  Response.json(
+    {
+      error: {
+        code: 400,
+        message: "The request is missing the snippet.defaultLanguage property.",
+        errors: [{ reason: "defaultLanguageNotSet", domain: "youtube.video" }],
+      },
+    },
+    { status: 400 },
+  );
+
 export function serveLinks(w: World, e: Env, now: () => Date) {
   w.links = (req) =>
     serveMedia(req, e.MEDIA_SIGNING_KEY, (id) => mediaStoreById(e, w.fetch, id), Math.floor(now().getTime() / 1000));

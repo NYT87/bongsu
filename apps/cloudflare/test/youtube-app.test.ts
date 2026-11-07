@@ -20,7 +20,11 @@ const fake: Verifiers = {
     authenticationInfo: { newCounter: 1 },
   })) as unknown as Verifiers["authentication"],
 };
-const TEXTS = { title: "Demo", translations: { es: { title: "Demostración", description: "Un vídeo de prueba" } } };
+const TEXTS = {
+  title: "Demo",
+  language: "en",
+  translations: { es: { title: "Demostración", description: "Un vídeo de prueba" } },
+};
 let w: World;
 let e: Env;
 let cookie = "";
@@ -300,9 +304,11 @@ describe("editing a YouTube video in the app", () => {
     expect((await item(key)).approved).toMatchObject({ matches: false });
     expect(await approveIt(key)).toMatchObject({ approved: true });
     expect((await item(key)).approved).toMatchObject({ matches: true });
-    // settings are shown at approval but, like the location, not part of what it hashes
-    await post("/app-api/item/youtube", { key, privacy: "unlisted" });
+    // the category is shown at approval but, like the location, not part of what it hashes; the visibility is
+    await post("/app-api/item/youtube", { key, category: "10" });
     expect((await item(key)).approved).toMatchObject({ matches: true });
+    await post("/app-api/item/youtube", { key, privacy: "unlisted" });
+    expect((await item(key)).approved).toMatchObject({ matches: false });
   });
 
   it("settings are validated", async () => {

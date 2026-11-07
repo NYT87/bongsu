@@ -102,7 +102,9 @@ MCP clients get the input schemas from `tools/list`.
 `get_item` answers a YouTube video's own copy in `texts`: `{ title, language, audioLanguage, tags, translations,
 options }` (`null` on an Instagram post). **Breaking change:** the provenance block that `texts` used to hold
 (`{ at, by, repo_files }`) is now `texts_source`, so an agent that read `texts.at` reads `texts_source.at` instead. `plan_add`,
-`plan_update` and `create_draft` take the same `texts` object, and the description is the caption. A subtitle file
+`plan_update` and `create_draft` take the same `texts` object, and the description is the caption. Translations need
+`language` (YouTube refuses them without the video's own language): texts with translations and no language are
+refused with 400. A subtitle file
 (`<lang>.srt` or `.vtt`) or a `thumbnail.jpg`/`png` comes only with a draft made by `create_draft` or the inbox, not
 with `plan_add`.
 

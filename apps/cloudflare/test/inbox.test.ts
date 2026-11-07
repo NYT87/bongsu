@@ -139,6 +139,8 @@ describe("the Drive inbox", () => {
     const p = JSON.parse(d.results[0].payload);
     expect(p.media).toHaveLength(3);
     expect(p.caption).toBe("About the clip");
+    // the inbox can't tell the video's language: the draft keeps the translations and says what's missing
+    expect(p.note).toMatch(/language: YouTube needs the video's own language with translations/);
   });
 
   it("a translation needs both files", async () => {

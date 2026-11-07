@@ -41,11 +41,25 @@ describe("youtube texts", () => {
     );
     refused({ title: "a", translations: { E: { title: "b", description: "" } } }, /translations\.E/);
     expect(
-      checkTexts(youtube, { title: "a", translations: { es: { title: " b ", description: " c\r\nd " } } }),
+      checkTexts(youtube, {
+        title: "a",
+        language: "en",
+        translations: { es: { title: " b ", description: " c\r\nd " } },
+      }),
     ).toEqual({
       title: "a",
+      language: "en",
       translations: { es: { title: "b", description: "c\nd" } },
     });
+  });
+  it("translations need the video's own language (YouTube refuses them without it)", () => {
+    const texts = { title: "a", translations: { es: { title: "b", description: "" } } };
+    expect(() => checkTexts(youtube, texts)).toThrow(
+      "language: YouTube needs the video's own language with translations",
+    );
+    // a draft from the inbox has none yet: it is set before the draft is scheduled
+    expect(checkTexts(youtube, texts, { languageLater: true })).toEqual(texts);
+    expect(checkTexts(youtube, { ...texts, language: "en" })).toEqual({ ...texts, language: "en" });
   });
   it("a translation in the post's own language is refused", () => {
     refused({ title: "a", language: "en", translations: { en: { title: "b", description: "" } } }, /own language/);

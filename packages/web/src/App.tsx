@@ -3534,6 +3534,9 @@ function YtExtras({ value, onChange, files }: { value: YtState; onChange: (v: Yt
 
       <h3>{t("yt.languages")}</h3>
       {langField("language", t("yt.language"))}
+      {Object.keys(translations).length > 0 && !x.language?.trim() && (
+        <span className="small bad-text">{t("yt.languageNeeded")}</span>
+      )}
       {x.language && LANG.test(x.language) && <SubtitleLine lang={x.language} files={files} />}
       {langField("audioLanguage", t("yt.audioLanguage"))}
       <datalist id="yt-languages">

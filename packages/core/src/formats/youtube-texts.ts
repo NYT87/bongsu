@@ -28,6 +28,9 @@ export function tagsLength(tags: string[]): number {
   return tags.reduce((n, t) => n + t.length + (t.includes(" ") ? 2 : 0), 0) + Math.max(0, tags.length - 1);
 }
 
+/** YouTube refuses localizations without the video's default language (defaultLanguageNotSet). */
+export const LANGUAGE_NEEDED = "language: YouTube needs the video's own language with translations";
+
 const clean = (s: string): string => s.replace(/\r\n?/g, "\n").trim();
 
 function text(v: unknown, field: string): string {
@@ -62,8 +65,9 @@ function translation(v: unknown, code: string): Translation {
 }
 
 /** Checks and normalises a video's texts. null/undefined mean none. An empty title is allowed while editing (approval
- *  asks for one); throws TextsError on anything else wrong. */
-export function checkTexts(p: Platform, raw: unknown): YouTubeTexts | null {
+ *  asks for one); throws TextsError on anything else wrong. Translations need the video's language, except with
+ *  `languageLater` (an inbox draft, which can't tell it: it is set before the draft is scheduled). */
+export function checkTexts(p: Platform, raw: unknown, opts: { languageLater?: boolean } = {}): YouTubeTexts | null {
   if (raw === null || raw === undefined) return null;
   if (p.id !== "youtube") throw new TextsError(`${p.name} posts have no title or translations`);
   if (typeof raw !== "object" || Array.isArray(raw)) throw new TextsError("texts must be an object");
@@ -100,6 +104,7 @@ export function checkTexts(p: Platform, raw: unknown): YouTubeTexts | null {
     }
     if (Object.keys(translations).length) out.translations = translations;
   }
+  if (out.translations && !out.language && !opts.languageLater) throw new TextsError(LANGUAGE_NEEDED);
   return out;
 }
 

@@ -64,6 +64,16 @@ describe("YouTube client uploads", () => {
     ).toEqual(["bytes 1000-2999/3000", "bytes 2000-2999/3000"]);
   });
 
+  it("YouTube refuses translations without the video's default language", async () => {
+    const { defaultLanguage: _none, ...meta } = META;
+    await expect(yt.startUpload(meta, 10, "video/mp4")).rejects.toThrow(/defaultLanguageNotSet/);
+    file("clip.mp4", 10);
+    const { videoId } = await yt.uploadFrom(await start(10), SRC, 0, 10, { signal: AbortSignal.timeout(10_000) });
+    await expect(yt.updateVideo(videoId as string, meta, { privacyStatus: "private" })).rejects.toThrow(
+      /defaultLanguageNotSet/,
+    );
+  });
+
   it("quota exceeded throws QuotaExceeded", async () => {
     w.ytQuota = true;
     await expect(start(10)).rejects.toBeInstanceOf(QuotaExceeded);

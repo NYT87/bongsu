@@ -27,6 +27,7 @@ const DUE = new Date("2026-10-20T09:00:00Z");
 const AHEAD = new Date(DUE.getTime() - 21600 * 1000);
 const TEXTS = {
   title: "Demo",
+  language: "en",
   translations: { es: { title: "Demostración", description: "Un vídeo de prueba" } },
 };
 let w: World;
@@ -116,6 +117,11 @@ describe("approving a YouTube video", () => {
     expect((await item()).problems).toContain("a YouTube video needs a title");
     await env.DB.prepare("UPDATE plan_items SET texts = NULL WHERE item_key = ?1").bind(KEY).run();
     expect((await item()).problems).toContain("a YouTube video needs a title");
+  });
+
+  it("translations without the video's language can't be approved", async () => {
+    await seedVideo({ title: "Demo", translations: TEXTS.translations });
+    expect((await item()).problems).toContain("language: YouTube needs the video's own language with translations");
   });
 
   it("refuses texts and media that don't fit the video", async () => {

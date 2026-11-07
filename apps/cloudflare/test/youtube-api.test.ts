@@ -22,7 +22,12 @@ const fake: Verifiers = {
     authenticationInfo: { newCounter: 1 },
   })) as unknown as Verifiers["authentication"],
 };
-const TEXTS = { title: "Demo", tags: ["demo"], translations: { es: { title: "Demostración", description: "Hola" } } };
+const TEXTS = {
+  title: "Demo",
+  language: "en",
+  tags: ["demo"],
+  translations: { es: { title: "Demostración", description: "Hola" } },
+};
 const origFetch = globalThis.fetch;
 let w: World;
 let e: Env;
@@ -149,6 +154,17 @@ describe("texts for a YouTube channel", () => {
     expect((await api("/v1/plan/update", { key, caption: "d".repeat(5000) })).status).toBe(200);
     expect((await api("/v1/plan/update", { key, caption: "d".repeat(5001) })).status).toBe(400);
     expect((await stored(key as string))?.caption).toHaveLength(5000);
+  });
+
+  it("translations need the video's language", async () => {
+    const { language: _none, ...texts } = TEXTS;
+    const r = await add({ texts });
+    expect(r.status).toBe(400);
+    expect(r.json.error).toBe("language: YouTube needs the video's own language with translations");
+    const key = (await add()).json.key;
+    const u = await api("/v1/plan/update", { key, texts });
+    expect(u.status).toBe(400);
+    expect(u.json.error).toBe("language: YouTube needs the video's own language with translations");
   });
 
   it("Instagram refuses texts", async () => {

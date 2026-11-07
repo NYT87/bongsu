@@ -35,7 +35,11 @@ describe("YouTube uploads: data", () => {
 const KEY = "post:20261020_DEMO/clip";
 const CAPTION = "A demo video";
 const COMMENT = "Which part did you like?";
-const TEXTS = { title: "Demo", translations: { es: { title: "Demostración", description: "Un vídeo de prueba" } } };
+const TEXTS = {
+  title: "Demo",
+  language: "en",
+  translations: { es: { title: "Demostración", description: "Un vídeo de prueba" } },
+};
 /** The item's due time: 2026-10-20 18:00 in Seoul (the tests' zone). */
 const T = new Date("2026-10-20T09:00:00Z");
 const LEAD = 21600;

@@ -526,6 +526,7 @@ export const en = {
   "yt.translationTitle": "Title ({lang})",
   "yt.translationDescription": "Description ({lang})",
   "yt.translationNeedsTitle": "{lang} needs a title",
+  "yt.languageNeeded": "Set the video's language: YouTube takes translations only with it",
   "yt.subtitles": "Subtitles",
   "yt.subtitleFile": "Subtitles: {name}",
   "yt.noSubtitleFile": "No subtitle file (add {name} with the draft's files)",

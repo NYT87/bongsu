@@ -20,7 +20,7 @@ import { instagramAccounts } from "./accounts";
 import { INBOX_WORKSPACES_PER_RUN, INBOX_WORKSPACES_PER_RUN_MAX } from "./constants";
 import type { Db } from "./db";
 import type { Env } from "./env";
-import { checkTexts, LANG, type YouTubeTexts } from "./formats/youtube-texts";
+import { checkTexts, LANG, LANGUAGE_NEEDED, type YouTubeTexts } from "./formats/youtube-texts";
 import { mediaPath } from "./media/folders";
 import { mediaStores } from "./media/index";
 import { isMedia, isVideo, type MediaEntry, type MediaStore } from "./media/store";
@@ -346,7 +346,9 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
     const yt = platform("youtube");
     if (texts && yt)
       try {
-        checked = checkTexts(yt, texts);
+        // the files don't say the video's language: the draft keeps its translations, and says it needs one
+        checked = checkTexts(yt, texts, { languageLater: true });
+        if (checked?.translations && !checked.language) notes.push(LANGUAGE_NEEDED);
       } catch (e) {
         notes.push(`YouTube texts skipped: ${(e as Error).message}`);
       }

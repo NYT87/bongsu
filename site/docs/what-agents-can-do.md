@@ -48,7 +48,8 @@ including ones it didn't create (yours, the inbox's or another key's), never one
 
 `plan_add` and `plan_update` set the caption, the comment from your own account, an optional second comment and the
 alt texts, and for a YouTube video its `texts`: the title (1-100 characters), language, tags and translations
-(`{ es: { title, description } }`), with the description in the caption; `shorts_add` sets the text of a comment on a
+(`{ es: { title, description } }`, which need the video's `language`: YouTube refuses translations without it), with
+the description in the caption; `shorts_add` sets the text of a comment on a
 YouTube Short. They are the texts Bongsu posts: an agent
 can't fix a caption by editing a file in a repository, because Bongsu reads only its own copy. The caption check
 ([Captions and checks](captions-and-checks.md)) runs on them like on yours, and a post that fails it can't be approved.

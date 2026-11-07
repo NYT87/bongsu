@@ -99,7 +99,7 @@ A video is a plan item on a YouTube channel, planned like a Reel and approved wi
 is 1 to 100 characters (it may be empty while you edit, but approval needs it), and its **description** is the caption
 (at most 5000 characters; a description is required, as every caption is). It can also have a language, the audio
 language, tags (500 characters as YouTube counts them), **translations** (a title and a description per language, at
-most 5 read from the inbox), **subtitles** and a **thumbnail**. Instagram posts have no title or translations, and a
+most 5 read from the inbox; YouTube takes them only with the video's language set), **subtitles** and a **thumbnail**. Instagram posts have no title or translations, and a
 video draft with subtitle or thumbnail files can't be scheduled on an Instagram account.
 
 Edit them on the item's page in the app, with `plan_add` / `plan_update` / `create_draft` (`texts`), or with
@@ -142,7 +142,8 @@ project; the videos already uploaded stay, and you can publish them from YouTube
 A video's folder in the inbox (`inbox/<project>/<post>/`) holds the video plus any of:
 
 - `title.txt` and `caption.txt`;
-- `caption.<lang>.txt` and `title.<lang>.txt`: a translation needs both, and at most 5 are read;
+- `caption.<lang>.txt` and `title.<lang>.txt`: a translation needs both, and at most 5 are read. The files don't say
+  the video's own language, which YouTube needs with translations: the draft says so, and you set it before scheduling;
 - `<lang>.srt` or `<lang>.vtt`: a subtitle track, one per language (`es.srt` beside `es.vtt` is refused);
 - `thumbnail.jpg` or `thumbnail.png`: at most one, up to 50 MB;
 - for a lone `<name>.mp4`: `<name>.title.txt`.
