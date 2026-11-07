@@ -157,9 +157,10 @@ export class YouTube {
   /**
    * Moves a scheduled video's `publishAt`. `videos.update` replaces the whole status part, so the current one is read
    * first and sent back with only `publishAt` changed (otherwise license, embeddable… would reset to defaults).
+   * `laterOnly`: refuse a time before the current one (an agent key's move).
    * 1 + 50 quota units.
    */
-  async setReleaseDate(videoId: string, atIso: string): Promise<{ from: string }> {
+  async setReleaseDate(videoId: string, atIso: string, o: { laterOnly?: boolean } = {}): Promise<{ from: string }> {
     if (!(Date.parse(atIso) > Date.now())) throw new ReleaseError("past", "The new release time is not in the future");
     const h = await this.auth();
     const r = await this.fetcher(`${API}/videos?part=status&id=${videoId}`, { headers: h });
@@ -169,6 +170,9 @@ export class YouTube {
     const from = status.publishAt;
     if (status.privacyStatus !== "private" || typeof from !== "string")
       throw new ReleaseError("not_scheduled", "The video is not scheduled");
+    // YouTube's own current time, not the calendar's cached one
+    if (o.laterOnly && !(Date.parse(atIso) > Date.parse(from)))
+      throw new ReleaseError("earlier", "an agent moves a release only to a later time: pick one after the current");
     const u = await this.fetcher(`${API}/videos?part=status`, {
       method: "PUT",
       headers: { ...h, "Content-Type": "application/json" },

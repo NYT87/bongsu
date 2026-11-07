@@ -55,8 +55,8 @@ async function patchCache(env: Env, accountId: string, videoId: string, iso: str
 
 /** A Bongsu upload's release is its plan item's time: moving it voids the approval (the owner approves the new time),
  *  and YouTube is never called. The video's own `publishAt` is set by the job when it goes public. A key moves it only
- *  with the plan scope (it is plan_update's power: the reschedule scope alone doesn't reach the plan), and only later,
- *  as the tool says. */
+ *  with the plan scope (moveRelease checks it: the reschedule scope alone doesn't reach the plan), and only later, as
+ *  the tool says. */
 async function moveItem(env: Env, req: ReleaseRequest, itemKey: string) {
   const item = await env.DB.prepare(
     `SELECT p.account, p.name, p.title, p.due_at, x.item_key AS posted FROM plan_items p
@@ -65,11 +65,6 @@ async function moveItem(env: Env, req: ReleaseRequest, itemKey: string) {
     .bind(itemKey, req.workspaceId)
     .first<{ account: string; name: string; title: string | null; due_at: number | null; posted: string | null }>();
   if (!item) throw new ReleaseError("missing", "this video's plan item is gone");
-  if (req.actor.kind === "key" && !req.actor.plan)
-    throw new ReleaseError(
-      "scope",
-      "this video is a Bongsu upload: moving it changes its plan item, which needs the plan scope (plan_update)",
-    );
   if (item.posted || item.due_at === null) throw new ReleaseError("not_scheduled", "The video is not scheduled");
   if (!(req.at > req.nowS)) throw new ReleaseError("past", "The new release time is not in the future");
   if (req.actor.kind === "key" && !(req.at > item.due_at))
@@ -109,6 +104,12 @@ export async function moveRelease(env: Env, fetcher: typeof fetch, req: ReleaseR
   ).get(videoId);
   const found = itemKey ? null : await findUpload(env, fetcher, req.workspaceId, videoId);
   if (!itemKey && !found) throw new ReleaseError("missing", "no such video in this workspace");
+  // a Bongsu upload's move is plan_update's power: the scope answers before the time is looked at
+  if (itemKey && actor.kind === "key" && !actor.plan)
+    throw new ReleaseError(
+      "scope",
+      "this video is a Bongsu upload: moving it changes its plan item, which needs the plan scope (plan_update)",
+    );
   if (actor.kind === "key" && at - nowS < RELEASE_LEAD_S)
     throw new ReleaseError("lead", "an agent must leave at least 1 hour: pick a later time");
   const to = utcIso(at);
@@ -120,7 +121,7 @@ export async function moveRelease(env: Env, fetcher: typeof fetch, req: ReleaseR
   } else if (found) {
     const oauth = await connectionSecret(env, found.account.connection);
     if (!oauth) throw new ReleaseError("missing", "the channel has no working connection");
-    ({ from } = await new YouTube(oauth, fetcher).setReleaseDate(videoId, to));
+    ({ from } = await new YouTube(oauth, fetcher).setReleaseDate(videoId, to, { laterOnly: actor.kind === "key" }));
     await patchCache(env, found.account.id, videoId, to);
     account = found.account.id;
     title = found.upload.title;

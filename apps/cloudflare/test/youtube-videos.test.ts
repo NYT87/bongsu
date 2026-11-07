@@ -301,6 +301,10 @@ describe("one video, one place", () => {
     );
     expect(scope).toBeInstanceOf(ApiError);
     expect(scope).toMatchObject({ status: 403, message: expect.stringContaining("plan scope") });
+    // the scope answers first, even for a time under the hour of lead
+    const soon = new Date(Date.now() + 1800_000).toISOString();
+    const first = await youtubeReschedule(as(["read", "reschedule"]), { video: "vid-1", at: soon }).catch((x) => x);
+    expect(first).toMatchObject({ status: 403 });
     expect(await due()).toBe(DUE);
     const planner = as(["read", "plan", "reschedule"]);
     await youtubeReschedule(planner, { video: "vid-1", at: iso(later) });
