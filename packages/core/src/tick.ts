@@ -67,7 +67,7 @@ import { providerFor } from "./providers/index";
 import { ComposioInstagram } from "./providers/instagram-composio";
 import { InstagramProvider } from "./providers/instagram-publish";
 import type { OutgoingMedia, OutgoingPost, Provider, RunBudget, Step } from "./providers/types";
-import { UPLOAD_BUDGET_S, YouTubeLocked } from "./providers/youtube";
+import { UPLOAD_BUDGET_S, YouTubeLocked, YouTubeTakenOver } from "./providers/youtube";
 import { jsonList } from "./sql";
 import * as N from "./texts/notifications";
 import { workspaceSettings, workspaceZone } from "./workspaces";
@@ -1162,6 +1162,8 @@ async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step
   } catch (e) {
     // the quota: the call may have landed before the error (a read after the update), so it stays "publishing"
     if (e instanceof QuotaExceeded) return waitQuota(c, job, { ...p, step, publishing: true });
+    // the owner's own time (or publication) on YouTube: nothing was written, the owner decides from here
+    if (e instanceof YouTubeTakenOver) return refuse(c, job, e.message, { ...p, step });
     if (!(e instanceof YouTubeLocked)) throw e;
     // read back still private, so not live: a new approval may reopen it once the project passes the audit
     await c.setJob(job.id, { state: "failed", last_error: e.message, payload: { ...p, step } });

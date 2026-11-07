@@ -17,7 +17,7 @@ Keys look like `bongsu_<random>`. The database keeps only their sha256, a name a
 | `draft` | create and withdraw drafts |
 | `plan` | add, update, remove plan items and their texts; list Shorts comments (the owner approves their text); record manual posts and comments |
 | `pause` | pause publishing in the key's workspace (resuming needs a person's passkey, in the app) |
-| `reschedule` | move a scheduled YouTube video's release date, at least 1 hour ahead; not given by default |
+| `reschedule` | move a scheduled YouTube video's release date, only later and at least 1 hour ahead (a Bongsu upload also needs `plan`); not given by default |
 
 Create one in the dashboard ([Keys & tokens](the-dashboard.md#keys--tokens)): **Keys & tokens** → **Agent keys** → **Create a key**, name it after the agent or machine using it and tick
 its scopes. The key is shown once: store it in the agent's secret store. **Revoke** there stops it at once. (Both ask

@@ -4,7 +4,7 @@
 import { type Connection, connectionSecret } from "../accounts";
 import { ANALYTICS_SCOPE, type VideoMeta, type VideoState, YouTube, YouTubeRefused } from "../clients/youtube";
 import { MediaRolesError, mediaRoles, youtubePermalink, youtubeSettings } from "../platforms/youtube";
-import { YOUTUBE_LOCKED, YOUTUBE_REPLACE_KEPT } from "../texts/notifications";
+import { YOUTUBE_LOCKED, YOUTUBE_REPLACE_KEPT, YOUTUBE_TAKEN_OVER } from "../texts/notifications";
 import type {
   Discarded,
   Grant,
@@ -55,6 +55,13 @@ export interface UploadData {
 export class YouTubeLocked extends Error {
   constructor() {
     super(YOUTUBE_LOCKED);
+  }
+}
+
+/** The owner took the video over on YouTube before its time (published or scheduled it by hand): Bongsu leaves it. */
+export class YouTubeTakenOver extends Error {
+  constructor() {
+    super(YOUTUBE_TAKEN_OVER);
   }
 }
 
@@ -312,6 +319,8 @@ export class YouTubeProvider implements Provider {
     const d = step.data as unknown as UploadData;
     const id = d.videoId as string;
     const before = await this.state(id);
+    // a time (or a publication) the owner set in Studio wins over the plan's: nothing is written
+    if (byHand(before)) throw new YouTubeTakenOver();
     await this.yt.updateVideo(id, d.meta, { ...writable(before.status), privacyStatus: d.privacy });
     const after = await this.state(id);
     if (after.privacyStatus === "private") throw new YouTubeLocked();

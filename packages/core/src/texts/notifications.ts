@@ -82,6 +82,10 @@ export const youtubeLocked = (key: string): Note => ({
   text: YOUTUBE_LOCKED,
   target: key,
 });
+/** At its due time the video was already published or scheduled by hand: Bongsu wrote nothing. */
+export const YOUTUBE_TAKEN_OVER =
+  "the video was published or scheduled by hand on YouTube before its time, so it was left as it is: record it as " +
+  "posted once it is out";
 /** A job's earlier video, to be revised or replaced, isn't private any more (the owner published it by hand). */
 export const YOUTUBE_REPLACE_KEPT =
   "the video uploaded earlier was published or scheduled by hand on YouTube, so it was kept and nothing was " +
