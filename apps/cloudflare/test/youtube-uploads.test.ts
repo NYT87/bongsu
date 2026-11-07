@@ -585,6 +585,18 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
     expect(notes(/refused/)).toEqual([]);
   });
 
+  it("on that retry, a video the owner made private and scheduled by hand keeps the owner's time", async () => {
+    await publishedUnread();
+    const v = w.ytVideos.get("vid-1")!;
+    v.status.privacyStatus = "private";
+    v.status.publishAt = "2026-10-21T09:00:00Z";
+    await run(at(300));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    expect(privacy()).toBe("private");
+    expect(v.status.publishAt).toBe("2026-10-21T09:00:00Z");
+    expect((await step()) as { publishing?: boolean }).toMatchObject({ publishing: true });
+  });
+
   it("a video scheduled by hand in Studio while it waits is left as it is at the due time", async () => {
     await uploadAhead();
     w.ytVideos.get("vid-1")!.status.publishAt = "2026-10-21T09:00:00Z"; // the owner's own time, a day later
