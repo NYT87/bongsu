@@ -6,6 +6,7 @@ import { createSession } from "@bongsu/api/pwa/session";
 import { upsertAccount } from "@bongsu/core/accounts";
 import { calendar, channelUploads } from "@bongsu/core/calendar";
 import { addApproval, latestApprovals } from "@bongsu/core/data";
+import type { Db, DbStatement } from "@bongsu/core/db";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex, youtubeSha } from "@bongsu/core/formats/approved";
 import { captionText } from "@bongsu/core/formats/texts";
@@ -129,6 +130,38 @@ describe("one video, one place", () => {
     expect([...(await bongsuVideos(env.DB, ["main"], "default"))]).toEqual([["vid-1", KEY]]);
     expect((await bongsuVideos(env.DB, ["vlogs"], "default")).size).toBe(0);
     expect((await bongsuVideos(env.DB, ["main"], "b")).size).toBe(0);
+  });
+
+  it("reads only the channels' jobs: a published Instagram Reel of the workspace isn't read or mapped", async () => {
+    await publish();
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, media_id, dry_run, payload, created_at, updated_at, workspace_id) VALUES ('reel:20261020_DEMO/reel', 'video', 'instagram_conn-a', 1, 'done', 'ig-media-1', 0, '{\"username\":\"demo_travel\"}', 0, 0, 'default')",
+    ).run();
+    // counts the job rows the query hands back: the Reel must not be among them (bounded work per request)
+    let read = 0;
+    const counting: Db = {
+      prepare: (sql) => {
+        const wrap = (s: DbStatement): DbStatement => ({
+          bind: (...v) => wrap(s.bind(...v)),
+          first: () => s.first(),
+          run: () => s.run(),
+          all: async <T>() => {
+            const r = await s.all<T>();
+            if (/FROM jobs/.test(sql)) read += r.results.length;
+            return r;
+          },
+        });
+        return wrap(env.DB.prepare(sql));
+      },
+      batch: (s) => env.DB.batch(s as never),
+    };
+    expect([...(await bongsuVideos(counting, ["main"], "default"))]).toEqual([["vid-1", KEY]]);
+    expect(read).toBe(1);
+    // the same Reel claiming the channel in its payload still isn't the channel's job (its connection is Instagram's)
+    await env.DB.prepare(
+      "UPDATE jobs SET payload = '{\"username\":\"main\"}' WHERE item_key = 'reel:20261020_DEMO/reel'",
+    ).run();
+    expect([...(await bongsuVideos(env.DB, ["main"], "default"))]).toEqual([["vid-1", KEY]]);
   });
 
   it("the sampler doesn't start a video: series for a Bongsu upload", async () => {
@@ -284,7 +317,7 @@ describe("workspaces", () => {
       "INSERT INTO workspaces (id, name, created_at) VALUES ('b', 'Workspace B', 0) ON CONFLICT (id) DO NOTHING",
     ).run();
     await env.DB.prepare(
-      "INSERT INTO jobs (item_key, kind, account, due_at, state, media_id, dry_run, payload, created_at, updated_at, workspace_id) VALUES ('reel:B/theirs', 'video', 'conn-b', 1, 'done', 'vidB-theirs', 0, '{\"username\":\"main\"}', 0, 0, 'b')",
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, media_id, dry_run, payload, created_at, updated_at, workspace_id) VALUES ('reel:B/theirs', 'video', 'c_main', 1, 'done', 'vidB-theirs', 0, '{\"username\":\"main\"}', 0, 0, 'b')",
     ).run();
     expect([...(await bongsuVideos(env.DB, ["main"], "default")).keys()]).toEqual(["vid-1"]);
     expect([...(await bongsuVideos(env.DB, ["main"], "b")).entries()]).toEqual([["vidB-theirs", "reel:B/theirs"]]);
