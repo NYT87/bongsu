@@ -315,12 +315,13 @@ export class YouTubeProvider implements Provider {
   }
 
   /** Public (or unlisted) now: the status read and written back whole, then read again to see YouTube kept it. */
-  async finish(step: Step): Promise<Published> {
+  async finish(step: Step, retry = false): Promise<Published> {
     const d = step.data as unknown as UploadData;
     const id = d.videoId as string;
     const before = await this.state(id);
-    // a time (or a publication) the owner set in Studio wins over the plan's: nothing is written
-    if (byHand(before)) throw new YouTubeTakenOver();
+    // a time (or a publication) the owner set in Studio wins over the plan's: nothing is written. On a retry the video
+    // may be public by Bongsu's own lost call, so the update is sent again (idempotent) and read back as before.
+    if (!retry && byHand(before)) throw new YouTubeTakenOver();
     await this.yt.updateVideo(id, d.meta, { ...writable(before.status), privacyStatus: d.privacy });
     const after = await this.state(id);
     if (after.privacyStatus === "private") throw new YouTubeLocked();

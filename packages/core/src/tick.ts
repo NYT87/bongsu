@@ -1154,11 +1154,14 @@ async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step
     return;
   }
   // From here the post may go live even if the call fails: a failed job never reopens after this (reopens()), except
-  // one YouTube read back as still private (YouTubeLocked below).
+  // one YouTube read back as still private (YouTubeLocked below) or one the owner took over before the call
+  // (YouTubeTakenOver: nothing was written; a new approval's start() then keeps the video). `retry`: an earlier run
+  // made the call and lost its answer.
+  const retry = !!p.publishing;
   await c.setJob(job.id, { payload: { ...p, step, publishing: true } });
   let got: Awaited<ReturnType<Provider["finish"]>>;
   try {
-    got = await pr.finish(step);
+    got = await pr.finish(step, retry);
   } catch (e) {
     // the quota: the call may have landed before the error (a read after the update), so it stays "publishing"
     if (e instanceof QuotaExceeded) return waitQuota(c, job, { ...p, step, publishing: true });

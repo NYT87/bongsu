@@ -140,7 +140,8 @@ export interface Provider {
   start(post: OutgoingPost, previous?: Step): Promise<Step>;
   /** `run`: the tick's budget for the run, which a long step (an upload) spends from. */
   check(step: Step, run?: RunBudget): Promise<Step>;
-  finish(step: Step): Promise<Published>;
+  /** `retry`: the publishing call was already made once and its answer lost (the post may be live by our own hand). */
+  finish(step: Step, retry?: boolean): Promise<Published>;
   /** Removes what a step left on the platform and won't publish (an uploaded private video); best effort. "gone" when
    *  it is gone now, "kept" when it is public (published by hand: never deleted), "failed" otherwise. */
   discard?(step: Step): Promise<Discarded>;

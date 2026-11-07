@@ -577,6 +577,14 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
     expect(notes(/held/).map((n) => n.body.endsWith(`\n${LIVE_KEPT}`))).toEqual([true]);
   });
 
+  it("a publish whose answer was lost completes on the retry: Bongsu's own call, not the owner's hand", async () => {
+    await publishedUnread();
+    await run(at(300));
+    expect(await job()).toMatchObject({ state: "published", permalink: expect.stringContaining("vid-1") });
+    expect(privacy()).toBe("public");
+    expect(notes(/refused/)).toEqual([]);
+  });
+
   it("a video scheduled by hand in Studio while it waits is left as it is at the due time", async () => {
     await uploadAhead();
     w.ytVideos.get("vid-1")!.status.publishAt = "2026-10-21T09:00:00Z"; // the owner's own time, a day later
