@@ -113,7 +113,7 @@ Bongsu uploads **6 hours before** the planned time, so processing is finished wh
 private, then Bongsu adds the subtitles and the thumbnail and waits for YouTube to process the video. The app shows
 where it is: "Uploading, 40%", "Adding subtitles", "YouTube is processing", "Ready: goes public at 18:00". The video
 stays private while it waits; at the planned time Bongsu makes it public, unless the approval no longer matches (a
-changed title or time: the video stays private and waits for you). A video planned less than 6 hours ahead starts at
+changed title, time, made for kids or visibility: the video stays private and waits for you). A video planned less than 6 hours ahead starts at
 the next run and goes public at its time if processing is done by then, else as soon as it is. A paused workspace's
 ready video stays private past its time and goes out after you resume, within the 6 hour catch-up.
 
@@ -155,6 +155,8 @@ out.
 
 Whether a channel's videos are **made for kids** and their **category** (a number, `22` by default) are set per channel
 in the dashboard's **Accounts** page; a video's own options win. Privacy is `public` unless the video says `unlisted`.
+Your approval covers **made for kids** and **visibility** as the video would go out: changing either on the video, or
+changing the channel's made-for-kids default for a video that follows it, needs a new approval. The category doesn't.
 
 ### Uploads on Cloudflare
 

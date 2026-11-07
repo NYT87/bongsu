@@ -102,7 +102,8 @@ Each connected Instagram account or YouTube channel is a row:
 - **Caption checks** holds the account's own rules: **Hashtags max**, **First line chars** and **Language checks**. See
   [Captions and checks](captions-and-checks.md).
 - **Made for kids** and **Category** (a YouTube channel only) are the defaults for the channel's new videos; a video's own
-  options win. See [YouTube](youtube.md#channel-defaults).
+  options win. Changing **Made for kids** voids the approval of a planned video that follows the default. See
+  [YouTube](youtube.md#channel-defaults).
 - **Rename** changes the display name. **Disable** stops all publishing to the account and keeps its plan, and **Enable**
   undoes it. **Remove** is only offered for a disabled account with nothing left to publish, and what was already
   published stays in the history.

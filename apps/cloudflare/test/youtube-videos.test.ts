@@ -23,6 +23,8 @@ const KEY = "post:20261020_DEMO/clip";
 const MANUAL = "man-1";
 const TEXTS = { title: "Demo" };
 const LEAD = 21600;
+/** The channel's settings as the approval covers them (the built-in defaults: the test channels set none). */
+const SETTINGS = { madeForKids: false, privacy: "public" } as const;
 const HOUR = 3600;
 /** The item's due time: yesterday's noon UTC, so it is inside the stats' windows whenever the suite runs. */
 const DUE = Math.floor(Date.now() / 86400e3) * 86400 - 86400 + 12 * HOUR;
@@ -68,7 +70,7 @@ async function approve(key: string, dueAt: number) {
     captionSha256: await sha256Hex(captionText("A demo video")),
     commentSha256: null,
     altSha256: null,
-    textsSha256: await youtubeSha(parseTexts(JSON.stringify(TEXTS)), [`video:${clip}`]),
+    textsSha256: await youtubeSha(parseTexts(JSON.stringify(TEXTS)), [`video:${clip}`], SETTINGS),
     media: [{ store: "drive", id: clip, checksum: "a".repeat(32) }],
     approvedAt: new Date((DUE - 3 * 86400) * 1000).toISOString(),
     approvedBy: "owner@test",

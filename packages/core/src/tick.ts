@@ -42,7 +42,7 @@ import {
   trialFor,
 } from "./data";
 import type { Env } from "./env";
-import { type Approval, type MediaRef, sha256Hex, youtubeSha } from "./formats/approved";
+import { type Approval, type MediaRef, settingsApproved, sha256Hex, youtubeSha } from "./formats/approved";
 import { altLines, captionText, comment2Text, commentText } from "./formats/texts";
 import { nextPacificMidnight, zoneDate } from "./formats/time";
 import { parseTexts, type YouTubeTexts } from "./formats/youtube-texts";
@@ -53,7 +53,7 @@ import { isVideo, type MediaStore } from "./media/store";
 import { audit, type Notifier, notifier } from "./notify";
 import { leadOf, MAX_LEAD_S, platform } from "./platforms/index";
 import type { Format } from "./platforms/types";
-import { MediaRolesError, mediaRoles, roleKeys, youtubeSettings } from "./platforms/youtube";
+import { MediaRolesError, mediaRoles, roleKeys, type YouTubeSettings, youtubeSettings } from "./platforms/youtube";
 import { providerFor } from "./providers/index";
 import { ComposioInstagram } from "./providers/instagram-composio";
 import { InstagramProvider } from "./providers/instagram-publish";
@@ -671,6 +671,7 @@ async function verify(
   c: Ctx,
   p: Payload,
   workspaceId: string,
+  itemKey: string,
 ): Promise<{
   problem: string | null;
   caption: string;
@@ -678,6 +679,8 @@ async function verify(
   alts: string[];
   /** A YouTube video's texts as approved (null: the job has none). */
   texts: YouTubeTexts | null;
+  /** A YouTube video's settings now, as checked (the item's options over the channel's defaults). */
+  settings?: YouTubeSettings;
   /** Each media file's current name in its store, by id (when nothing is wrong). */
   names?: Record<string, string>;
 }> {
@@ -729,6 +732,7 @@ async function verify(
       return { problem: `media file ${m.id} changed after approval`, caption, comment, alts: [], texts: null };
     entries.push({ name: meta.name, mime: meta.mime, size: meta.size, ref: m });
   }
+  let settings: YouTubeSettings | undefined;
   if (youtube) {
     // the roles come from the files' current names: a rename (es.srt to fr.srt) changes what is uploaded
     let roles: string[];
@@ -738,12 +742,29 @@ async function verify(
       if (!(e instanceof MediaRolesError)) throw e;
       return { problem: e.message, caption, comment, alts: [], texts: null };
     }
-    // one message for both: the fingerprint is a single hash of the texts and the roles
-    if ((await youtubeSha(texts, roles)) !== (ap.textsSha256 ?? null))
-      return { problem: "the title or translations changed after approval", caption, comment, alts: [], texts: null };
+    // the settings as they are now, read the way the app's approval reads them: the item's options (the job's copy
+    // dates from when it was queued) over the channel's defaults, so a changed default voids an item that follows it
+    const item = await getItem(c.env.DB, itemKey);
+    const account = await c.account(p, workspaceId);
+    settings = youtubeSettings(item ? itemOptions(item) : (p.options ?? {}), account?.settings ?? {});
+    const sha = ap.textsSha256 ?? null;
+    if ((await youtubeSha(texts, roles, settings)) !== sha) {
+      // one hash covers the texts, the roles and the settings: the texts and roles matching it under other settings
+      // means only the settings changed
+      const only = await settingsApproved(texts, roles, sha);
+      return {
+        problem: only
+          ? "the video's settings changed after approval"
+          : "the title or translations changed after approval",
+        caption,
+        comment,
+        alts: [],
+        texts: null,
+      };
+    }
   }
   const names = Object.fromEntries(entries.map((e) => [e.ref.id, e.name]));
-  return { problem: null, caption, comment, alts: altLines(alt), texts, names };
+  return { problem: null, caption, comment, alts: altLines(alt), texts, names, ...(settings ? { settings } : {}) };
 }
 
 async function link(c: Ctx, m: MediaRef, video: boolean, workspaceId: string) {
@@ -771,7 +792,7 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   const r = await recheck(c, job, p);
   if (r) return settle(c, job, p, r);
 
-  const v = await verify(c, p, job.workspace_id);
+  const v = await verify(c, p, job.workspace_id, job.item_key);
   if (v.problem) return refuse(c, job, v.problem);
   const media = p.approval!.media;
 
@@ -809,7 +830,7 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   // a YouTube video's title and translations, and its settings: the item's options over the channel's defaults
   const youtube =
     account?.platform === "youtube"
-      ? { texts: v.texts, settings: youtubeSettings(p.options ?? {}, account.settings) }
+      ? { texts: v.texts, settings: v.settings ?? youtubeSettings(p.options ?? {}, account.settings) }
       : {};
   await startPublishing(c, job, p, {
     ...youtube,
@@ -893,7 +914,7 @@ async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
     await c.setJob(job.id, { state: "done", last_error: "trial copy switched off" });
     return;
   }
-  const v = await verify(c, p, job.workspace_id);
+  const v = await verify(c, p, job.workspace_id, job.item_key);
   if (v.problem) return refuse(c, job, `trial copy: ${v.problem}`);
   if (c.dry) {
     await c.setJob(job.id, { state: "done", dry_run: 1, last_error: "dry run: trial copy not posted" });
@@ -985,7 +1006,7 @@ async function stepAhead(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: St
     await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600), job.workspace_id);
     return;
   }
-  const v = await verify(c, p, job.workspace_id);
+  const v = await verify(c, p, job.workspace_id, job.item_key);
   if (v.problem) return refuse(c, job, v.problem, p);
   return publish(c, job, p, pr, step);
 }

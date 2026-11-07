@@ -50,10 +50,47 @@ export function canonicalJson(v: unknown): string {
   return JSON.stringify(v) ?? "null";
 }
 
-/** The fingerprint a YouTube approval keeps in texts_sha: the texts and the role each media file plays (`video:<id>`,
- *  `subtitle:<lang>:<id>`, `thumbnail:<id>`). Roles come from file names, which the media key (id and checksum) doesn't
- *  cover, so renaming es.srt to fr.srt must change this. null when there are neither (an Instagram item). */
-export async function youtubeSha(texts: object | null, roles: string[] | null): Promise<string | null> {
-  if (texts === null && roles === null) return null;
-  return sha256Hex(canonicalJson({ texts, roles: roles ? [...roles].sort() : null }));
+/** The settings a YouTube approval covers: who the video is for and who sees it. The category is left out (it only
+ *  files the video). */
+export interface ApprovedSettings {
+  madeForKids: boolean;
+  privacy: "public" | "unlisted";
+}
+
+/** The covered part of a video's effective settings (the item's options over the channel's defaults). */
+export const approvedSettings = (s: ApprovedSettings & { category?: string }): ApprovedSettings => ({
+  madeForKids: s.madeForKids,
+  privacy: s.privacy,
+});
+
+/** The fingerprint a YouTube approval keeps in texts_sha: the texts, the role each media file plays (`video:<id>`,
+ *  `subtitle:<lang>:<id>`, `thumbnail:<id>`) and the covered settings. Roles come from file names, which the media key
+ *  (id and checksum) doesn't cover, so renaming es.srt to fr.srt must change this. null when there are none of them
+ *  (an Instagram item). */
+export async function youtubeSha(
+  texts: object | null,
+  roles: string[] | null,
+  settings: ApprovedSettings | null,
+): Promise<string | null> {
+  if (texts === null && roles === null && settings === null) return null;
+  return sha256Hex(
+    canonicalJson({
+      texts,
+      roles: roles ? [...roles].sort() : null,
+      settings: settings ? approvedSettings(settings) : null,
+    }),
+  );
+}
+
+/** The settings an approval's fingerprint was made with, when the texts and roles still match it (the four
+ *  combinations are tried); null when they don't. Tells "the settings changed" apart from "the texts changed". */
+export async function settingsApproved(
+  texts: object | null,
+  roles: string[] | null,
+  sha: string | null,
+): Promise<ApprovedSettings | null> {
+  for (const madeForKids of [false, true])
+    for (const privacy of ["public", "unlisted"] as const)
+      if ((await youtubeSha(texts, roles, { madeForKids, privacy })) === sha) return { madeForKids, privacy };
+  return null;
 }

@@ -193,6 +193,43 @@ describe("approving a YouTube video", () => {
     expect(await job()).toEqual({ state: "refused", last_error: "the title or translations changed after approval" });
   });
 
+  it("a visibility changed after approving voids it, in the app and in the tick", async () => {
+    await seedVideo();
+    await approveIt();
+    expect((await item()).approved).toMatchObject({ matches: true });
+    await env.DB.prepare("UPDATE plan_items SET options = ?1 WHERE item_key = ?2")
+      .bind(JSON.stringify({ privacy: "unlisted" }), KEY)
+      .run();
+    expect((await item()).approved).toMatchObject({ matches: false });
+    await tick(e, { fetch: w.fetch, now: DUE });
+    expect(await job()).toEqual({ state: "refused", last_error: "the video's settings changed after approval" });
+  });
+
+  it("the channel's made-for-kids default, for a video that follows it, is part of the approval", async () => {
+    await seedVideo();
+    await approveIt();
+    await env.DB.prepare("UPDATE accounts SET settings = ?1 WHERE id = 'main'")
+      .bind(JSON.stringify({ youtube: { madeForKids: true } }))
+      .run();
+    expect((await item()).approved).toMatchObject({ matches: false });
+    await tick(e, { fetch: w.fetch, now: DUE });
+    expect(await job()).toEqual({ state: "refused", last_error: "the video's settings changed after approval" });
+  });
+
+  it("a changed category doesn't void the approval", async () => {
+    await seedVideo();
+    await approveIt();
+    await env.DB.prepare("UPDATE plan_items SET options = ?1 WHERE item_key = ?2")
+      .bind(JSON.stringify({ category: "10" }), KEY)
+      .run();
+    await env.DB.prepare("UPDATE accounts SET settings = ?1 WHERE id = 'main'")
+      .bind(JSON.stringify({ youtube: { category: "20" } }))
+      .run();
+    expect((await item()).approved).toMatchObject({ matches: true });
+    await tick(e, { fetch: w.fetch, now: AHEAD });
+    expect(await job()).toMatchObject({ state: "container_created", last_error: null });
+  });
+
   it("a YouTube approval stores a texts fingerprint", async () => {
     await seedVideo();
     await approveIt();

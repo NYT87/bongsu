@@ -39,6 +39,8 @@ const TEXTS = { title: "Demo", translations: { es: { title: "Demostración", des
 /** The item's due time: 2026-10-20 18:00 in Seoul (the tests' zone). */
 const T = new Date("2026-10-20T09:00:00Z");
 const LEAD = 21600;
+/** The channel's settings as the approval covers them (the built-in defaults: the test channels set none). */
+const SETTINGS = { madeForKids: false, privacy: "public" } as const;
 const at = (s: number) => new Date(T.getTime() + s * 1000);
 
 let w: World;
@@ -94,11 +96,11 @@ async function approveVideo(
     captionSha256: await sha256Hex(captionText(CAPTION)),
     commentSha256: await sha256Hex(COMMENT),
     altSha256: null,
-    textsSha256: await youtubeSha(parseTexts(JSON.stringify(o.texts ?? TEXTS)), [
-      `video:${ids.clip}`,
-      `subtitle:es:${ids.es}`,
-      `thumbnail:${ids.thumb}`,
-    ]),
+    textsSha256: await youtubeSha(
+      parseTexts(JSON.stringify(o.texts ?? TEXTS)),
+      [`video:${ids.clip}`, `subtitle:es:${ids.es}`, `thumbnail:${ids.thumb}`],
+      SETTINGS,
+    ),
     media: [
       { store: "drive", id: ids.clip, checksum: o.clipMd5 ?? MD5S.clip },
       { store: "drive", id: ids.es, checksum: MD5S.es },
@@ -336,11 +338,11 @@ describe("YouTube uploads: the tick", () => {
       captionSha256: await sha256Hex(captionText(CAPTION)),
       commentSha256: null,
       altSha256: null,
-      textsSha256: await youtubeSha(parseTexts(JSON.stringify(TEXTS)), [
-        `video:${clip}`,
-        ...subs.map((s) => `subtitle:${s.lang}:${s.id}`),
-        `thumbnail:${thumb}`,
-      ]),
+      textsSha256: await youtubeSha(
+        parseTexts(JSON.stringify(TEXTS)),
+        [`video:${clip}`, ...subs.map((s) => `subtitle:${s.lang}:${s.id}`), `thumbnail:${thumb}`],
+        SETTINGS,
+      ),
       media: media.map((m) => ({ store: "drive", id: m.id, checksum: m.md5 })),
       approvedAt: "2026-10-17T01:00:00Z",
       approvedBy: "owner@test",

@@ -95,8 +95,12 @@ The post's media holds the video plus, optionally:
 - **What must still match:** an approval is valid only while `texts_sha` matches, alongside the caption, comments, alt
   texts and media fingerprints. The subtitle files and the thumbnail are in `media`, so a changed file needs a new
   approval.
-- **Options are not fingerprinted,** as now: made for kids, privacy and category are settings. `tags` is in the texts
-  because it is text.
+- **Made for kids and privacy are fingerprinted; the category is not** (owner decision, final review). `texts_sha`
+  also covers `{madeForKids, privacy}` as the video would go out: the item's options over the channel's defaults
+  (`youtubeSettings`), so changing either on the item, or the channel default an item follows, needs a new approval.
+  The app's approval and the tick's `verify` read them the same way; the tick refuses with "the video's settings
+  changed after approval" when only they differ. The category only files the video and stays out. Instagram's
+  `texts_sha` stays `null`. `tags` is in the texts because it is text.
 - **Who approves:** approving stays human. Writing `texts` through the agent API is allowed; approving never is.
 
 ### Bongsu's uploads and other uploads (D6)

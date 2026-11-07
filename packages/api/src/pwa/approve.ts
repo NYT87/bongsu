@@ -346,7 +346,7 @@ export async function snapshot(r: Resolved): Promise<Snapshot> {
     commentSha256: r.comment ? await sha256Hex(r.comment) : null,
     comment2Sha256: r.comment2 ? await sha256Hex(r.comment2) : null,
     altSha256: r.alt ? await sha256Hex(r.alt) : null,
-    textsSha256: r.youtube ? await youtubeSha(r.youtube.texts, r.youtube.roles) : null,
+    textsSha256: r.youtube ? await youtubeSha(r.youtube.texts, r.youtube.roles, r.youtube.settings) : null,
     media: r.media.map((m) => `${m.store}:${m.id}:${m.checksum}`),
   };
 }
