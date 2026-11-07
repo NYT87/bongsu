@@ -35,7 +35,7 @@ import {
 import { type ChartSeries, LineChart } from "./Chart";
 import { dateLocale, type Key, setLocale, t } from "./i18n";
 import { takeWorkspaceParam } from "./workspace-link";
-import { changedSettings } from "./youtube-form";
+import { changedSettings, YT_DESCRIPTION_MAX, YT_TAGS_MAX, YT_TITLE_MAX, ytBlocked } from "./youtube-form";
 
 type Me = {
   signedIn: boolean;
@@ -3329,9 +3329,6 @@ type Texts = { caption: string; comment: string; comment2: string; alt: string }
 type YtState = { texts: YouTubeTexts; settings: YouTubeSettings };
 /** The video's files that aren't the video, by name (the media roles): subtitles by language, the thumbnail. */
 type YtFiles = { subtitles: { lang: string; name: string }[]; thumbnail: { name: string; url: string | null } | null };
-const YT_TITLE_MAX = 100;
-const YT_DESCRIPTION_MAX = 5000;
-const YT_TAGS_MAX = 500;
 /** YouTube's common categories (videoCategories), by the id the video stores. */
 const YT_CATEGORIES = ["1", "2", "10", "15", "17", "19", "20", "22", "23", "24", "25", "26", "27", "28", "29"] as const;
 const categoryName = (id: string) =>
@@ -3364,20 +3361,6 @@ function ytTexts(x: YouTubeTexts): YouTubeTexts {
   if (x.tags?.length) out.tags = x.tags;
   if (x.translations && Object.keys(x.translations).length) out.translations = x.translations;
   return out;
-}
-
-/** What stops the form saving (the server would refuse it); an empty title only stops approving. */
-function ytBlocked(x: YouTubeTexts): boolean {
-  const bad = (c?: string) => !!c && !LANG.test(c.trim());
-  return (
-    x.title.length > YT_TITLE_MAX ||
-    bad(x.language) ||
-    bad(x.audioLanguage) ||
-    tagsLength(x.tags ?? []) > YT_TAGS_MAX ||
-    Object.values(x.translations ?? {}).some(
-      (tr) => !tr.title.trim() || tr.title.length > YT_TITLE_MAX || tr.description.length > YT_DESCRIPTION_MAX,
-    )
-  );
 }
 
 const Counter = ({ n, max }: { n: number; max: number }) => (
