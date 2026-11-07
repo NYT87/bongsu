@@ -20,6 +20,8 @@ export const LANG = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
 const TITLE_MAX = 100;
 const DESCRIPTION_MAX = 5000;
 const TAGS_MAX = 500;
+/** Languages a video carries translations for: plenty for a real channel, and it bounds the stored texts. */
+export const TRANSLATIONS_MAX = 20;
 const FIELDS = ["title", "language", "audioLanguage", "tags", "translations"];
 
 /** Characters of a tag set as YouTube counts them: a tag with a space counts in quotes, and one separator sits
@@ -96,6 +98,9 @@ export function checkTexts(p: Platform, raw: unknown, opts: { languageLater?: bo
   if (o.translations !== undefined && o.translations !== null) {
     if (typeof o.translations !== "object" || Array.isArray(o.translations))
       throw new TextsError("translations: must be an object keyed by language");
+    // every read of the item (the page, the approval hash, videos.insert) carries the texts whole
+    if (Object.keys(o.translations).length > TRANSLATIONS_MAX)
+      throw new TextsError(`translations: at most ${TRANSLATIONS_MAX} languages`);
     const translations: Record<string, Translation> = {};
     for (const [code, v] of Object.entries(o.translations)) {
       if (!LANG.test(code)) throw new TextsError(`translations.${code}: not a language tag (like es or pt-BR)`);

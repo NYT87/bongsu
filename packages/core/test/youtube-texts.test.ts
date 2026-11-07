@@ -78,6 +78,14 @@ describe("youtube texts", () => {
     expect(checkTexts(youtube, { title: "a", tags: [" x ", "", "y"] })).toEqual({ title: "a", tags: ["x", "y"] });
     expect(checkTexts(youtube, { title: "a", tags: [" "] })).toEqual({ title: "a" });
   });
+  it("at most 20 translation languages", () => {
+    const langs = (n: number) =>
+      Object.fromEntries(Array.from({ length: n }, (_, i) => [`en-A${i}`, { title: "t", description: "" }]));
+    expect(
+      Object.keys(checkTexts(youtube, { title: "a", language: "es", translations: langs(20) })?.translations ?? {}),
+    ).toHaveLength(20);
+    refused({ title: "a", language: "es", translations: langs(21) }, "translations: at most 20 languages");
+  });
   it("unknown fields are refused", () => {
     refused({ title: "a", foo: 1 }, "unknown field foo");
   });
