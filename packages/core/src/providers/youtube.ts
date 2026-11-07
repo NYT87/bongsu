@@ -13,10 +13,12 @@ import type {
   Provider,
   Published,
   RemoteComment,
+  RunBudget,
   Step,
 } from "./types";
 
-/** How long one run may spend sending the file: below the tick lock's 240 s, the rest goes on the next run. */
+/** How long one run may spend sending files, all its uploads together (from the run's start): below the tick lock's
+ *  240 s, the rest goes on the next run. */
 export const UPLOAD_BUDGET_S = 180;
 /** A piece in chunk mode: a multiple of 256 KiB, as resumable uploads require. */
 export const CHUNK_BYTES = 8 * 1024 * 1024;
@@ -178,7 +180,7 @@ export class YouTubeProvider implements Provider {
   }
 
   /** One phase per run. QuotaExceeded and SessionGone go through to the tick, which waits or starts again. */
-  async check(step: Step): Promise<Step> {
+  async check(step: Step, run?: RunBudget): Promise<Step> {
     const d = step.data as unknown as UploadData;
     const next = (data: UploadData, state: Step["state"] = "processing"): Step => ({
       state,
@@ -186,7 +188,7 @@ export class YouTubeProvider implements Provider {
     });
     switch (d.phase) {
       case "uploading":
-        return next(await this.upload(d));
+        return next(await this.upload(d, run));
       case "extras":
         return next(await this.extras(d));
       case "processing": {
@@ -212,15 +214,18 @@ export class YouTubeProvider implements Provider {
     }
   }
 
-  /** Sends what YouTube doesn't hold yet, from the offset it reports; a cut-off leaves the rest for the next run. */
-  private async upload(d: UploadData): Promise<UploadData> {
+  /** Sends what YouTube doesn't hold yet, from the offset it reports, within the run's budget (the tick's, shared with
+   *  the run's other uploads; a call without one gets UPLOAD_BUDGET_S of its own); a cut-off leaves the rest for the
+   *  next run. */
+  private async upload(d: UploadData, run?: RunBudget): Promise<UploadData> {
     const session = d.session as string;
     const video = rolesOf(d.post.media).video;
     let r = await this.yt.uploadOffset(session, d.size);
     if (!r.videoId)
       r = await this.yt.uploadFrom(session, video.url, r.offset, d.size, {
-        budgetMs: UPLOAD_BUDGET_S * 1000,
+        signal: run?.signal ?? AbortSignal.timeout(UPLOAD_BUDGET_S * 1000),
         ...(this.chunked ? { chunkBytes: CHUNK_BYTES } : {}),
+        ...(run ? { requestsLeft: () => run.requestsLeft() } : {}),
       });
     if (!r.videoId) return { ...d, offset: r.offset };
     const { session: _s, ...rest } = d;

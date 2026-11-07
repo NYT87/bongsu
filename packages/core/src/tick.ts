@@ -22,7 +22,16 @@
 
 import { type Account, findAccount, listAccounts } from "./accounts";
 import { QuotaExceeded, SessionGone } from "./clients/youtube";
-import { AUDIT_KEEP_S, CATCH_UP_S, JOBS_PER_TICK, JOBS_PER_TICK_MAX, LINK_TTL_S, MAX_POLLS } from "./constants";
+import {
+  AUDIT_KEEP_S,
+  CATCH_UP_S,
+  JOBS_PER_TICK,
+  JOBS_PER_TICK_MAX,
+  LINK_TTL_S,
+  MAX_POLLS,
+  SUBREQUESTS_KEPT,
+  SUBREQUESTS_PER_RUN,
+} from "./constants";
 import {
   contentPaths,
   dueItems,
@@ -57,8 +66,8 @@ import { MediaRolesError, mediaRoles, roleKeys, type YouTubeSettings, youtubeSet
 import { providerFor } from "./providers/index";
 import { ComposioInstagram } from "./providers/instagram-composio";
 import { InstagramProvider } from "./providers/instagram-publish";
-import type { OutgoingMedia, OutgoingPost, Provider, Step } from "./providers/types";
-import { YouTubeLocked } from "./providers/youtube";
+import type { OutgoingMedia, OutgoingPost, Provider, RunBudget, Step } from "./providers/types";
+import { UPLOAD_BUDGET_S, YouTubeLocked } from "./providers/youtube";
 import { jsonList } from "./sql";
 import * as N from "./texts/notifications";
 import { workspaceSettings, workspaceZone } from "./workspaces";
@@ -66,6 +75,8 @@ import { workspaceSettings, workspaceZone } from "./workspaces";
 export interface Deps {
   fetch: typeof fetch;
   now: Date;
+  /** The run's deadline for long transfers (tests pass their own); default: UPLOAD_BUDGET_S from the run's start. */
+  signal?: AbortSignal;
 }
 
 /** Which part of the work this invocation does (one per cron trigger). */
@@ -169,6 +180,8 @@ class Ctx {
   constructor(
     public env: Env,
     public deps: Deps,
+    /** The run's budget for long transfers, shared by its jobs. */
+    public run: RunBudget,
   ) {
     this.nowS = Math.floor(deps.now.getTime() / 1000);
     this.dry = env.DRY_RUN !== "0";
@@ -265,7 +278,8 @@ export async function tick(
     await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
       .bind(`tick_last:${part}`, JSON.stringify({ at: nowS, jobsPerTick: jobsPerTick(env) }))
       .run();
-    const c = new Ctx(env, deps);
+    const run = runBudget(deps);
+    const c = new Ctx(env, { ...deps, fetch: run.fetch }, run);
     // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
     c.held = await heldWorkspaces(env.DB);
     if (part === "shorts") {
@@ -282,9 +296,17 @@ export async function tick(
       if (a.status === "active" && platform(a.platform)?.formats.length && !c.held.has(a.workspaceId))
         await discover(c, a);
     const active = await activeJobs(c, accounts);
-    for (const job of active) await advance(c, job);
+    let calling = 0;
+    for (const job of active) {
+      const p = JSON.parse(job.payload) as Payload;
+      // an upload starts only with time and subrequests left in the run; else it waits for the next, no attempt counted
+      if (isUploadStep(job, p) && !canUpload(run)) continue;
+      // a video only waiting for its time reaches nothing on the platform
+      if (!waiting(c, job, p)) calling++;
+      await advance(c, job);
+    }
     // a full run has spent its subrequests on the jobs: the sweep waits for a quieter one
-    if (active.length < jobsPerTick(env)) await sweepRemoved(c);
+    if (calling < jobsPerTick(env)) await sweepRemoved(c);
     return {
       status: "ok",
       detail: { part, advanced: active.length, held: [...c.held.keys()], dry_run: c.dry },
@@ -324,8 +346,31 @@ const notBefore = (p: Payload): number => Number(p.step?.data.notBefore ?? p.not
  *  upload goes after the rest even when late, so it never delays an Instagram post. */
 function group(c: Ctx, job: JobRow, p: Payload): number {
   if (isUploadStep(job, p)) return 1;
-  return job.state === "container_created" && p.step?.data.phase === "waiting" && job.due_at > c.nowS ? 2 : 0;
+  return waiting(c, job, p) ? 2 : 0;
 }
+
+/** A processed video waiting for its due time: its run is only a recheck of the plan. */
+const waiting = (c: Ctx, job: JobRow, p: Payload) =>
+  job.state === "container_created" && p.step?.data.phase === "waiting" && job.due_at > c.nowS;
+
+/** Subrequests an upload step needs at the least: a token, the offset query, the file's read and its PUT. */
+const UPLOAD_REQUESTS = 4;
+
+/** The run's budget: one deadline for all its uploads, from the run's start and below the 240 s lock (so two slow uploads
+ *  never outlast it), and every fetch the run makes counted against the Worker's subrequests. */
+function runBudget(deps: Deps): RunBudget & { fetch: typeof fetch } {
+  let used = 0;
+  return {
+    signal: deps.signal ?? AbortSignal.timeout(UPLOAD_BUDGET_S * 1000),
+    requestsLeft: () => SUBREQUESTS_PER_RUN - SUBREQUESTS_KEPT - used,
+    fetch: (input, init) => {
+      used++;
+      return deps.fetch(input, init);
+    },
+  };
+}
+
+const canUpload = (run: RunBudget) => !run.signal.aborted && run.requestsLeft() >= UPLOAD_REQUESTS;
 
 /** A job sending its file to the platform (YouTube's uploading phase): the run's longest step. */
 export function isUploadStep(job: Pick<JobRow, "state">, p: Pick<Payload, "step">): boolean {
@@ -964,7 +1009,7 @@ async function stepContainer(c: Ctx, job: JobRow, p: Payload) {
   const step = await withLinks(c, job, p, p.step ?? (await legacyStep(c, job, p)));
   let next: Step;
   try {
-    next = await pr.check(step);
+    next = await pr.check(step, c.run);
   } catch (e) {
     if (e instanceof QuotaExceeded) return waitQuota(c, job, p);
     if (e instanceof SessionGone) return restart(c, job, p);

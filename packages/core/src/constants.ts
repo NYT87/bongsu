@@ -12,6 +12,10 @@ export const LINK_TTL_S = 6 * 3600;
  *  defaults to NODE_JOBS_PER_TICK. The JOBS_PER_TICK variable overrides either, up to JOBS_PER_TICK_MAX. */
 export const JOBS_PER_TICK = 4;
 export const NODE_JOBS_PER_TICK = 20;
+/** Subrequests one run may make (Cloudflare's free plan allows 50 per invocation): chunked YouTube uploads stop short
+ *  of it, keeping SUBREQUESTS_KEPT for what the run does after them (notes, the sweep). Every fetch of a tick counts. */
+export const SUBREQUESTS_PER_RUN = 50;
+export const SUBREQUESTS_KEPT = 6;
 /** The most one tick advances whatever the setting: a tick holds its lock for 4 minutes, and the next one is 5 away. */
 export const JOBS_PER_TICK_MAX = 100;
 /** Workspaces the inbox run scans per run (inbox.ts): each costs a few subrequests per store, and the free plan allows

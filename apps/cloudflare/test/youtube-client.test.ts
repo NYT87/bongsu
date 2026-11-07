@@ -39,7 +39,7 @@ describe("YouTube client uploads", () => {
   it("a resumable upload sends the file and returns the video id", async () => {
     file("clip.mp4", 3000);
     const session = await start(3000);
-    const r = await yt.uploadFrom(session, SRC, 0, 3000, { budgetMs: 10_000 });
+    const r = await yt.uploadFrom(session, SRC, 0, 3000, { signal: AbortSignal.timeout(10_000) });
     expect(r).toEqual({ offset: 3000, videoId: "vid-1" });
     const v = w.ytVideos.get("vid-1");
     expect(v?.received).toBe(3000);
@@ -53,9 +53,9 @@ describe("YouTube client uploads", () => {
     file("clip.mp4", 3000);
     w.ytUploadCut = 1000;
     const session = await start(3000);
-    const a = await yt.uploadFrom(session, SRC, 0, 3000, { budgetMs: 10_000 });
-    const b = await yt.uploadFrom(session, SRC, a.offset, 3000, { budgetMs: 10_000 });
-    const c = await yt.uploadFrom(session, SRC, b.offset, 3000, { budgetMs: 10_000 });
+    const a = await yt.uploadFrom(session, SRC, 0, 3000, { signal: AbortSignal.timeout(10_000) });
+    const b = await yt.uploadFrom(session, SRC, a.offset, 3000, { signal: AbortSignal.timeout(10_000) });
+    const c = await yt.uploadFrom(session, SRC, b.offset, 3000, { signal: AbortSignal.timeout(10_000) });
     expect([a.offset, b.offset, c.offset]).toEqual([1000, 2000, 3000]);
     expect(a.videoId).toBeUndefined();
     expect(c.videoId).toBe("vid-1");
@@ -73,7 +73,9 @@ describe("YouTube client uploads", () => {
     file("clip.mp4", 10);
     const gone = "https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=nope";
     await expect(yt.uploadOffset(gone, 10)).rejects.toBeInstanceOf(SessionGone);
-    await expect(yt.uploadFrom(gone, SRC, 0, 10, { budgetMs: 10_000 })).rejects.toBeInstanceOf(SessionGone);
+    await expect(yt.uploadFrom(gone, SRC, 0, 10, { signal: AbortSignal.timeout(10_000) })).rejects.toBeInstanceOf(
+      SessionGone,
+    );
   });
 
   it("an upload limit refused with 400 throws QuotaExceeded", async () => {
@@ -84,9 +86,9 @@ describe("YouTube client uploads", () => {
   it("uploadFrom at the end of a finished upload returns the video id", async () => {
     file("clip.mp4", 3000);
     const session = await start(3000);
-    await yt.uploadFrom(session, SRC, 0, 3000, { budgetMs: 10_000 });
+    await yt.uploadFrom(session, SRC, 0, 3000, { signal: AbortSignal.timeout(10_000) });
     const putsBefore = w.ytPuts.length;
-    const r = await yt.uploadFrom(session, SRC, 3000, 3000, { budgetMs: 10_000 });
+    const r = await yt.uploadFrom(session, SRC, 3000, 3000, { signal: AbortSignal.timeout(10_000) });
     expect(r).toEqual({ offset: 3000, videoId: "vid-1" });
     expect(w.ytPuts.length).toBe(putsBefore + 1); // only the offset query
   });
@@ -95,9 +97,9 @@ describe("YouTube client uploads", () => {
     file("clip.mp4", 3000);
     w.ytCuts = [1000, 500];
     const session = await start(3000);
-    const a = await yt.uploadFrom(session, SRC, 0, 3000, { budgetMs: 10_000 });
-    const b = await yt.uploadFrom(session, SRC, a.offset, 3000, { budgetMs: 10_000 });
-    const c = await yt.uploadFrom(session, SRC, b.offset, 3000, { budgetMs: 10_000 });
+    const a = await yt.uploadFrom(session, SRC, 0, 3000, { signal: AbortSignal.timeout(10_000) });
+    const b = await yt.uploadFrom(session, SRC, a.offset, 3000, { signal: AbortSignal.timeout(10_000) });
+    const c = await yt.uploadFrom(session, SRC, b.offset, 3000, { signal: AbortSignal.timeout(10_000) });
     expect([a.offset, b.offset, c.offset]).toEqual([1000, 1500, 3000]);
     expect(w.ytPuts.map((p) => p.range).filter((r) => !r.includes("*"))).toEqual([
       "bytes 0-2999/3000",
@@ -114,7 +116,9 @@ describe("YouTube client uploads", () => {
       return w.fetch(input, init);
     }) as typeof fetch);
     const putsBefore = w.ytPuts.length;
-    await expect(failing.uploadFrom(session, SRC, 0, 10, { budgetMs: 10_000 })).rejects.toBeInstanceOf(TypeError);
+    await expect(
+      failing.uploadFrom(session, SRC, 0, 10, { signal: AbortSignal.timeout(10_000) }),
+    ).rejects.toBeInstanceOf(TypeError);
     expect(w.ytPuts.length).toBe(putsBefore);
   });
 
@@ -126,16 +130,40 @@ describe("YouTube client uploads", () => {
         return new Response(w.ytFiles.get("clip.mp4"), { status: 200 });
       return w.fetch(input, init);
     }) as typeof fetch);
-    await expect(ignoring.uploadFrom(session, SRC, 0, 100, { budgetMs: 10_000, chunkBytes: 40 })).rejects.toThrow(
-      /Range/,
-    );
+    await expect(
+      ignoring.uploadFrom(session, SRC, 0, 100, { signal: AbortSignal.timeout(10_000), chunkBytes: 40 }),
+    ).rejects.toThrow(/Range/);
+  });
+
+  it("chunk mode stops within the run's subrequests and returns the offset YouTube confirmed", async () => {
+    file("clip.mp4", 1000);
+    const session = await start(1000);
+    let n = 0;
+    const capped = new YouTube(OAUTH, (async (input, init) => {
+      if (++n > 50) throw new Error("over the Worker's 50 subrequests");
+      return w.fetch(input, init);
+    }) as typeof fetch);
+    const o = { signal: AbortSignal.timeout(10_000), chunkBytes: 16, requestsLeft: () => 50 - n };
+    const a = await capped.uploadFrom(session, SRC, 0, 1000, o);
+    expect(n).toBeLessThanOrEqual(50);
+    expect(a.videoId).toBeUndefined();
+    expect(a.offset).toBeGreaterThan(0);
+    expect(a.offset).toBe(w.ytVideos.get("vid-1")!.received);
+    // the next runs go on from there, each within its own 50
+    let r = a;
+    for (let run = 0; run < 3 && !r.videoId; run++) {
+      n = 0;
+      r = await capped.uploadFrom(session, SRC, r.offset, 1000, o);
+      expect(n).toBeLessThanOrEqual(50);
+    }
+    expect(r).toEqual({ offset: 1000, videoId: "vid-1" });
   });
 
   it("chunk mode sends 8 MiB pieces", async () => {
     const size = 20 * MIB;
     file("clip.mp4", size);
     const session = await start(size);
-    const r = await yt.uploadFrom(session, SRC, 0, size, { budgetMs: 30_000, chunkBytes: 8 * MIB });
+    const r = await yt.uploadFrom(session, SRC, 0, size, { signal: AbortSignal.timeout(30_000), chunkBytes: 8 * MIB });
     expect(r).toEqual({ offset: size, videoId: "vid-1" });
     expect(w.ytPuts).toEqual([
       { range: `bytes 0-${8 * MIB - 1}/${size}`, length: 8 * MIB },
@@ -150,7 +178,7 @@ describe("YouTube client after the upload", () => {
     file("clip.mp4", 10);
     const thumb = new Uint8Array(40).map((_, i) => i);
     const session = await start(10);
-    const id = (await yt.uploadFrom(session, SRC, 0, 10, { budgetMs: 10_000 })).videoId as string;
+    const id = (await yt.uploadFrom(session, SRC, 0, 10, { signal: AbortSignal.timeout(10_000) })).videoId as string;
     const sent: { body: unknown; length: string | null }[] = [];
     const real = w.fetch;
     const f: typeof fetch = async (input, init) => {
@@ -174,7 +202,7 @@ describe("YouTube client after the upload", () => {
     file("es.srt", 20);
     file("thumb.jpg", 30);
     const session = await start(10);
-    const { videoId } = await yt.uploadFrom(session, SRC, 0, 10, { budgetMs: 10_000 });
+    const { videoId } = await yt.uploadFrom(session, SRC, 0, 10, { signal: AbortSignal.timeout(10_000) });
     const id = videoId as string;
 
     const track = await yt.insertCaption(id, "es", "https://files.example.com/es.srt", "Español");
@@ -202,14 +230,14 @@ describe("YouTube client after the upload", () => {
   it("the audit lock keeps an update private", async () => {
     file("clip.mp4", 10);
     w.ytKeepPrivate = true;
-    const { videoId } = await yt.uploadFrom(await start(10), SRC, 0, 10, { budgetMs: 10_000 });
+    const { videoId } = await yt.uploadFrom(await start(10), SRC, 0, 10, { signal: AbortSignal.timeout(10_000) });
     await yt.updateVideo(videoId as string, META, { privacyStatus: "public" });
     expect((await yt.videoState(videoId as string))?.privacyStatus).toBe("private");
   });
 
   it("videoState reports processing, rejected and dimensions", async () => {
     file("clip.mp4", 10);
-    const { videoId } = await yt.uploadFrom(await start(10), SRC, 0, 10, { budgetMs: 10_000 });
+    const { videoId } = await yt.uploadFrom(await start(10), SRC, 0, 10, { signal: AbortSignal.timeout(10_000) });
     const id = videoId as string;
     const v = w.ytVideos.get(id);
     expect(await yt.videoState(id)).toMatchObject({

@@ -359,6 +359,54 @@ describe("YouTube uploads: the tick", () => {
     expect(w.ytVideos.get("vid-1")?.thumbnail?.bytes).toBe(4);
   });
 
+  it("one deadline covers every upload of a run: a later upload waits for the next run", async () => {
+    const B = "post:20261020_DEMO/clip_b";
+    await seedVideo();
+    await approveVideo();
+    await seedVideo({ key: B, time: "18:30" });
+    await approveVideo({ key: B, time: "18:30" });
+    await run(at(-LEAD + 1800)); // both start
+    expect(await job()).toMatchObject({ phase: "uploading" });
+    expect(await job(B)).toMatchObject({ phase: "uploading" });
+    // the first upload uses up the run's time: YouTube keeps 4 bytes when it is cut off
+    const deadline = new AbortController();
+    w.ytUploadCut = 4;
+    const real = w.fetch;
+    w.fetch = async (input, init) => {
+      const req = new Request(input, init);
+      if (
+        req.method === "PUT" &&
+        new URL(req.url).searchParams.has("upload_id") &&
+        /^bytes \d/.test(req.headers.get("Content-Range") ?? "")
+      )
+        deadline.abort(new DOMException("The operation timed out", "TimeoutError"));
+      return real(input, init);
+    };
+    now = at(-LEAD + 2100);
+    await tick(e, { fetch: w.fetch, now, signal: deadline.signal });
+    w.fetch = real;
+    expect(await job()).toMatchObject({ phase: "uploading", attempts: 0 });
+    expect((await step()).step?.data.offset).toBe(4);
+    // B waits, untouched and with no attempt counted
+    expect(await job(B)).toMatchObject({ phase: "uploading", attempts: 0, last_error: null });
+    expect(w.ytVideos.get("vid-2")?.received).toBe(0);
+  });
+
+  it("videos waiting for their time don't keep the sweep from a run", async () => {
+    await uploadAhead();
+    await setup({ JOBS_PER_TICK: "1" });
+    // a refused job's private video whose item is gone
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id) VALUES ('post:gone/clip', 'video', 'main', 0, 'refused', 0, ?1, 0, 0, 'default')",
+    )
+      .bind(JSON.stringify({ username: "main", account: "main", step: { state: "ready", data: { videoId: "vid-9" } } }))
+      .run();
+    const deletes = countDeletes();
+    await run(at(-3600)); // the one job advanced is a video waiting for its time: no subrequests spent
+    expect(await job()).toMatchObject({ state: "container_created", phase: "waiting" });
+    expect(deletes.n).toBe(1);
+  });
+
   it("a job without a lead isn't advanced before its time", async () => {
     await env.DB.prepare(
       "INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id) VALUES ('reel:early', 'video', 'instagram_conn-a', ?1, 'pending', 0, ?2, 0, 0, 'default')",

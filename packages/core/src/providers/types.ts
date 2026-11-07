@@ -31,6 +31,15 @@ export interface OutgoingPost {
   settings?: YouTubeSettings;
 }
 
+/** What one scheduler run (one invocation) leaves for long transfers, shared by every job it advances, so uploads one
+ *  after another never outlast the run's lock or its subrequests. */
+export interface RunBudget {
+  /** Aborts at the run's one deadline for transfers. */
+  signal: AbortSignal;
+  /** Subrequests the run can still spend. */
+  requestsLeft(): number;
+}
+
 /** Where a publication stands; `data` is the provider's own and is stored with the job between runs. */
 export interface Step {
   state: "processing" | "ready" | "failed";
@@ -126,7 +135,8 @@ export interface Provider {
   readonly trialNote?: string | null;
   /** `previous`: the job's earlier step, when it left something on the platform to revise (a private video). */
   start(post: OutgoingPost, previous?: Step): Promise<Step>;
-  check(step: Step): Promise<Step>;
+  /** `run`: the tick's budget for the run, which a long step (an upload) spends from. */
+  check(step: Step, run?: RunBudget): Promise<Step>;
   finish(step: Step): Promise<Published>;
   /** Removes what a step left on the platform and won't publish (an uploaded private video); best effort. True when
    *  it is gone now. */

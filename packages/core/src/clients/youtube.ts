@@ -366,22 +366,25 @@ export class YouTube {
 
   /**
    * Sends the file from `offset`, reading `source` with a Range request and PUTting it to the session. Without
-   * `chunkBytes` the rest goes in one streamed PUT; with it, pieces of that size one after another. Whatever the
-   * budget doesn't allow is left for the next run: an abort is normal and answers with the offset YouTube kept.
+   * `chunkBytes` the rest goes in one streamed PUT; with it, pieces of that size one after another, while
+   * `requestsLeft` allows a piece's two subrequests. Whatever `signal` (the run's deadline) or the subrequests don't
+   * allow is left for the next run: an abort is normal and answers with the offset YouTube kept.
    */
   async uploadFrom(
     session: string,
     source: string,
     offset: number,
     size: number,
-    o: { budgetMs: number; chunkBytes?: number },
+    o: { signal: AbortSignal; chunkBytes?: number; requestsLeft?: () => number },
   ): Promise<{ offset: number; videoId?: string }> {
-    const signal = AbortSignal.timeout(o.budgetMs);
+    const signal = o.signal;
     // a finished upload only needs its id (an earlier run may have ended right after the last byte)
     if (offset >= size) return this.uploadOffset(session, size);
     const h = await this.auth();
     try {
       while (offset < size) {
+        // a piece is a read and a PUT: without both left, stop at the offset YouTube confirmed last
+        if (o.chunkBytes && o.requestsLeft && o.requestsLeft() < 2) return { offset };
         const end = Math.min(size, o.chunkBytes ? offset + o.chunkBytes : size) - 1;
         const src = await this.fetcher(source, {
           headers: { Range: `bytes=${offset}-${o.chunkBytes ? end : ""}` },

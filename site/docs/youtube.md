@@ -160,10 +160,11 @@ changing the channel's made-for-kids default for a video that follows it, needs 
 
 ### Uploads on Cloudflare
 
-Bongsu streams the file from the media store into YouTube's resumable upload; a run that is cut off (about 3 minutes in)
-resumes from the offset YouTube kept. Streaming's CPU cost on the Workers free plan **was not measured** (the check
+Bongsu streams the file from the media store into YouTube's resumable upload; a run that is cut off (about 3 minutes
+after it started, for all its uploads together) resumes from the offset YouTube kept. Streaming's CPU cost on the Workers free plan **was not measured** (the check
 needs a deploy). If an upload fails on the CPU limit, set the variable `YOUTUBE_UPLOAD_MODE` to `chunk` on the cron
-Worker (a `[vars]` entry in `wrangler.cron.toml`, then deploy): the file then goes in 8 MiB pieces. Node doesn't need it.
+Worker (a `[vars]` entry in `wrangler.cron.toml`, then deploy): the file then goes in 8 MiB pieces, as many as the
+run's 50 subrequests allow (about 20, so some 160 MiB a run); the next run goes on from there. Node doesn't need it.
 
 **Watch the first real upload.** The streamed upload sends the file as a stream with its length set by hand, which hasn't
 been tried on Cloudflare yet. Schedule a first video you can watch going up
