@@ -214,6 +214,24 @@ describe("an agent key in workspace B", () => {
     expect(w.ytUpdates).toEqual([]);
   });
 
+  it("can't move workspace A's Bongsu upload, nor learn it exists", async () => {
+    const { key } = await seedReel(w, { date: "2030-06-01" });
+    const due = () => env.DB.prepare("SELECT due_at FROM plan_items WHERE item_key = ?1").bind(key).first("due_at");
+    const before = await due();
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id) VALUES (?1, 'video', 'c_main', 1, 'container_created', 0, ?2, 0, 0, 'default')",
+    )
+      .bind(key, JSON.stringify({ username: "main", step: { state: "processing", data: { videoId: "vidA00000005" } } }))
+      .run();
+    const at = new Date((Number(before) + 86400) * 1000).toISOString();
+    const r = await call(KEY_B, "/v1/youtube/reschedule", { video: "vidA00000005", at });
+    expect(r.status).toBe(404);
+    expect(await due()).toBe(before);
+    // its own workspace's key (with the plan scope) moves it
+    expect((await call(KEY_A, "/v1/youtube/reschedule", { video: "vidA00000005", at })).status).toBe(200);
+    expect(await due()).toBe(Number(before) + 86400);
+  });
+
   it("sees only its own drafts", async () => {
     const d = await call(KEY_A, "/v1/drafts", { kind: "reel", account: "demo_travel", caption: "A draft" });
     expect(d.status).toBe(200);
@@ -464,7 +482,7 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     await env.DB.prepare("DELETE FROM post_metrics").run();
     const { key } = await seedReel(w, { date: "2026-10-30" }); // the default workspace's item
     await env.DB.prepare(
-      "INSERT INTO jobs (item_key, kind, account, due_at, state, media_id, dry_run, payload, created_at, updated_at, workspace_id) VALUES (?1, 'video', 'conn-main', 1, 'done', 'vidU00000004', 0, '{\"username\":\"main\"}', 0, 0, 'default')",
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, media_id, dry_run, payload, created_at, updated_at, workspace_id) VALUES (?1, 'video', 'c_main', 1, 'done', 'vidU00000004', 0, '{\"username\":\"main\"}', 0, 0, 'default')",
     )
       .bind(key)
       .run();

@@ -1,6 +1,7 @@
 // A YouTube video Bongsu uploaded is counted once, under its plan item (D6): in the sampler, channel stats, the
 // performance list, the calendar and the video page; a video uploaded elsewhere keeps its video: page and series.
 import { env } from "cloudflare:workers";
+import { ApiError, youtubeReschedule } from "@bongsu/api/agent/ops";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
 import { upsertAccount } from "@bongsu/core/accounts";
@@ -277,9 +278,47 @@ describe("one video, one place", () => {
       at: asked + 2 * HOUR,
       nowS: Math.floor(Date.now() / 1000),
       tz: "Asia/Seoul",
-      actor: { kind: "key", id: "k1", name: "planner" },
+      actor: { kind: "key", id: "k1", name: "planner", plan: true },
     });
     expect(await by()).toEqual({ updated_by: "k1", hold: 0 });
+  });
+
+  it("a key moves a Bongsu upload only with the plan scope, and only to a later time", async () => {
+    await uploadAhead();
+    const later = Math.floor(Date.now() / 1000) + 10 * 86400;
+    const iso = (s: number) => new Date(s * 1000).toISOString();
+    const as = (scopes: string[]) =>
+      ({
+        env: e,
+        fetch: w.fetch,
+        now: new Date(),
+        caller: { id: "k1", name: "planner", workspaceId: "default", scopes },
+      }) as never;
+    const due = () => env.DB.prepare("SELECT due_at FROM plan_items WHERE item_key = ?1").bind(KEY).first("due_at");
+    // the reschedule scope alone doesn't reach the plan
+    const scope = await youtubeReschedule(as(["read", "reschedule"]), { video: "vid-1", at: iso(later) }).catch(
+      (x) => x,
+    );
+    expect(scope).toBeInstanceOf(ApiError);
+    expect(scope).toMatchObject({ status: 403, message: expect.stringContaining("plan scope") });
+    expect(await due()).toBe(DUE);
+    const planner = as(["read", "plan", "reschedule"]);
+    await youtubeReschedule(planner, { video: "vid-1", at: iso(later) });
+    expect(await due()).toBe(later);
+    // earlier than its current time: refused, even in the future and with the lead
+    const earlier = await youtubeReschedule(planner, { video: "vid-1", at: iso(later - 2 * HOUR) }).catch((x) => x);
+    expect(earlier).toMatchObject({ status: 400, message: expect.stringContaining("later time") });
+    expect(await due()).toBe(later);
+    // the owner (the app, the dashboard) may still move it earlier
+    await moveRelease(e, w.fetch, {
+      workspaceId: "default",
+      videoId: "vid-1",
+      at: later - 2 * HOUR,
+      nowS: Math.floor(Date.now() / 1000),
+      tz: "Asia/Seoul",
+      actor: { kind: "owner", userId: null },
+    });
+    expect(await due()).toBe(later - 2 * HOUR);
   });
 
   it("a release move into an hour another item of the channel holds is a 409 and changes nothing", async () => {

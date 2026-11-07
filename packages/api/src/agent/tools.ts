@@ -425,7 +425,7 @@ export const TOOLS: Tool[] = [
     name: "youtube_reschedule",
     scope: "reschedule",
     description:
-      "Move a scheduled (private, with a release time) YouTube video's release to a later time, at least 1 hour ahead. Never makes a video public now.",
+      "Move a scheduled (private, with a release time) YouTube video's release to a later time, at least 1 hour ahead. Never makes a video public now. A video Bongsu uploads (a plan item) also needs the plan scope, and its move voids the approval.",
     inputSchema: obj(
       {
         video: { type: "string" },

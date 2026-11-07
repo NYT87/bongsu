@@ -92,7 +92,7 @@ checkout instead.
 | `shorts_add` | plan | `POST /v1/shorts` |
 | `record_commented` | plan | `POST /v1/shorts/commented` |
 | `pause_scheduler` | pause | `POST /v1/pause` |
-| `youtube_reschedule` | reschedule | `POST /v1/youtube/reschedule` |
+| `youtube_reschedule` | reschedule (and plan for a video Bongsu uploads) | `POST /v1/youtube/reschedule` |
 | `ingest_metrics` | metrics | `POST /v1/metrics` |
 
 MCP clients get the input schemas from `tools/list`.

@@ -11,7 +11,10 @@ import { releaseMoved } from "./texts/notifications";
 import { memberName } from "./workspaces";
 import { bongsuVideos } from "./youtube-videos";
 
-export type ReleaseActor = { kind: "owner"; userId: string | null } | { kind: "key"; id: string; name: string };
+/** `plan`: the key holds the plan scope, which moving a Bongsu upload (its plan item) needs. */
+export type ReleaseActor =
+  | { kind: "owner"; userId: string | null }
+  | { kind: "key"; id: string; name: string; plan: boolean };
 
 export interface ReleaseRequest {
   workspaceId: string;
@@ -34,8 +37,9 @@ export interface ReleaseResult {
   from_at: string;
 }
 
-/** The HTTP status every surface answers for a refused move. */
-export const releaseStatus = (e: ReleaseError) => (e.reason === "missing" ? 404 : e.reason === "lead" ? 400 : 409);
+const STATUS: Partial<Record<ReleaseError["reason"], number>> = { missing: 404, scope: 403, lead: 400, earlier: 400 };
+/** The HTTP status every surface answers for a refused move (409 for the rest). */
+export const releaseStatus = (e: ReleaseError) => STATUS[e.reason] ?? 409;
 
 /** The calendar reads the cached list for an hour: patch the moved video there, so it shows at once. */
 async function patchCache(env: Env, accountId: string, videoId: string, iso: string): Promise<void> {
@@ -50,7 +54,9 @@ async function patchCache(env: Env, accountId: string, videoId: string, iso: str
 }
 
 /** A Bongsu upload's release is its plan item's time: moving it voids the approval (the owner approves the new time),
- *  and YouTube is never called. The video's own `publishAt` is set by the job when it goes public. */
+ *  and YouTube is never called. The video's own `publishAt` is set by the job when it goes public. A key moves it only
+ *  with the plan scope (it is plan_update's power: the reschedule scope alone doesn't reach the plan), and only later,
+ *  as the tool says. */
 async function moveItem(env: Env, req: ReleaseRequest, itemKey: string) {
   const item = await env.DB.prepare(
     `SELECT p.account, p.name, p.title, p.due_at, x.item_key AS posted FROM plan_items p
@@ -59,8 +65,15 @@ async function moveItem(env: Env, req: ReleaseRequest, itemKey: string) {
     .bind(itemKey, req.workspaceId)
     .first<{ account: string; name: string; title: string | null; due_at: number | null; posted: string | null }>();
   if (!item) throw new ReleaseError("missing", "this video's plan item is gone");
+  if (req.actor.kind === "key" && !req.actor.plan)
+    throw new ReleaseError(
+      "scope",
+      "this video is a Bongsu upload: moving it changes its plan item, which needs the plan scope (plan_update)",
+    );
   if (item.posted || item.due_at === null) throw new ReleaseError("not_scheduled", "The video is not scheduled");
   if (!(req.at > req.nowS)) throw new ReleaseError("past", "The new release time is not in the future");
+  if (req.actor.kind === "key" && !(req.at > item.due_at))
+    throw new ReleaseError("earlier", "an agent moves a release only to a later time: pick one after the current");
   // as plan_update: one item per account per hour
   const taken = await slotTaken(env.DB, item.account, req.at, req.tz, itemKey);
   if (taken) {

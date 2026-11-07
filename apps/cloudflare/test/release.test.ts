@@ -130,7 +130,7 @@ describe("moveRelease", () => {
     } finally {
       await setDisplayName(env.DB, "default", "owner", null);
     }
-    await moveRelease(e, f, req({ actor: { kind: "key", id: "k1", name: "planner" } }));
+    await moveRelease(e, f, req({ actor: { kind: "key", id: "k1", name: "planner", plan: false } }));
     expect(w.notifications[1].body).toMatch(/, by planner$/);
     // no person recorded: never "you" to everyone
     await moveRelease(e, f, req({ actor: { kind: "owner", userId: null } }));
@@ -140,7 +140,7 @@ describe("moveRelease", () => {
   it("a key needs an hour of lead; the owner doesn't", async () => {
     const e = await testEnv(env, { NOTIFY_URL: "https://ntfy.test/t" });
     const f = (i: RequestInfo | URL, r?: RequestInit) => w.fetch(i, r);
-    const key = { kind: "key", id: "k1", name: "planner" } as const;
+    const key = { kind: "key", id: "k1", name: "planner", plan: false } as const;
     await expect(moveRelease(e, f, req({ at: nowS + 1800, actor: key }))).rejects.toMatchObject({ reason: "lead" });
     expect(w.ytUpdates).toEqual([]);
     expect(

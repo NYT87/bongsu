@@ -1102,7 +1102,7 @@ export async function youtubeReschedule(c: OpCtx, b: Record<string, unknown>) {
       at,
       nowS: nowS(c),
       tz,
-      actor: { kind: "key", id: c.caller.id, name: c.caller.name },
+      actor: { kind: "key", id: c.caller.id, name: c.caller.name, plan: c.caller.scopes.includes("plan") },
     });
   } catch (e) {
     if (e instanceof ReleaseError) throw new ApiError(releaseStatus(e), e.message);

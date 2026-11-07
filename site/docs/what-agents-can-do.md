@@ -12,7 +12,7 @@ passkey, and approving also with their own CLI token ([`bongsu approve`](cli.md)
 | `draft` | Propose a draft (`create_draft`) and withdraw any open draft of the workspace (`withdraw_draft`) |
 | `plan` | Add, change and remove plan items and their texts (`plan_add`, `plan_update`, `plan_remove`), add a YouTube Short to the comment list (`shorts_add`), record a post or comment you made by hand (`record_posted`, `record_commented`) |
 | `pause` | Pause publishing (`pause_scheduler`). Resuming is yours |
-| `reschedule` | Move a scheduled YouTube video's release date (`youtube_reschedule`). Not given by default |
+| `reschedule` | Move a scheduled YouTube video's release date to a later time (`youtube_reschedule`); a video Bongsu uploads also needs `plan`. Not given by default |
 | `metrics` | Upload metrics samples collected elsewhere (`ingest_metrics`): numbers only, at least an hour old, never the plan, texts or approvals; they show in the app's charts like sampled ones. Not given by default |
 
 A video is never made public by an agent: the move only changes the release date, and the new time must be at least an
