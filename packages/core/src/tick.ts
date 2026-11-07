@@ -996,9 +996,17 @@ async function restart(c: Ctx, job: JobRow, p: Payload) {
   await c.setJob(job.id, { state: "pending", container_id: null, payload: rest });
 }
 
-/** Whether a provider's step moved on (a new phase, more bytes sent): such a run is progress, not a poll. Instagram's
+/** Whether a provider's step moved on (a new phase, more bytes sent, extras landed): such a run is progress, not a poll. Instagram's
  *  steps have neither, so its polls count as before. */
-const progressed = (a: Step, b: Step) => a.data.phase !== b.data.phase || a.data.offset !== b.data.offset;
+const progressed = (a: Step, b: Step) =>
+  a.data.phase !== b.data.phase || a.data.offset !== b.data.offset || pendingOf(a) !== pendingOf(b);
+
+/** What a step's extras phase still has to do (YouTube's tracks and thumbnail): a run that lands some has moved on,
+ *  even in the same phase. */
+function pendingOf(s: Step): number {
+  const p = s.data.pending as { captions?: unknown[]; dropCaptions?: unknown[]; thumbnail?: boolean } | undefined;
+  return (p?.captions?.length ?? 0) + (p?.dropCaptions?.length ?? 0) + (p?.thumbnail ? 1 : 0);
+}
 
 /** A step that fetches its files on later runs keeps their links (YouTube's post.media); a link expires (LINK_TTL_S),
  *  so each run signs them again from the approval's media. */

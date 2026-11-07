@@ -295,6 +295,68 @@ describe("YouTube uploads: the tick", () => {
     expect(w.notifications.filter((n) => /refused|changed after approval/.test(`${n.title} ${n.body}`))).toEqual([]);
   });
 
+  it("many subtitles land over several runs within the subrequest budget, each once, without counting polls", async () => {
+    const langs = ["es", "fr", "de", "it", "pt"];
+    const clip = w.drivePut("UPLOADS/_uploads/clip.mp4", {
+      md5: MD5S.clip,
+      mimeType: "video/mp4",
+      bytes: "0123456789",
+    });
+    const subs = langs.map((lang, i) => ({
+      lang,
+      id: w.drivePut(`UPLOADS/_uploads/${lang}.srt`, {
+        md5: String(i).repeat(32),
+        mimeType: "application/x-subrip",
+        bytes: "1\n00:00:00,000 --> 00:00:01,000\nHola\n",
+      }),
+      md5: String(i).repeat(32),
+    }));
+    const thumb = w.drivePut("UPLOADS/_uploads/thumbnail.jpg", {
+      md5: MD5S.thumb,
+      mimeType: "image/jpeg",
+      bytes: "jpeg",
+    });
+    const media = [{ id: clip, md5: MD5S.clip }, ...subs, { id: thumb, md5: MD5S.thumb }];
+    const dueAt = await localToUnix("2026-10-20", "18:00");
+    await env.DB.prepare(
+      "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id, content, media, caption, comment, texts) VALUES (?1, 'video', 'main', '20261020_DEMO', 'clip', ?2, '{}', 0, 1, 0, 0, 'default', 'db', ?3, ?4, NULL, ?5)",
+    )
+      .bind(
+        KEY,
+        dueAt,
+        JSON.stringify(media.map((m) => ({ store: "drive", id: m.id }))),
+        CAPTION,
+        JSON.stringify(TEXTS),
+      )
+      .run();
+    await addApproval(env.DB, {
+      key: KEY,
+      account: "main",
+      dueAt,
+      captionSha256: await sha256Hex(captionText(CAPTION)),
+      commentSha256: null,
+      altSha256: null,
+      textsSha256: await youtubeSha(parseTexts(JSON.stringify(TEXTS)), [
+        `video:${clip}`,
+        ...subs.map((s) => `subtitle:${s.lang}:${s.id}`),
+        `thumbnail:${thumb}`,
+      ]),
+      media: media.map((m) => ({ store: "drive", id: m.id, checksum: m.md5 })),
+      approvedAt: "2026-10-17T01:00:00Z",
+      approvedBy: "owner@test",
+    });
+    await run(at(-LEAD));
+    await run(at(-LEAD + 300)); // the file
+    expect(await job()).toMatchObject({ phase: "extras", attempts: 0 });
+    await run(at(-LEAD + 600)); // three of six: a part, and progress
+    expect(await job()).toMatchObject({ phase: "extras", attempts: 0 });
+    expect(w.ytCaptionInserts).toHaveLength(3);
+    await run(at(-LEAD + 900)); // the other two and the thumbnail
+    expect(await job()).toMatchObject({ phase: "processing", attempts: 0 });
+    expect(w.ytCaptionInserts.map((c) => c.lang)).toEqual(langs);
+    expect(w.ytVideos.get("vid-1")?.thumbnail?.bytes).toBe(4);
+  });
+
   it("a job without a lead isn't advanced before its time", async () => {
     await env.DB.prepare(
       "INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id) VALUES ('reel:early', 'video', 'instagram_conn-a', ?1, 'pending', 0, ?2, 0, 0, 'default')",

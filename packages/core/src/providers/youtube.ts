@@ -20,6 +20,9 @@ import type {
 export const UPLOAD_BUDGET_S = 180;
 /** A piece in chunk mode: a multiple of 256 KiB, as resumable uploads require. */
 export const CHUNK_BYTES = 8 * 1024 * 1024;
+/** Tracks (dropped or sent) and the thumbnail one run handles: each is two or three subrequests (the link, the
+ *  call, a replaced track's delete), so a few uploads in one run stay within the Worker's 50. The rest is next run's. */
+export const EXTRAS_PER_RUN = 3;
 
 /** What a YouTube upload keeps in `step.data` between runs. */
 export interface UploadData {
@@ -223,17 +226,19 @@ export class YouTubeProvider implements Provider {
   }
 
   /**
-   * Dropped tracks, then new or changed subtitles, then the thumbnail. Each is recorded as it lands, so a retry never
-   * duplicates a track: an error after something landed returns the progress (the failing call is tried again next
-   * run); an error before anything landed goes to the tick.
+   * Dropped tracks, then new or changed subtitles, then the thumbnail, at most EXTRAS_PER_RUN of them per run. Each
+   * is recorded as it lands, so a retry never duplicates a track: an error after something landed returns the
+   * progress (the failing call is tried again next run); an error before anything landed goes to the tick.
    */
   private async extras(d: UploadData): Promise<UploadData> {
     const id = d.videoId as string;
     const roles = rolesOf(d.post.media);
     let cur: UploadData = { ...d, captions: { ...d.captions }, pending: { ...d.pending } };
     let landed = false;
+    let done = 0;
     try {
       for (const lang of d.pending.dropCaptions) {
+        if (done++ === EXTRAS_PER_RUN) return cur;
         const track = cur.captions[lang];
         if (track) await this.yt.deleteCaption(track.trackId);
         const { [lang]: _gone, ...captions } = cur.captions;
@@ -241,6 +246,7 @@ export class YouTubeProvider implements Provider {
         landed = true;
       }
       for (const lang of d.pending.captions) {
+        if (done++ === EXTRAS_PER_RUN) return cur;
         const sub = roles.subtitles.find((s) => s.lang === lang);
         const old = cur.captions[lang];
         if (old) {
@@ -257,7 +263,10 @@ export class YouTubeProvider implements Provider {
         cur = { ...cur, pending: { ...cur.pending, captions: cur.pending.captions.slice(1) } };
         landed = true;
       }
-      if (d.pending.thumbnail && roles.thumbnail) cur = await this.thumbnail(cur, id, roles.thumbnail);
+      if (d.pending.thumbnail && roles.thumbnail) {
+        if (done === EXTRAS_PER_RUN) return cur;
+        cur = await this.thumbnail(cur, id, roles.thumbnail);
+      }
       return { ...cur, pending: { ...cur.pending, thumbnail: false }, phase: "processing" };
     } catch (e) {
       if (landed) return cur;
