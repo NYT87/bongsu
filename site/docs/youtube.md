@@ -119,7 +119,7 @@ ready video stays private past its time and goes out after you resume, within th
 
 Approving again during the lead (a new title, new subtitles, a new thumbnail) **revises the same video in place**: only
 what changed is sent. A different video file replaces the upload instead: the old private video is deleted and the new
-one goes up. Instagram posts at the same time are never held up by a long upload: each run advances them first.
+one goes up. So does removing the thumbnail, since YouTube can't take a custom thumbnail off a video. Instagram posts at the same time are never held up by a long upload: each run advances them first.
 
 A **dry run** sends its note at the upload time, 6 hours before the planned one, and uploads nothing.
 

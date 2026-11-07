@@ -245,6 +245,27 @@ describe("YouTube provider", () => {
     expect(w.ytCaptionInserts.at(-1)).toMatchObject({ video: "vid-2", lang: "es" });
   });
 
+  it("revising without the thumbnail it had replaces the video (YouTube can't take one off)", async () => {
+    const { step } = await walk(await pr.start(post()));
+    expect(data(step).thumbnailMd5).toBe("t1");
+    const s = await pr.start(post({ media: [media("clip.mp4", "v1", true), media("es.srt", "s1")] }), step);
+    expect(w.ytVideos.has("vid-1")).toBe(false);
+    expect(data(s)).toMatchObject({ phase: "uploading", videoChecksum: "v1", captions: {} });
+    expect(data(s).thumbnailMd5).toBeUndefined();
+    const r = await walk(s);
+    expect(data(r.step).videoId).toBe("vid-2");
+    expect(w.ytVideos.get("vid-2")!.thumbnail).toBeUndefined();
+  });
+
+  it("revising keeps the video when it never got its thumbnail (YouTube refused it)", async () => {
+    w.ytThumbnailRefused = true;
+    const { step } = await walk(await pr.start(post()));
+    expect(data(step).thumbnailMd5).toBeUndefined();
+    const s = await pr.start(post({ media: [media("clip.mp4", "v1", true), media("es.srt", "s1")] }), step);
+    expect(data(s)).toMatchObject({ phase: "extras", videoId: "vid-1" });
+    expect(w.ytSessions.size).toBe(1);
+  });
+
   it("discard deletes the uploaded video, best effort", async () => {
     const { step } = await walk(await pr.start(post()));
     expect(await pr.discard(step)).toBe(true);

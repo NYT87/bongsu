@@ -93,7 +93,7 @@ export class YouTubeProvider implements Provider {
   }
 
   /** Uploads the video private, or, given the job's earlier step with an uploaded video, revises that one: the same
-   *  file keeps the video and changes only what differs; another file replaces it. */
+   *  file keeps the video and changes only what differs; another file, or a removed thumbnail, replaces it. */
   async start(post: OutgoingPost, previous?: Step): Promise<Step> {
     let roles: ReturnType<typeof rolesOf>;
     try {
@@ -106,7 +106,9 @@ export class YouTubeProvider implements Provider {
     const meta = metaOf(post, settings.madeForKids, settings.category);
     const old = previous?.data as Partial<UploadData> | undefined;
     if (old?.videoId) {
-      if (old.videoChecksum === roles.video.checksum) {
+      // the Data API sets a custom thumbnail but can't take one off: a thumbnail removed since replaces the video
+      const thumbnailGone = !!old.thumbnailMd5 && !roles.thumbnail;
+      if (old.videoChecksum === roles.video.checksum && !thumbnailGone) {
         const revised = await this.revise(old as UploadData, post, roles, meta, settings.privacy);
         if (revised) return revised;
       } else await this.yt.deleteVideo(old.videoId);
