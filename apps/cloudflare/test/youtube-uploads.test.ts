@@ -387,8 +387,9 @@ describe("YouTube uploads: the tick", () => {
       return real(input, init);
     };
     now = at(-LEAD + 2100);
-    await tick(e, { fetch: w.fetch, now, signal: deadline.signal });
+    const r = await tick(e, { fetch: w.fetch, now, signal: deadline.signal });
     w.fetch = real;
+    expect(r.detail).toMatchObject({ advanced: 1 }); // B, skipped for the budget, isn't counted
     expect(await job()).toMatchObject({ phase: "uploading", attempts: 0 });
     expect((await step()).step?.data.offset).toBe(4);
     // B waits, untouched and with no attempt counted
@@ -443,6 +444,7 @@ const step = async (key = KEY) =>
     (await env.DB.prepare("SELECT payload FROM jobs WHERE item_key = ?1").bind(key).first<{ payload: string }>())!
       .payload,
   ) as { step?: { data: Record<string, unknown> }; notBefore?: number };
+const LIVE_KEPT = "It may already be public on YouTube: it was kept, so check it there.";
 const notes = (re: RegExp) => w.notifications.filter((n) => re.test(`${n.title}\n${n.body}`));
 const s = (d: Date) => Math.floor(d.getTime() / 1000);
 
@@ -512,6 +514,23 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
     expect(privacy()).toBe("public");
     expect(deletes.n).toBe(0);
     expect(await deletedRows()).toEqual([]);
+    expect(notes(/refused/).map((n) => n.body)).toEqual([`removed from the plan\n${LIVE_KEPT}`]);
+  });
+
+  it("a video that may be live and is put on hold is kept, and the note sends the owner to the channel", async () => {
+    await publishedUnread();
+    await env.DB.prepare("UPDATE plan_items SET hold = 1 WHERE item_key = ?1").bind(KEY).run();
+    await run(at(300));
+    expect(await job()).toMatchObject({ state: "held", videoId: "vid-1" });
+    expect(privacy()).toBe("public");
+    expect(notes(/held/).map((n) => n.body)).toEqual([`on hold: it goes out once released\n${LIVE_KEPT}`]);
+  });
+
+  it("a private video refused for a removed item gets no such note", async () => {
+    await uploadAhead();
+    await removeItem();
+    await run(at(-3600));
+    expect(notes(/refused/).map((n) => n.body)).toEqual(["removed from the plan"]);
   });
 
   it("a refused job that may be live is never reopened by a new approval", async () => {

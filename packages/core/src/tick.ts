@@ -297,19 +297,21 @@ export async function tick(
         await discover(c, a);
     const active = await activeJobs(c, accounts);
     let calling = 0;
+    let advanced = 0;
     for (const job of active) {
       const p = JSON.parse(job.payload) as Payload;
       // an upload starts only with time and subrequests left in the run; else it waits for the next, no attempt counted
       if (isUploadStep(job, p) && !canUpload(run)) continue;
       // a video only waiting for its time reaches nothing on the platform
       if (!waiting(c, job, p)) calling++;
+      advanced++;
       await advance(c, job);
     }
     // a full run has spent its subrequests on the jobs: the sweep waits for a quieter one
     if (calling < jobsPerTick(env)) await sweepRemoved(c);
     return {
       status: "ok",
-      detail: { part, advanced: active.length, held: [...c.held.keys()], dry_run: c.dry },
+      detail: { part, advanced, held: [...c.held.keys()], dry_run: c.dry },
     };
   } finally {
     await release(env.DB, lock, holder);
@@ -580,8 +582,7 @@ async function advance(c: Ctx, job: JobRow) {
  *  where it is. */
 async function failedNote(c: Ctx, job: JobRow, p: Payload, msg: string) {
   if (!previousUpload(p)) return N.jobFailed(job.item_key, msg);
-  const a = await c.account(p, job.workspace_id);
-  return N.providerFailed(job.item_key, platform(a?.platform ?? "")?.name ?? "the platform", msg, "kept");
+  return N.providerFailed(job.item_key, await platformOf(c, p, job.workspace_id), msg, "kept");
 }
 
 /** How long a day's quota-note marker is kept (a Pacific day, with room for the time zones). */
@@ -609,10 +610,11 @@ async function waitQuota(c: Ctx, job: JobRow, p: Payload) {
     .run();
 }
 
-/** `payload`: the job's state to keep with the refusal (a step that left a private video, for the next approval). */
-async function refuse(c: Ctx, job: JobRow, reason: string, payload?: Payload) {
+/** `payload`: the job's state to keep with the refusal (a step that left a private video, for the next approval).
+ *  `live`: the platform's name when the post may already be public there (the note says so). */
+async function refuse(c: Ctx, job: JobRow, reason: string, payload?: Payload, live?: string) {
   await c.setJob(job.id, { state: "refused", last_error: reason, notified: true, ...(payload ? { payload } : {}) });
-  await c.note.send(N.jobRefused(job.item_key, reason), job.workspace_id);
+  await c.note.send(N.jobRefused(job.item_key, reason, live), job.workspace_id);
 }
 
 /** recheck's finding; `removed`: the item is gone from the plan, so nothing it left on the platform will be needed. */
@@ -650,13 +652,24 @@ async function recheck(c: Ctx, job: JobRow, p: Payload): Promise<Recheck | null>
 /** What recheck found: the job settles (done, refused), or is held until the item is released (discover brings it
  *  back; a held job doesn't take one of the tick's slots while it waits). A refusal keeps the step (a private video,
  *  for the next approval to revise), except when the item is gone: then the video is deleted, unless it may be live
- *  (the publishing call was made): a public video is never deleted for the plan's sake. */
+ *  (the publishing call was made): a public video is never deleted for the plan's sake, and the note (refused or held)
+ *  tells the owner it may be public, kept, to check on the platform. */
 async function settle(c: Ctx, job: JobRow, p: Payload, r: Recheck) {
   if (r.state === "refused" && r.removed && previousUpload(p) && !mayBeLive(job, p))
     return refuse(c, job, r.reason, await discard(c, job, p));
-  if (r.state === "refused") return refuse(c, job, r.reason, p);
+  // a post that may be live stays as it is whatever the plan says now (nothing deletes, revises or reopens it): only
+  // the owner can tell, on the platform, whether it went out
+  const live = r.state !== "done" && mayBeLive(job, p) ? await platformOf(c, p, job.workspace_id) : undefined;
+  if (r.state === "refused") return refuse(c, job, r.reason, p, live);
   if (r.state === "done") return c.setJob(job.id, { state: "done", last_error: r.reason });
-  await c.setJob(job.id, { state: "held", last_error: r.reason, payload: { ...p, onHold: true } });
+  await c.setJob(job.id, { state: "held", last_error: r.reason, payload: { ...p, onHold: true }, notified: !!live });
+  if (live) await c.note.send(N.jobHeldLive(job.item_key, r.reason, live), job.workspace_id);
+}
+
+/** The name of the platform a job posts to, for its notes. */
+async function platformOf(c: Ctx, p: Payload, workspaceId: string): Promise<string> {
+  const a = await c.account(p, workspaceId);
+  return platform(a?.platform ?? "")?.name ?? "the platform";
 }
 
 /** Deletes the private video a job uploaded for an item that is gone, best effort; the audit row records a video

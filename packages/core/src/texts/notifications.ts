@@ -30,10 +30,21 @@ export const jobFailed = (key: string, message: string): Note => ({
   text: message,
   target: key,
 });
-export const jobRefused = (key: string, reason: string): Note => ({
+/** `live`: the platform's name when the post may already be public there (the publishing call was made): the job
+ *  keeps it, never deleting or redoing it, so the owner has to look at it there. */
+const liveKept = (live?: string) =>
+  live ? `\nIt may already be public on ${live}: it was kept, so check it there.` : "";
+export const jobRefused = (key: string, reason: string, live?: string): Note => ({
   group: "problems",
   title: `${key}: refused`,
-  text: reason,
+  text: `${reason}${liveKept(live)}`,
+  target: key,
+});
+/** A job held by its plan (its item on hold) while its post may already be public on `live`. */
+export const jobHeldLive = (key: string, reason: string, live: string): Note => ({
+  group: "problems",
+  title: `${key}: held`,
+  text: `${reason}${liveKept(live)}`,
   target: key,
 });
 export const jobHeld = (key: string, hours: number): Note => ({

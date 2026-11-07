@@ -127,7 +127,9 @@ A **dry run** sends its note at the upload time, 6 hours before the planned one,
 
 Removing the item (or withdrawing the draft) **deletes its private video** at the next run. It doesn't in dry run, and
 not while the workspace is paused or archived: the delete waits until it isn't. A job that **fails for good** keeps its
-private video, and the note says it is there to look at or publish by hand.
+private video, and the note says it is there to look at or publish by hand. A video Bongsu was making public when its
+answer got lost may already be public: removing or holding its item then keeps it as it is, never deleted or made
+private again, and the note asks you to check it on the channel.
 
 ### The audit lock
 
