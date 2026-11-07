@@ -9,8 +9,10 @@ import { addApproval, defaultTime } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneToUnix } from "@bongsu/core/formats/time";
+import { serveMedia } from "@bongsu/core/media";
 import { clearFolderCache } from "@bongsu/core/media/drive";
 import { FakeS3 } from "@bongsu/core/media/fake-s3";
+import { mediaStoreById } from "@bongsu/core/media/index";
 import { setWorkspaceNtfy } from "@bongsu/core/ntfy";
 import { setWorkspaceSettings, workspaceZone } from "@bongsu/core/workspaces";
 
@@ -48,6 +50,8 @@ export class World {
       mimeType: string;
       trashed?: boolean;
       bytes?: string;
+      /** The size Drive reports, when it isn't the bytes' (a large file without its bytes). */
+      size?: number;
       name?: string;
       parent?: string;
       modified?: string;
@@ -55,7 +59,10 @@ export class World {
   >();
 
   /** Put a file at a Drive path under UPLOADS/ (folders created as needed); returns its id. */
-  drivePut(path: string, file: { md5: string; mimeType: string; bytes?: string; modified?: string }): string {
+  drivePut(
+    path: string,
+    file: { md5: string; mimeType: string; bytes?: string; size?: number; modified?: string },
+  ): string {
     const parts = path.split("/");
     let parent: string | undefined;
     for (const [i, name] of parts.entries()) {
@@ -119,6 +126,49 @@ export class World {
   /** Every `videos.update` call the fake accepted or refused, for assertions. */
   ytUpdates: { id: string; status: Record<string, unknown> }[] = [];
   ytComments: { video: string; text: string }[] = [];
+  /** Videos uploaded through the resumable API (the provider's uploads), by id. `processing` is what a test moves
+   *  along; `seconds`, `width` and `height` are answered once set. */
+  ytVideos = new Map<
+    string,
+    {
+      size: number;
+      received: number;
+      meta: Record<string, any>;
+      status: Record<string, unknown>;
+      processing: "processing" | "succeeded" | "failed" | "rejected";
+      captions: Map<string, { lang: string }>;
+      thumbnail?: { bytes: number; type: string };
+      seconds?: number;
+      width?: number;
+      height?: number;
+    }
+  >();
+  /** Resumable sessions by upload id → video id. */
+  ytSessions = new Map<string, string>();
+  /** Every session PUT: its Content-Range and body length (the query PUTs have length 0). */
+  ytPuts: { range: string; length: number }[] = [];
+  /** Bytes kept of a session PUT before it is cut off (the fetch then aborts); null: PUTs complete. */
+  ytUploadCut: number | null = null;
+  /** Bytes kept per cut PUT in order (then `ytUploadCut`): the server may keep less than the client guesses. */
+  ytCuts: number[] = [];
+  /** The channel's upload limit is reached: videos.insert answers 400 uploadLimitExceeded. */
+  ytUploadLimit = false;
+  /** The daily quota is used up: inserts, updates, captions and thumbnails answer 403 quotaExceeded. */
+  ytQuota = false;
+  /** The audit lock: a project that hasn't passed YouTube's audit keeps every upload private. */
+  ytKeepPrivate = false;
+  /** Files the uploads read as sources (path → bytes), served at https://files.example.com/<path> with Range. */
+  ytFiles = new Map<string, Uint8Array>();
+  /** The scheduler's own signed /m/ links, for a provider that fetches the files itself (YouTube): serveLinks sets
+   *  it, so the links are checked against the test's clock rather than the real one. */
+  links: ((req: Request) => Promise<Response>) | null = null;
+  /** captions.insert calls so far; the call with this number answers 500, once (null: none fails). */
+  ytCaptionCalls = 0;
+  ytCaptionFailOnce: number | null = null;
+  /** thumbnails.set answers 403 (a channel not allowed custom thumbnails); a number answers that status instead. */
+  ytThumbnailRefused: boolean | number = false;
+  /** Every caption track inserted, in order (a duplicate shows here even after a delete). */
+  ytCaptionInserts: { video: string; lang: string; id: string }[] = [];
   notifications: { title: string; body: string; actions?: string }[] = [];
   /** Emails sent through the fake Resend API. */
   mails: { from: string; to: string[]; subject: string; text: string }[] = [];
@@ -162,6 +212,7 @@ export class World {
     const json = (body: unknown, status = 200) =>
       new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
     if (url.hostname === "s3.test" || url.hostname.endsWith(".s3.test")) return this.s3.fetch(req);
+    if (this.links && url.pathname.startsWith("/m/")) return this.links(req);
 
     if (url.hostname === "oauth2.googleapis.com" && url.pathname === "/revoke") {
       this.googleRevoked.push(url.searchParams.get("token") ?? "");
@@ -256,7 +307,7 @@ export class World {
           name: f.name,
           mimeType: f.mimeType,
           md5Checksum: f.md5 || undefined,
-          size: String((f.bytes ?? "bytes").length),
+          size: String(f.size ?? (f.bytes ?? "bytes").length),
           modifiedTime: f.modified ?? "2026-10-01T00:00:00Z",
           parents: f.parent ? [f.parent] : [],
         }));
@@ -286,7 +337,7 @@ export class World {
         name: f.name,
         modifiedTime: f.modified ?? "2026-10-01T00:00:00Z",
         md5Checksum: f.md5,
-        size: String((f.bytes ?? "bytes").length),
+        size: String(f.size ?? (f.bytes ?? "bytes").length),
         mimeType: f.mimeType,
         trashed: !!f.trashed,
         parents: f.parent ? [f.parent] : [],
@@ -322,6 +373,177 @@ export class World {
           },
         ],
       });
+    }
+    if (url.hostname === "files.example.com") {
+      const f = this.ytFiles.get(url.pathname.slice(1));
+      if (!f) return new Response("not found", { status: 404 });
+      const m = /^bytes=(\d+)-(\d*)$/.exec(req.headers.get("Range") ?? "");
+      if (!m) return new Response(f, { headers: { "Content-Type": "application/octet-stream" } });
+      const start = Number(m[1]);
+      const end = Math.min(f.length - 1, m[2] ? Number(m[2]) : f.length - 1);
+      return new Response(f.slice(start, end + 1), {
+        status: 206,
+        headers: { "Content-Range": `bytes ${start}-${end}/${f.length}`, "Content-Type": "application/octet-stream" },
+      });
+    }
+    if (url.hostname === "www.googleapis.com" && url.pathname.startsWith("/upload/youtube/v3/")) {
+      // as long as Google's real errors (past 300 characters), so the client must parse the whole body
+      const quotaMessage = "The request cannot be completed because you have exceeded your quota. ".repeat(4);
+      const quota = () =>
+        json(
+          {
+            error: {
+              code: 403,
+              message: quotaMessage,
+              errors: [{ message: quotaMessage, domain: "youtube.quota", reason: "quotaExceeded" }],
+            },
+          },
+          403,
+        );
+      const sessionId = url.searchParams.get("upload_id");
+      if (req.method === "PUT" && sessionId) {
+        const vid = this.ytSessions.get(sessionId);
+        const v = vid ? this.ytVideos.get(vid) : undefined;
+        if (!vid || !v) return json({ error: { code: 404, message: "session" } }, 404);
+        const range = req.headers.get("Content-Range") ?? "";
+        const body = new Uint8Array(await req.arrayBuffer());
+        this.ytPuts.push({ range, length: body.length });
+        const resume = () =>
+          new Response(null, {
+            status: 308,
+            headers: v.received ? { Range: `bytes=0-${v.received - 1}` } : {},
+          });
+        const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(range);
+        if (!m) return v.received >= v.size ? json({ id: vid }) : resume();
+        if (Number(m[1]) !== v.received) return resume();
+        const cut = this.ytCuts.length ? (this.ytCuts.shift() as number) : this.ytUploadCut;
+        if (cut !== null && body.length > cut) {
+          v.received += cut;
+          throw new DOMException("The operation timed out", "TimeoutError");
+        }
+        v.received += body.length;
+        return v.received >= v.size ? json({ id: vid }) : resume();
+      }
+      if (req.method === "POST" && url.pathname === "/upload/youtube/v3/videos") {
+        if (this.ytQuota) return quota();
+        if (this.ytUploadLimit)
+          return json({ error: { code: 400, message: "limit", errors: [{ reason: "uploadLimitExceeded" }] } }, 400);
+        const b = (await req.json()) as { snippet: Record<string, any>; status: Record<string, any> };
+        if (noDefaultLanguage(b)) return defaultLanguageNotSet();
+        // numbered by session (never removed), so a video uploaded after a delete gets a new id
+        const id = `vid-${this.ytSessions.size + 1}`;
+        const up = `up-${this.ytSessions.size + 1}`;
+        this.ytVideos.set(id, {
+          size: Number(req.headers.get("X-Upload-Content-Length")),
+          received: 0,
+          meta: { ...b.snippet, localizations: (b as any).localizations },
+          status: { ...b.status, privacyStatus: "private", uploadStatus: "uploaded" },
+          processing: "processing",
+          captions: new Map(),
+        });
+        this.ytSessions.set(up, id);
+        return new Response("{}", {
+          headers: {
+            Location: `https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=${up}`,
+          },
+        });
+      }
+      if (req.method === "POST" && url.pathname === "/upload/youtube/v3/thumbnails/set") {
+        if (this.ytQuota) return quota();
+        if (this.ytThumbnailRefused) {
+          const code = this.ytThumbnailRefused === true ? 403 : this.ytThumbnailRefused;
+          return json({ error: { code, errors: [{ reason: "forbidden" }], message: "custom thumbnails" } }, code);
+        }
+        const v = this.ytVideos.get(url.searchParams.get("videoId") ?? "");
+        if (!v) return json({ error: { code: 404, message: "videoNotFound" } }, 404);
+        const bytes = (await req.arrayBuffer()).byteLength;
+        v.thumbnail = { bytes, type: req.headers.get("Content-Type") ?? "" };
+        return json({ items: [] });
+      }
+      if (req.method === "POST" && url.pathname === "/upload/youtube/v3/captions") {
+        if (this.ytQuota) return quota();
+        if (++this.ytCaptionCalls === this.ytCaptionFailOnce)
+          return json({ error: { code: 500, message: "backendError" } }, 500);
+        const text = new TextDecoder("latin1").decode(await req.arrayBuffer());
+        const meta = JSON.parse(/\r\n\r\n(\{.*?\})\r\n--/s.exec(text)?.[1] ?? "{}") as {
+          snippet?: { videoId: string; language: string };
+        };
+        const v = this.ytVideos.get(meta.snippet?.videoId ?? "");
+        if (!v || !meta.snippet) return json({ error: { code: 404, message: "videoNotFound" } }, 404);
+        const id = `cap-${this.ytCaptionInserts.length + 1}`;
+        v.captions.set(id, { lang: meta.snippet.language });
+        this.ytCaptionInserts.push({ video: meta.snippet.videoId, lang: meta.snippet.language, id });
+        return json({ id, snippet: meta.snippet });
+      }
+      return json({ error: { code: 404, message: "no such upload endpoint" } }, 404);
+    }
+    if (url.hostname === "www.googleapis.com" && url.pathname === "/youtube/v3/captions" && req.method === "DELETE") {
+      if (this.ytQuota) return json({ error: { code: 403, errors: [{ reason: "quotaExceeded" }] } }, 403);
+      const id = url.searchParams.get("id") ?? "";
+      for (const v of this.ytVideos.values()) if (v.captions.delete(id)) return new Response(null, { status: 204 });
+      return json({ error: { code: 404, message: "captionNotFound" } }, 404);
+    }
+    if (url.hostname === "www.googleapis.com" && url.pathname === "/youtube/v3/videos" && req.method === "DELETE") {
+      if (this.ytQuota) return json({ error: { code: 403, errors: [{ reason: "quotaExceeded" }] } }, 403);
+      return this.ytVideos.delete(url.searchParams.get("id") ?? "")
+        ? new Response(null, { status: 204 })
+        : json({ error: { code: 404, message: "videoNotFound" } }, 404);
+    }
+    if (
+      url.hostname === "www.googleapis.com" &&
+      url.pathname === "/youtube/v3/videos" &&
+      req.method === "PUT" &&
+      this.ytVideos.has(((await req.clone().json()) as { id: string }).id)
+    ) {
+      if (this.ytQuota) return json({ error: { code: 403, errors: [{ reason: "quotaExceeded" }] } }, 403);
+      const b = (await req.json()) as {
+        id: string;
+        snippet: Record<string, any>;
+        status: Record<string, unknown>;
+        localizations?: Record<string, unknown>;
+      };
+      if (noDefaultLanguage(b)) return defaultLanguageNotSet();
+      const v = this.ytVideos.get(b.id)!;
+      v.meta = { ...b.snippet, localizations: b.localizations };
+      v.status = {
+        ...v.status,
+        ...b.status,
+        // the audit lock: an unaudited project's videos stay private whatever the update asks
+        ...(this.ytKeepPrivate ? { privacyStatus: "private" } : {}),
+      };
+      return json({ id: b.id });
+    }
+    if (
+      url.hostname === "www.googleapis.com" &&
+      url.pathname === "/youtube/v3/videos" &&
+      req.method === "GET" &&
+      // a channel's uploads list (snippet) and statistics are the ytUploads ones, even for a video the provider uploaded
+      !/snippet|statistics/.test(url.searchParams.get("part") ?? "") &&
+      (url.searchParams.get("id") ?? "").split(",").some((id) => this.ytVideos.has(id))
+    ) {
+      const items = (url.searchParams.get("id") ?? "").split(",").flatMap((id) => {
+        const v = this.ytVideos.get(id);
+        if (!v) return [];
+        const status: Record<string, unknown> = {
+          ...v.status,
+          uploadStatus: { processing: "uploaded", succeeded: "processed", failed: "failed", rejected: "rejected" }[
+            v.processing
+          ],
+          ...(v.processing === "failed" ? { failureReason: "codec" } : {}),
+          ...(v.processing === "rejected" ? { rejectionReason: "duplicate" } : {}),
+        };
+        return [
+          {
+            id,
+            status,
+            processingDetails: { processingStatus: v.processing === "processing" ? "processing" : "succeeded" },
+            fileDetails:
+              v.width && v.height ? { videoStreams: [{ widthPixels: v.width, heightPixels: v.height }] } : {},
+            contentDetails: v.seconds === undefined ? {} : { duration: `PT${v.seconds}S` },
+          },
+        ];
+      });
+      return json({ items });
     }
     if (url.hostname === "www.googleapis.com" && url.pathname === "/youtube/v3/playlistItems") {
       this.ytListCalls++;
@@ -684,6 +906,28 @@ async function baseEnv(base: Env, overrides: Partial<Env> & Record<string, unkno
     ENCRYPTION_KEY: TEST_ENCRYPTION_KEY,
     ...overrides,
   } as Env;
+}
+
+/** Serves the scheduler's signed /m/ links (what the tick hands a provider) from the env's media stores, at the
+ *  instant `now()` gives: the tick's clock, not the real one, decides whether a link has expired. */
+/** YouTube refuses localizations on a video without snippet.defaultLanguage. */
+const noDefaultLanguage = (b: { snippet?: Record<string, unknown>; localizations?: unknown }) =>
+  !!b.localizations && Object.keys(b.localizations as object).length > 0 && !b.snippet?.defaultLanguage;
+const defaultLanguageNotSet = () =>
+  Response.json(
+    {
+      error: {
+        code: 400,
+        message: "The request is missing the snippet.defaultLanguage property.",
+        errors: [{ reason: "defaultLanguageNotSet", domain: "youtube.video" }],
+      },
+    },
+    { status: 400 },
+  );
+
+export function serveLinks(w: World, e: Env, now: () => Date) {
+  w.links = (req) =>
+    serveMedia(req, e.MEDIA_SIGNING_KEY, (id) => mediaStoreById(e, w.fetch, id), Math.floor(now().getTime() / 1000));
 }
 
 export const Q = "channels/vlogs/INSTAGRAM";

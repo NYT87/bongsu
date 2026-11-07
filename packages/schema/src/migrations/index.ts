@@ -17,6 +17,7 @@ import { steps as oauthStateBrowser } from "./0020_oauth_state_browser";
 import { steps as notifyPrefs } from "./0021_notify_prefs";
 import { steps as workspaceMedia } from "./0022_workspace_media";
 import { steps as iconNames } from "./0023_icon_names";
+import { steps as youtubeTexts } from "./0024_youtube_texts";
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -44,4 +45,5 @@ export const MIGRATIONS: Migration[] = [
   { name: "0021_notify_prefs", steps: notifyPrefs },
   { name: "0022_workspace_media", steps: workspaceMedia },
   { name: "0023_icon_names", steps: iconNames },
+  { name: "0024_youtube_texts", steps: youtubeTexts },
 ];

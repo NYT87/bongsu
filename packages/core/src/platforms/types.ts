@@ -69,6 +69,8 @@ export interface Platform {
   accountNoun: string;
   /** Formats Bongsu can publish here (empty: it only comments on posts made elsewhere). */
   formats: Format[];
+  /** Seconds before the due time that the provider starts work (a YouTube upload); absent: at the due time. */
+  uploadLeadS?: number;
   limits: Limits;
   features: Features;
   options: OptionSpec[];

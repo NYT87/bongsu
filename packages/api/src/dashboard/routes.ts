@@ -72,7 +72,7 @@ import {
   workspaceName,
 } from "@bongsu/core/people";
 import { platform, platforms } from "@bongsu/core/platforms/index";
-import { describePlatform } from "@bongsu/core/platforms/types";
+import { describePlatform, NO_LINT, OptionsError, validateOptions } from "@bongsu/core/platforms/types";
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
@@ -1096,10 +1096,46 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   );
 
   // ---- accounts and connections
-  /** An account's effective caption rules with its platform's defaults, or null where the platform lints nothing. */
+  /** An account's effective caption rules with its platform's defaults, or null where the platform lints nothing
+   *  (no formats, or defaults that check nothing: tuning them would have no effect). */
   const accountCaptionRules = (a: Account) => {
     const p = platform(a.platform);
-    return p?.formats.length ? { ...captionRules(p, a), defaults: p.lintDefaults } : null;
+    if (!p?.formats.length || JSON.stringify(p.lintDefaults) === JSON.stringify(NO_LINT)) return null;
+    return { ...captionRules(p, a), defaults: p.lintDefaults };
+  };
+  /** A YouTube channel's defaults (accounts.settings.youtube, read by core's youtubeSettings); null for other platforms. */
+  const accountYoutube = (a: Account) => {
+    if (a.platform !== "youtube") return null;
+    const y = (a.settings.youtube ?? {}) as Record<string, unknown>;
+    return {
+      madeForKids: typeof y.madeForKids === "boolean" ? y.madeForKids : null,
+      category: typeof y.category === "string" ? y.category : null,
+    };
+  };
+  const YOUTUBE_HELP = "YouTube defaults: madeForKids true/false, category a number such as 22";
+  /** A change to the channel's defaults, checked with the platform's own option rules (only these two keys are
+   *  defaults; privacy is per video). Merged into what is stored, a null field dropped. */
+  const mergeYoutube = (acc: Account, v: unknown) => {
+    const p = platform(acc.platform);
+    if (!p || acc.platform !== "youtube") throw new AdminError(400, "only a YouTube channel has YouTube defaults");
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new AdminError(400, YOUTUBE_HELP);
+    const given = v as Record<string, unknown>;
+    if (Object.keys(given).some((k) => k !== "madeForKids" && k !== "category"))
+      throw new AdminError(400, YOUTUBE_HELP);
+    let valid: Record<string, unknown>;
+    try {
+      valid = validateOptions(p, "video", given);
+    } catch (e) {
+      if (e instanceof OptionsError) throw new AdminError(400, `${YOUTUBE_HELP} (${e.message})`);
+      throw e;
+    }
+    const was = acc.settings.youtube;
+    const next: Record<string, unknown> = was && typeof was === "object" ? { ...(was as object) } : {};
+    for (const k of Object.keys(given)) {
+      if (k in valid) next[k] = valid[k];
+      else delete next[k];
+    }
+    return next;
   };
   const CAPTION_RULES_HELP = "caption rules: hashtagMax 0–30, foldChars 50–500, languageChecks true/false";
   /** A change to the owner's overrides: each present field checked (so a stray value can't reach the lint), null
@@ -1154,6 +1190,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           : null,
         trialReels: platform(a.platform)?.features.trial ? { capable: trialCapable(a), on: trialDefaultOn(a) } : null,
         captionRules: accountCaptionRules(a),
+        youtube: accountYoutube(a),
       })),
     })),
   );
@@ -1172,6 +1209,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         const captionRules = mergeCaptionRules(acc, parseCaptionRules(b.captionRules));
         await setAccountSettings(c.env.DB, id, { captionRules }, nowS());
       }
+      if ("youtube" in b) await setAccountSettings(c.env.DB, id, { youtube: mergeYoutube(acc, b.youtube) }, nowS());
       if ("name" in b)
         await c.env.DB.prepare("UPDATE accounts SET display_name = ?1, updated_at = ?2 WHERE id = ?3")
           .bind(

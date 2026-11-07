@@ -1064,6 +1064,7 @@ interface Account {
   connection: { id: string; provider: string; label: string | null; status: string } | null;
   trialReels: { capable: boolean; on: boolean } | null;
   captionRules: (LintRules & { defaults: LintRules }) | null;
+  youtube: { madeForKids: boolean | null; category: string | null } | null;
 }
 /** The caption check's rules (core's formats/caption-lint.ts): what the dashboard lets the owner tune per account. */
 interface LintRules {
@@ -1127,6 +1128,49 @@ function CaptionRulesCell({
   );
 }
 
+/** A YouTube channel's defaults for new videos (a video's own options win). The category is saved when the field is
+ *  left; empty means back to "22" (People & Blogs). */
+function YoutubeDefaultsCell({
+  youtube,
+  save,
+}: {
+  youtube: { madeForKids: boolean | null; category: string | null };
+  save: (change: { madeForKids?: boolean; category?: string | null }) => Promise<boolean>;
+}) {
+  const [category, setCategory] = useState(youtube.category ?? "");
+  return (
+    <div className="rules">
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={youtube.madeForKids === true}
+          onChange={(e) => save({ madeForKids: e.target.checked })}
+        />
+        Made for kids
+      </label>
+      <label>
+        <span>Category</span>
+        <input
+          inputMode="numeric"
+          maxLength={3}
+          placeholder="22"
+          value={category}
+          onChange={(e) => setCategory(e.target.value)}
+          onBlur={async () => {
+            const v = category.trim();
+            if (v === (youtube.category ?? "")) return;
+            if (!(await save({ category: v === "" ? null : v }))) setCategory(youtube.category ?? "");
+          }}
+        />
+      </label>
+      <span className="muted small">
+        Until your Google project passes YouTube's audit, videos stay private (see{" "}
+        <GuideLink doc="site/docs/youtube.md">the YouTube guide</GuideLink>).
+      </span>
+    </div>
+  );
+}
+
 export function Accounts(_: Props) {
   const toast = useToast();
   const { data, error, reload } = useLoad<{ accounts: Account[]; platforms: PlatformInfo[] }>("accounts");
@@ -1174,7 +1218,7 @@ export function Accounts(_: Props) {
                     <th>Publishes</th>
                     <th>Connection</th>
                     <th>Trial Reels by default</th>
-                    <th>Caption checks</th>
+                    <th>Checks and defaults</th>
                     <th>Status</th>
                     <th className="right">
                       <span className="vh">Actions</span>
@@ -1217,12 +1261,18 @@ export function Accounts(_: Props) {
                           <span className="muted small">—</span>
                         )}
                       </td>
-                      <td data-label="Caption checks">
+                      <td data-label="Checks and defaults">
                         {a.captionRules ? (
                           <CaptionRulesCell
                             key={`${a.id}:${a.captionRules.hashtagMax}:${a.captionRules.foldChars}`}
                             rules={a.captionRules}
                             save={(captionRules) => update(a.id, { captionRules })}
+                          />
+                        ) : a.youtube ? (
+                          <YoutubeDefaultsCell
+                            key={`${a.id}:${a.youtube.madeForKids}:${a.youtube.category}`}
+                            youtube={a.youtube}
+                            save={(youtube) => update(a.id, { youtube })}
                           />
                         ) : (
                           <span className="muted small">—</span>

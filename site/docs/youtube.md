@@ -1,9 +1,10 @@
 # YouTube (youtube-data)
 
-Today Bongsu comments on YouTube videos published elsewhere: the **Shorts comments**. Add a Short's id and the comment's
-text (the app, `shorts_add` over MCP, or `POST /v1/shorts`), approve the text with your passkey on the Short's page in
-the app (as with a post: a changed text waits for you again), and Bongsu posts the comment as your channel once the
-video is public, then shows new comments in the app's inbox and replies from there. Uploading videos isn't supported yet.
+Bongsu uploads your Shorts and videos and makes them public at the planned minute ([uploading
+videos](#uploading-videos)), and comments on videos published anywhere: the **Shorts comments**. Add a Short's id and
+the comment's text (the app, `shorts_add` over MCP, or `POST /v1/shorts`), approve the text with your passkey on the
+Short's page in the app (as with a post: a changed text waits for you again), and Bongsu posts the comment as your
+channel once the video is public, then shows new comments in the app's inbox and replies from there.
 
 Each channel is connected with your own Google OAuth app (one app for every channel), from the dashboard.
 
@@ -92,9 +93,99 @@ INSERT INTO accounts (id, workspace_id, platform, handle, display_name, external
   VALUES ('main', 'default', 'youtube', 'main', 'Main channel', '<channel id, UC…>', 'c_main', unixepoch(), unixepoch());
 ```
 
+## Uploading videos
+
+A video is a plan item on a YouTube channel, planned like a Reel and approved with your passkey in the app. Its **title**
+is 1 to 100 characters (it may be empty while you edit, but approval needs it), and its **description** is the caption
+(at most 5000 characters; a description is required, as every caption is). It can also have a language, the audio
+language, tags (500 characters as YouTube counts them), **translations** (a title and a description per language, up
+to 20 languages, at most 5 read from the inbox; YouTube takes them only with the video's language set), **subtitles** and a **thumbnail**. Instagram posts have no title or translations, and a
+video draft with subtitle or thumbnail files can't be scheduled on an Instagram account.
+
+Edit them on the item's page in the app, with `plan_add` / `plan_update` / `create_draft` (`texts`), or with
+`bongsu texts set --title` and `--translation` ([the CLI](cli.md)). Subtitles and a thumbnail only come with a draft
+(the app's upload, the inbox or `create_draft`): a video planned with `plan_add` from a repository is the single file.
+A short vertical video of at most 180 seconds gets a Shorts link.
+
+### The 6 h lead and the waiting
+
+Bongsu uploads **6 hours before** the planned time, so processing is finished when the time comes. The upload goes up
+private, then Bongsu adds the subtitles and the thumbnail and waits for YouTube to process the video. The app shows
+where it is: "Uploading, 40%", "Adding subtitles", "YouTube is processing", "Ready: goes public at 18:00". The video
+stays private while it waits; at the planned time Bongsu makes it public, unless the approval no longer matches (a
+changed title, time, made for kids or visibility: the video stays private and waits for you). A video planned less than 6 hours ahead starts at
+the next run and goes public at its time if processing is done by then, else as soon as it is. A paused workspace's
+ready video stays private past its time and goes out after you resume, within the 6 hour catch-up.
+
+Approving again during the lead (a new title, new subtitles, a new thumbnail) **revises the same video in place**: only
+what changed is sent. A different video file replaces the upload instead: the old private video is deleted and the new
+one goes up. So does removing the thumbnail, since YouTube can't take a custom thumbnail off a video. A video you
+published or scheduled by hand in the meantime is never revised (that would make it private again) nor replaced: the job fails with
+a note and uploads nothing, so a second copy never goes out. Record it as posted, or delete it on YouTube and approve
+again. Instagram posts at the same time are never held up by a long upload: each run advances them first.
+
+A **dry run** sends its note at the upload time, 6 hours before the planned one, and uploads nothing.
+
+### Removing and failing
+
+Removing the item (or withdrawing the draft) **deletes its private video** at the next run. It doesn't in dry run, and
+not while the workspace is paused or archived: the delete waits until it isn't. A job that **fails for good** keeps its
+private video, and the note says it is there to look at or publish by hand. A video Bongsu was making public when its
+answer got lost may already be public: removing or holding its item, editing it before the retry, or the retry missing
+its catch-up window then keeps it as it is, never deleted or made private again, and the note asks you to check it on
+the channel. Bongsu also reads a video before deleting it: one that isn't private any more (you published it by hand,
+say after a failure) is **kept**, never deleted. The audit records it as `youtube_video_kept`, and one note tells you it
+is still on the channel, to delete there if it should go.
+
+### The audit lock
+
+A Google project that hasn't passed [YouTube's API audit](https://developers.google.com/youtube/v3/guides/quota_and_compliance_audits)
+has every video uploaded through the API locked to private: YouTube refuses to publish it. Bongsu notices when it reads
+the video back, keeps it and shows **Private: needs YouTube's audit**, with the note "YouTube keeps this video private
+until your Google project passes YouTube's audit (see the YouTube guide)". Apply for the audit with Google for your
+project; the videos already uploaded stay, and you can publish them from YouTube Studio meanwhile.
+
+### Files for the inbox
+
+A video's folder in the inbox (`inbox/<project>/<post>/`) holds the video plus any of:
+
+- `title.txt` and `caption.txt`;
+- `caption.<lang>.txt` and `title.<lang>.txt`: a translation needs both, and at most 5 are read. The files don't say
+  the video's own language, which YouTube needs with translations: the draft says so, and you set it before scheduling;
+- `<lang>.srt` or `<lang>.vtt`: a subtitle track, one per language (`es.srt` beside `es.vtt` is refused), up to 5 MB.
+  A larger one is left out of the inbox's draft (its note says so) and refused by the app's uploads and by approval;
+- `thumbnail.jpg` or `thumbnail.png`: at most one, up to 50 MB;
+- for a lone `<name>.mp4`: `<name>.title.txt`.
+
+Any other file stops the check: "<name> isn't a video, a subtitle file (<lang>.srt or .vtt) or thumbnail.jpg/png".
+A channel without YouTube's verified features gets YouTube's refusal of the thumbnail as a note; the video still goes
+out.
+
+### Channel defaults
+
+Whether a channel's videos are **made for kids** and their **category** (a number, `22` by default) are set per channel
+in the dashboard's **Accounts** page; a video's own options win. Privacy is `public` unless the video says `unlisted`.
+Your approval covers **made for kids** and **visibility** as the video would go out: changing either on the video, or
+changing the channel's made-for-kids default for a video that follows it, needs a new approval. The category doesn't.
+
+### Uploads on Cloudflare
+
+Bongsu streams the file from the media store into YouTube's resumable upload; a run that is cut off (about 3 minutes
+after it started, for all its uploads together) resumes from the offset YouTube kept. Streaming's CPU cost on the Workers free plan **was not measured** (the check
+needs a deploy). If an upload fails on the CPU limit, set the variable `YOUTUBE_UPLOAD_MODE` to `chunk` on the cron
+Worker (a `[vars]` entry in `wrangler.cron.toml`, then deploy): the file then goes in 8 MiB pieces, as many as the
+run's 50 subrequests allow (about 20, so some 160 MiB a run); the next run goes on from there. Node doesn't need it.
+
+**Watch the first real upload.** The streamed upload sends the file as a stream with its length set by hand, which hasn't
+been tried on Cloudflare yet. Schedule a first video you can watch going up
+(`pnpm exec wrangler tail --config wrangler.cron.toml` in `apps/cloudflare`). If YouTube answers the upload with **400**
+or **411**, or the run stops on the **CPU limit**, set `YOUTUBE_UPLOAD_MODE = "chunk"` as above and deploy the cron Worker
+again.
+
 ## Moving a release date
 
-A video uploaded as private with a release time can have that time moved. Only a scheduled video qualifies: private,
+A video uploaded as private with a release time elsewhere can have that time moved (for a video Bongsu uploaded, move the
+item's time in the app instead: it needs a new approval). Only a scheduled video qualifies: private,
 with a release time in the future. Bongsu changes the time and nothing else, so it never makes a video public.
 
 - **App:** the video's page has a **Release date** card. **Change date**, pick the day and time in your zone, **Save new
@@ -103,7 +194,9 @@ with a release time in the future. Bongsu changes the time and nothing else, so 
   passkey check from the last 10 minutes. **Check YouTube now** re-reads the channel.
 - **API and MCP:** `youtube_reschedule` (`POST /v1/youtube/reschedule`) with the `reschedule` scope. A key must leave at
   least an hour; the owner has no minimum beyond "in the future". A public video gets 409, and so does a past time for
-  the owner. A key's time under an hour ahead (a past time included) gets 400.
+  the owner. A key's time under an hour ahead (a past time included) gets 400. A video Bongsu uploads moves its plan
+  item, so a key also needs the `plan` scope for it (403 without), may only move it later (400 otherwise), and the move
+  needs a new approval.
 
 Each move is audited (`release_move`) and you get a "Release moved" notification saying who did it.
 
@@ -117,7 +210,11 @@ connected again.
 
 ## Quota
 
-The YouTube Data API gives a project 10,000 units a day. A comment costs 50, a reply 50, reading a video's comments 1
+The YouTube Data API gives a project 10,000 units a day. An upload costs 1,600 units, each subtitle track 400, and the
+thumbnail, a revision and a delete 50 each: with the default quota that is a handful of uploads a day, fewer with
+subtitles. When YouTube says the quota or the upload limit is used up, the job waits without counting an attempt until
+midnight Pacific time (when the quota resets) and you get one note a day in Problems: "YouTube's daily quota is used up:
+uploads continue after midnight Pacific time". Ask Google for a higher quota if you upload more. A comment costs 50, a reply 50, reading a video's comments 1
 and checking up to 50 videos' privacy 1. Moving a release date costs 51 (1 to read the video, 50 to update it). Bongsu posts at most two Shorts comments per cron run and reads comments for
 recent posts only, which stays far below the quota for a few channels.
 

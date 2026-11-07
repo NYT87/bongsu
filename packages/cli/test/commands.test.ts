@@ -319,6 +319,87 @@ describe("texts", () => {
     expect(err.join("")).toContain("stdin can be used once");
     expect(calls).toHaveLength(0);
   });
+
+  describe("youtube", () => {
+    const yt = {
+      key: "video:demo/one",
+      caption: null,
+      comment: null,
+      comment2: null,
+      texts: { title: "Old", translations: { es: { title: "Viejo", description: "Desc" } }, tags: ["a"] },
+      texts_source: { at: 1, by: "app" },
+    };
+    const ytPath = `/v1/items/${encodeURIComponent(yt.key)}`;
+
+    it("texts set --title sends the title", async () => {
+      const { ctx, calls } = fakeCtx({
+        config,
+        responses: { [`GET ${ytPath}`]: yt, "POST /v1/plan/update": yt },
+      });
+      expect(await main(["texts", "set", yt.key, "--title", "New"], ctx)).toBe(0);
+      const post = calls.find((c) => c.url.endsWith("/v1/plan/update"));
+      expect(post?.body).toEqual({ key: yt.key, texts: { ...yt.texts, title: "New" } });
+    });
+
+    it("--title after --translation belongs to the translation, merged into the current texts", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "bongsu-texts-"));
+      writeFileSync(join(dir, "d.txt"), "Descripcion");
+      const { ctx, calls } = fakeCtx({
+        config,
+        responses: { [`GET ${ytPath}`]: yt, "POST /v1/plan/update": yt },
+      });
+      ctx.cwd = dir;
+      const args = ["texts", "set", yt.key, "--translation", "fr", "--title", "Titre", "--description", "d.txt"];
+      expect(await main(args, ctx)).toBe(0);
+      const post = calls.find((c) => c.url.endsWith("/v1/plan/update"));
+      expect(post?.body).toEqual({
+        key: yt.key,
+        texts: {
+          ...yt.texts,
+          translations: { ...yt.texts.translations, fr: { title: "Titre", description: "Descripcion" } },
+        },
+      });
+    });
+
+    it("a translation needs both a title and a description", async () => {
+      const { ctx, err, calls } = fakeCtx({ config, stdin: "d" });
+      expect(await main(["texts", "set", yt.key, "--translation", "fr", "--title", "Titre"], ctx)).toBe(2);
+      expect(err.join("")).toContain("needs both a --title and a --description");
+      expect(await main(["texts", "set", yt.key, "--translation", "fr", "--description", "-"], ctx)).toBe(2);
+      expect(calls).toHaveLength(0);
+    });
+
+    it("a malformed language tag is refused locally", async () => {
+      const { ctx, calls } = fakeCtx({ config, stdin: "d" });
+      const args = ["texts", "set", yt.key, "--translation", "French!", "--title", "T", "--description", "-"];
+      expect(await main(args, ctx)).toBe(2);
+      expect(calls).toHaveLength(0);
+    });
+
+    it("texts get prints the description and comments, then the title, language and translations", async () => {
+      const item = { ...yt, caption: "About the video", comment: "First!", texts: { ...yt.texts, language: "en" } };
+      const { ctx, out } = fakeCtx({ config, responses: { [`GET ${ytPath}`]: item } });
+      expect(await main(["texts", "get", yt.key], ctx)).toBe(0);
+      const text = out.join("");
+      expect(text).toContain("== caption\nAbout the video\n");
+      expect(text).toContain("== comment\nFirst!\n");
+      expect(text).toContain("== comment2\n(none)\n");
+      expect(text).toContain("== title\nOld\n");
+      expect(text).toContain("== language\nen\n");
+      expect(text).toContain("== translation es\nViejo\n\nDesc\n");
+    });
+
+    it("texts set --language sends the video's language (YouTube needs it with translations)", async () => {
+      const { ctx, calls } = fakeCtx({
+        config,
+        responses: { [`GET ${ytPath}`]: yt, "POST /v1/plan/update": yt },
+      });
+      expect(await main(["texts", "set", yt.key, "--language", "en"], ctx)).toBe(0);
+      const post = calls.find((c) => c.url.endsWith("/v1/plan/update"));
+      expect(post?.body).toEqual({ key: yt.key, texts: { ...yt.texts, language: "en" } });
+      expect(await main(["texts", "set", yt.key, "--language", "English!"], ctx)).toBe(2);
+    });
+  });
 });
 
 describe("approve", () => {

@@ -4,6 +4,7 @@
 import { findAccount, trialCapable, trialDefaultOn } from "./accounts";
 import type { Db } from "./db";
 import type { Approval, MediaRef } from "./formats/approved";
+import { TextsError } from "./formats/texts";
 import {
   parseInstant,
   shiftDate,
@@ -14,6 +15,7 @@ import {
   zoneStamp,
   zoneToUnix,
 } from "./formats/time";
+import type { YouTubeTexts } from "./formats/youtube-texts";
 import { FolderError, mediaPath } from "./media/folders";
 import type { Format } from "./platforms/types";
 import { jsonList } from "./sql";
@@ -49,6 +51,8 @@ export interface PlanItem {
   comment?: string | null;
   comment2?: string | null;
   alt?: string | null;
+  /** A YouTube video's title, languages, tags and translations (JSON text, migration 0024); null: none. */
+  texts?: string | null;
   media?: string | null;
   draft_id?: string | null;
 }
@@ -165,6 +169,7 @@ export function contentPaths(i: Pick<PlanItem, "item_key" | "format" | "folder" 
     comment: `db:comment:${key}`,
     comment2: `db:comment2:${key}`,
     alt: video ? null : (`db:alt:${key}` as string | null),
+    texts: `db:texts:${key}`,
   };
   if (i.content === "db") return { ...texts, files: null, media: `db:${key}`, single: video };
   // a repo item: a video is one file (the Reel layout), anything else a folder of media (the posts layout)
@@ -199,7 +204,7 @@ export function contentPaths(i: Pick<PlanItem, "item_key" | "format" | "folder" 
 /** A text by its contentPaths path, from the item's D1 column. null = missing (or a repo path from a job queued
  *  before the texts moved to D1: refused as missing, approve again). */
 export async function readText(db: Db, path: string): Promise<string | null> {
-  const m = /^db:(caption|comment2|comment|alt):(.+)$/.exec(path);
+  const m = /^db:(caption|comment2|comment|alt|texts):(.+)$/.exec(path);
   if (!m) return null;
   const r = await db
     .prepare(`SELECT ${m[1]} AS v FROM plan_items WHERE item_key = ?1`)
@@ -215,6 +220,7 @@ export async function writeTexts(
   b: Record<string, unknown>,
   by: string,
   nowS: number,
+  captionMax = 2200,
 ) {
   const txt = (v: unknown, max: number) => {
     const s = v == null ? "" : String(v).replace(/\r\n/g, "\n").trim();
@@ -224,7 +230,7 @@ export async function writeTexts(
   const sets: string[] = [],
     vals: unknown[] = [];
   for (const [f, max] of [
-    ["caption", 2200],
+    ["caption", captionMax],
     ["comment", 2200],
     ["comment2", 2200],
     ["alt", 5000],
@@ -244,7 +250,41 @@ export async function writeTexts(
     .run();
   return true;
 }
-export class TextsError extends Error {}
+
+/** The statement that writes a YouTube video's own texts (already checked by checkTexts: normalised, so what is stored
+ *  is what approval hashes); null clears them. Stamps who and when like the other texts. Returned unrun so a caller can
+ *  put it in a batch with its other writes. */
+export function youtubeTextsStatement(
+  db: Db,
+  key: string,
+  texts: YouTubeTexts | null,
+  by: string,
+  nowS: number,
+  workspaceId?: string,
+) {
+  return db
+    .prepare(
+      `UPDATE plan_items SET texts = ?1, texts_at = ?2, texts_by = ?3, updated_at = ?2, updated_by = ?3 WHERE item_key = ?4${workspaceId === undefined ? "" : " AND workspace_id = ?5"}`,
+    )
+    .bind(
+      texts === null ? null : JSON.stringify(texts),
+      nowS,
+      by,
+      key,
+      ...(workspaceId === undefined ? [] : [workspaceId]),
+    );
+}
+
+export async function writeYouTubeTexts(
+  db: Db,
+  key: string,
+  texts: YouTubeTexts | null,
+  by: string,
+  nowS: number,
+): Promise<void> {
+  await youtubeTextsStatement(db, key, texts, by, nowS).run();
+}
+export { TextsError } from "./formats/texts";
 
 /** A 'db' item's media (store and id), in slide order. */
 export async function dbMedia(db: Db, path: string): Promise<Pick<MediaRef, "store" | "id">[]> {
@@ -257,15 +297,16 @@ export async function dbMedia(db: Db, path: string): Promise<Pick<MediaRef, "sto
 
 // ---------------------------------------------------------------- plan items
 
-/** Due (due_at ≤ now), not on hold, not posted, for one account. */
-export async function dueItems(db: Db, account: string, nowS: number): Promise<PlanItem[]> {
+/** Due (due_at ≤ now + leadS: a platform that uploads ahead takes its items that much early), not on hold, not
+ *  posted, for one account. */
+export async function dueItems(db: Db, account: string, nowS: number, leadS = 0): Promise<PlanItem[]> {
   const r = await db
     .prepare(
       `SELECT p.* FROM plan_items p LEFT JOIN posted x ON x.item_key = p.item_key
      WHERE p.account = ?1 AND p.due_at IS NOT NULL AND p.due_at <= ?2 AND p.hold = 0 AND x.item_key IS NULL
      ORDER BY p.due_at, p.sort`,
     )
-    .bind(account, nowS)
+    .bind(account, nowS + leadS)
     .all<PlanItem>();
   return r.results;
 }
@@ -386,6 +427,7 @@ interface ApprovalRow {
   approved_at: string;
   approved_by: string;
   user_id?: string | null;
+  texts_sha?: string | null;
 }
 
 function toApproval(r: ApprovalRow): Approval {
@@ -402,6 +444,7 @@ function toApproval(r: ApprovalRow): Approval {
     approvedAt: r.approved_at,
     approvedBy: r.approved_by,
     approvedByUser: r.user_id ?? null,
+    textsSha256: r.texts_sha ?? null,
   };
 }
 
@@ -458,11 +501,13 @@ export async function addApproval(
     approvedBy: string;
     /** The user who approved (null when no user was recorded). */
     userId?: string | null;
+    /** sha256 of the approved texts (canonical JSON); null: the item has none. */
+    textsSha256?: string | null;
   },
 ): Promise<void> {
   await db
     .prepare(
-      "INSERT INTO approvals (item_key, due_at, caption_sha, comment_sha, alt_sha, media, approved_at, approved_by, comment2_sha, user_id, account) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+      "INSERT INTO approvals (item_key, due_at, caption_sha, comment_sha, alt_sha, media, approved_at, approved_by, comment2_sha, user_id, account, texts_sha) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
     )
     .bind(
       a.key,
@@ -476,6 +521,7 @@ export async function addApproval(
       a.comment2Sha256 ?? null,
       a.userId ?? null,
       a.account,
+      a.textsSha256 ?? null,
     )
     .run();
 }

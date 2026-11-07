@@ -25,10 +25,72 @@ export interface Approval {
   approvedBy: string;
   /** The person who approved (approvals.user_id); null on an approval that recorded none. */
   approvedByUser?: string | null;
+  /** sha256 of the approved texts (a YouTube video's title, tags, translations) in canonical JSON; null/absent = none. */
+  textsSha256?: string | null;
 }
 
 /** sha256 hex of a text, as approval fingerprints use (UTF-8, exactly as stored). */
 export async function sha256Hex(text: string): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** JSON with keys sorted at every level and no whitespace, so the same texts always hash the same. */
+export function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    // undefined values drop out, as JSON.stringify drops them, so texts hash the same after a round trip through the column.
+    return `{${Object.keys(o)
+      .filter((k) => o[k] !== undefined)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "null";
+}
+
+/** The settings a YouTube approval covers: who the video is for and who sees it. The category is left out (it only
+ *  files the video). */
+export interface ApprovedSettings {
+  madeForKids: boolean;
+  privacy: "public" | "unlisted";
+}
+
+/** The covered part of a video's effective settings (the item's options over the channel's defaults). */
+export const approvedSettings = (s: ApprovedSettings & { category?: string }): ApprovedSettings => ({
+  madeForKids: s.madeForKids,
+  privacy: s.privacy,
+});
+
+/** The fingerprint a YouTube approval keeps in texts_sha: the texts, the role each media file plays (`video:<id>`,
+ *  `subtitle:<lang>:<id>`, `thumbnail:<id>`) and the covered settings. Roles come from file names, which the media key
+ *  (id and checksum) doesn't cover, so renaming es.srt to fr.srt must change this. null when there are none of them
+ *  (an Instagram item). */
+export async function youtubeSha(
+  texts: object | null,
+  roles: string[] | null,
+  settings: ApprovedSettings | null,
+): Promise<string | null> {
+  if (texts === null && roles === null && settings === null) return null;
+  return sha256Hex(
+    canonicalJson({
+      texts,
+      roles: roles ? [...roles].sort() : null,
+      settings: settings ? approvedSettings(settings) : null,
+    }),
+  );
+}
+
+/** The settings an approval's fingerprint was made with, when the texts and roles still match it (the four
+ *  combinations are tried); null when they don't. Tells "the settings changed" apart from "the texts changed". */
+export async function settingsApproved(
+  texts: object | null,
+  roles: string[] | null,
+  sha: string | null,
+): Promise<ApprovedSettings | null> {
+  for (const madeForKids of [false, true])
+    for (const privacy of ["public", "unlisted"] as const)
+      if ((await youtubeSha(texts, roles, { madeForKids, privacy })) === sha) return { madeForKids, privacy };
+  return null;
 }

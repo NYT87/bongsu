@@ -232,6 +232,9 @@ importers:
 
   packages/web:
     dependencies:
+      '@bongsu/core':
+        specifier: workspace:*
+        version: link:../core
       '@simplewebauthn/browser':
         specifier: 14.0.0
         version: 14.0.0

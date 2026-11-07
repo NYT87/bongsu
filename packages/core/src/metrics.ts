@@ -19,6 +19,7 @@ import { shiftDate, zoneDate, zoneToUnix } from "./formats/time";
 import { providerFor } from "./providers/index";
 import type { Provider } from "./providers/types";
 import { YouTubeProvider, youtubeAnalytics } from "./providers/youtube";
+import { bongsuVideos } from "./youtube-videos";
 
 /** The Instagram insight names; `saved` is stored in the `saves` column. */
 export const METRICS = ["views", "reach", "likes", "comments", "saved", "shares"] as const;
@@ -328,7 +329,9 @@ export async function sampleMetrics(
     if (next <= nowS) found.push({ ...c, next });
   };
 
-  const accounts = new Map((await workingAccounts(env.DB, "instagram")).map((a) => [a.id, a]));
+  // YouTube items Bongsu uploaded are sampled under their item key, like a post, by their channel's statistics
+  const channels = await workingAccounts(env.DB, "youtube");
+  const accounts = new Map([...(await workingAccounts(env.DB, "instagram")), ...channels].map((a) => [a.id, a]));
   const rows = await env.DB.prepare(
     `SELECT x.item_key, x.account, x.media_id, x.published,
             (SELECT MAX(m.taken_at) FROM post_metrics m WHERE m.item_key = x.item_key) AS last_at
@@ -357,8 +360,16 @@ export async function sampleMetrics(
   );
   // Global across accounts and workspaces on purpose: one series per video, owned by the first account in the order.
   const seenVideos = new Set<string>();
+  // a Bongsu upload counts once, under its item (D6): the scheduler sees every workspace, each channel's own is used
+  // (two accounts on one channel list the video: it is mapped by its job's account, so by every channel of the workspace)
+  const mine = new Map<string, Map<string, string>>();
+  for (const ws of new Set(channels.map((a) => a.workspaceId))) {
+    const of = channels.filter((a) => a.workspaceId === ws).map((a) => a.id);
+    mine.set(ws, await bongsuVideos(env.DB, of, ws));
+  }
   for (const { account, uploads } of await uploadLists(env, deps, nowS)) {
     for (const u of uploads) {
+      if (mine.get(account.workspaceId)?.has(u.id)) continue;
       const publishedAt = u.when ? Math.floor(Date.parse(u.when) / 1000) : Number.NaN;
       // two accounts on one channel list the same videos: the first account's candidate stands
       if (u.privacy !== "public" || !Number.isFinite(publishedAt) || seenVideos.has(u.id)) continue;

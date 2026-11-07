@@ -2,7 +2,7 @@
 // platform with text and image posts, and a provider that posts in one call. The real API, approval page and tick
 // handle it like Instagram.
 import { env } from "cloudflare:workers";
-import { listAccountsOp, planAdd } from "@bongsu/api/agent/ops";
+import { listAccountsOp, planAdd, planUpdate } from "@bongsu/api/agent/ops";
 import { resolveItem } from "@bongsu/api/pwa/approve";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
@@ -175,8 +175,10 @@ describe("a third network", () => {
       name: "long",
       format: "text",
       date: "2026-10-20",
-      caption: "x".repeat(300),
     });
+    // writes refuse a caption over the platform's captionMax, so plant one (an older row) to check approval's rules
+    await expect(planUpdate(c, { key, caption: "x".repeat(300) })).rejects.toThrow(/at most 280/);
+    await env.DB.prepare("UPDATE plan_items SET caption = ?1 WHERE item_key = ?2").bind("x".repeat(300), key).run();
     const r = (await resolveItem(e, new World().fetch, key, "Asia/Seoul", "default"))!;
     expect(r.problems).toContain("caption length: 300 characters (280 max)");
   });

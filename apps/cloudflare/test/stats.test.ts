@@ -200,6 +200,7 @@ describe("the channel route", () => {
         platform: "youtube",
         follows: 6,
         share: null, // no follower samples to compare with
+        source: "elsewhere",
         href: `#/video/main/vidA00000001?d=${zoneDate(new Date((now - 2 * D) * 1000), tz)}`,
       },
     ]);

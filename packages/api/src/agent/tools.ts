@@ -17,6 +17,26 @@ const obj = (props: Record<string, unknown> = {}, required: string[] = []) => ({
   additionalProperties: false,
 });
 
+const YOUTUBE_TEXTS = {
+  type: ["object", "null"],
+  description:
+    "a YouTube video's own texts: title (1-100 characters; may be empty while editing, a person needs it at approval), language and audioLanguage (like en or pt-BR), tags (a list, at most 500 characters as YouTube counts them) and translations ({ es: { title, description } }). The description is the caption (at most 5000 characters). Replaces what was set; null clears it. Instagram has none.",
+  properties: {
+    title: { type: "string" },
+    language: { type: "string" },
+    audioLanguage: { type: "string" },
+    tags: { type: "array", items: { type: "string" } },
+    translations: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        properties: { title: { type: "string" }, description: { type: "string" } },
+        required: ["title"],
+      },
+    },
+  },
+} as const;
+
 export const TOOLS: Tool[] = [
   {
     name: "get_status",
@@ -216,18 +236,25 @@ export const TOOLS: Tool[] = [
     name: "create_draft",
     scope: "draft",
     description:
-      "Propose a Reel, photo, carousel or Shorts comment for a person to review. A draft is never published by itself: only a person with a passkey (an admin or creator of the workspace) approves.",
+      "Propose a Reel, photo, carousel, YouTube video (kind reel, with a YouTube channel: its title, translations and options in texts / options) or Shorts comment for a person to review. A draft is never published by itself: only a person with a passkey (an admin or creator of the workspace) approves.",
     inputSchema: obj(
       {
         kind: { type: "string", enum: ["reel", "photo", "carousel", "shorts_comment"] },
         account: {
           type: "string",
-          description: "an account id from list_accounts: Instagram for reels and posts, YouTube for Shorts comments",
+          description:
+            "an account id from list_accounts: Instagram for reels and posts, YouTube for videos and Shorts comments",
         },
         title: { type: "string" },
-        caption: { type: "string" },
+        caption: { type: "string", description: "for a YouTube video: its description" },
         comment: { type: "string" },
         comment2: { type: "string", description: "a second comment, posted right after the first (optional)" },
+        texts: YOUTUBE_TEXTS,
+        options: {
+          type: "object",
+          description:
+            "the platform's options for the post (YouTube: privacy, madeForKids, category; see list_accounts)",
+        },
         date: { type: "string", description: "YYYY-MM-DD, in your time zone (get_status)" },
         time: { type: "string", description: "HH:MM, in your time zone" },
         location: { type: "string", description: "facebook_places_id" },
@@ -255,7 +282,7 @@ export const TOOLS: Tool[] = [
     name: "plan_add",
     scope: "plan",
     description:
-      "Add a post to the plan (not approved: a person approves it). format is one of the account's platform formats (list_accounts shows them; Instagram: video, image, carousel, story); leave it out for a post whose media decide (one image, several = carousel, one video). The older kind (reel / post) still works. Pass its texts (caption, comment, comment2, alt) to put them straight into the scheduler, which posts only its own copy; without them, a person adds them in the app or with bongsu texts set. One item per account per hour: a date/time in an hour the account already uses is refused (409); several a day at different hours are fine. folder: project under channels/ (vlogs/CONTENT/20260823_LISBON); name: the Reel's base or the post dir (posts/carousel3_green).",
+      "Add a post to the plan (not approved: a person approves it). format is one of the account's platform formats (list_accounts shows them; Instagram: video, image, carousel, story); leave it out for a post whose media decide (one image, several = carousel, one video). The older kind (reel / post) still works. Pass its texts (caption, comment, comment2, alt; for a YouTube channel also texts: title, translations, tags) to put them straight into the scheduler, which posts only its own copy; without them, a person adds them in the app or with bongsu texts set. One item per account per hour: a date/time in an hour the account already uses is refused (409); several a day at different hours are fine. folder: project under channels/ (vlogs/CONTENT/20260823_LISBON); name: the Reel's base or the post dir (posts/carousel3_green).",
     inputSchema: obj(
       {
         format: {
@@ -300,6 +327,7 @@ export const TOOLS: Tool[] = [
         comment: { type: ["string", "null"], description: "our first comment; empty = the caption's question line" },
         comment2: { type: ["string", "null"], description: "the optional second comment" },
         alt: { type: ["string", "null"], description: "posts only: one alt text per image, a line each" },
+        texts: YOUTUBE_TEXTS,
       },
       ["account", "folder", "name"],
     ),
@@ -309,7 +337,7 @@ export const TOOLS: Tool[] = [
     name: "plan_update",
     scope: "plan",
     description:
-      "Reschedule, hold/unhold, change the options (location…) or note, or set the texts (caption, comment, comment2, alt: the copy the scheduler posts) of a planned item. Moving an approved item, or changing an approved text, makes it need a new approval. Moving it into an hour the account already uses is refused (one item per account per hour).",
+      "Reschedule, hold/unhold, change the options (location…) or note, or set the texts (caption, comment, comment2, alt, and for a YouTube video texts: the copy the scheduler posts) of a planned item. Moving an approved item, or changing an approved text, makes it need a new approval. Moving it into an hour the account already uses is refused (one item per account per hour).",
     inputSchema: obj(
       {
         key: { type: "string" },
@@ -334,6 +362,7 @@ export const TOOLS: Tool[] = [
         comment: { type: ["string", "null"], description: "our first comment; empty = the caption's question line" },
         comment2: { type: ["string", "null"], description: "the optional second comment" },
         alt: { type: ["string", "null"], description: "posts only: one alt text per image, a line each" },
+        texts: YOUTUBE_TEXTS,
       },
       ["key"],
     ),
@@ -396,7 +425,7 @@ export const TOOLS: Tool[] = [
     name: "youtube_reschedule",
     scope: "reschedule",
     description:
-      "Move a scheduled (private, with a release time) YouTube video's release to a later time, at least 1 hour ahead. Never makes a video public now.",
+      "Move a scheduled (private, with a release time) YouTube video's release to a later time, at least 1 hour ahead. Never makes a video public now. A video Bongsu uploads (a plan item) also needs the plan scope, and its move voids the approval.",
     inputSchema: obj(
       {
         video: { type: "string" },

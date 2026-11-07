@@ -26,3 +26,10 @@ export function requirePlatform(id: string): Platform {
 
 /** The platforms Bongsu can publish to (not only comment on). */
 export const publishing = () => platforms().filter((p) => p.formats.length > 0);
+
+/** The longest lead of any platform: the tick selects jobs due within it, then filters by their own lead. */
+export const MAX_LEAD_S: number = Math.max(0, ...platforms().map((p) => p.uploadLeadS ?? 0));
+
+/** The lead of a job's platform, 0 when it has none. */
+export const leadOf = (platformId: string | null | undefined) =>
+  platformId ? (platform(platformId)?.uploadLeadS ?? 0) : 0;

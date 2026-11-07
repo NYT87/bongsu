@@ -1,13 +1,19 @@
 // A provider is one way to reach a platform (docs/PLAN.md 2.10): instagram-graph, instagram-composio, later x-api,
 // tiktok-content… Publishing is a resumable state machine the tick drives one step per run, so a slow network never
 // blocks a run: start (create a container, begin an upload, or post at once) → check (until ready) → finish (publish).
+import type { YouTubeTexts } from "../formats/youtube-texts";
 import type { Format } from "../platforms/types";
+import type { YouTubeSettings } from "../platforms/youtube";
 
 /** One media file of a post, at a URL the platform can fetch for a while (a signed /m/ link or the store's own). */
 export interface OutgoingMedia {
   id: string;
   url: string;
   video: boolean;
+  /** The file's name in its store (YouTube tells the video, subtitles and thumbnail apart by it). */
+  name: string;
+  /** The store's checksum, as approved (YouTube compares it to replace only what changed). */
+  checksum: string;
 }
 
 /** A post as approved, ready to go out. */
@@ -19,6 +25,19 @@ export interface OutgoingPost {
   media: OutgoingMedia[];
   /** The platform's options for this post (platforms/<id>.ts OptionSpec), already validated. */
   options: Record<string, unknown>;
+  /** A YouTube video's title, languages, tags and translations. */
+  texts?: YouTubeTexts | null;
+  /** A YouTube video's settings: the post's options over the channel's defaults. */
+  settings?: YouTubeSettings;
+}
+
+/** What one scheduler run (one invocation) leaves for long transfers, shared by every job it advances, so uploads one
+ *  after another never outlast the run's lock or its subrequests. */
+export interface RunBudget {
+  /** Aborts at the run's one deadline for transfers. */
+  signal: AbortSignal;
+  /** Subrequests the run can still spend. */
+  requestsLeft(): number;
 }
 
 /** Where a publication stands; `data` is the provider's own and is stored with the job between runs. */
@@ -108,15 +127,23 @@ export interface KeptAlive {
 /** A connection that can't work any more until the owner reconnects it (a revoked or expired grant). */
 export class ConnectionBroken extends Error {}
 
+/** What `Provider.discard` did with a step's leftover. */
+export type Discarded = "gone" | "kept" | "failed";
+
 export interface Provider {
   readonly id: string;
   /** The platform it reaches (platforms/index.ts). */
   readonly platform: string;
   /** A limitation worth telling the owner about Trial posts this way (null: none). */
   readonly trialNote?: string | null;
-  start(post: OutgoingPost): Promise<Step>;
-  check(step: Step): Promise<Step>;
+  /** `previous`: the job's earlier step, when it left something on the platform to revise (a private video). */
+  start(post: OutgoingPost, previous?: Step): Promise<Step>;
+  /** `run`: the tick's budget for the run, which a long step (an upload) spends from. */
+  check(step: Step, run?: RunBudget): Promise<Step>;
   finish(step: Step): Promise<Published>;
+  /** Removes what a step left on the platform and won't publish (an uploaded private video); best effort. "gone" when
+   *  it is gone now, "kept" when it is public (published by hand: never deleted), "failed" otherwise. */
+  discard?(step: Step): Promise<Discarded>;
   /** Optional features, present when the platform has them (Platform.features). */
   /** A comment as the account on a post; returns its id when the platform gives one. */
   comment?(mediaId: string, text: string): Promise<string | null | undefined | void>;

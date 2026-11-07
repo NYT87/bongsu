@@ -148,7 +148,9 @@ It waits for you: post it by hand, or move the date and approve again.
 ## A YouTube video's page
 
 A YouTube row opens the video's page: the channel, Short or Video, the day and time, its state, and **Open on
-YouTube**. Bongsu doesn't publish videos, but a scheduled one has a **Release date** card: **Change date**, pick the
+YouTube**. A video Bongsu uploads opens as an item like a post, with its title, translations, subtitles and thumbnail
+and its own **Approve** button (see [YouTube](youtube.md#uploading-videos)); the rest of this section is about videos
+uploaded elsewhere. Bongsu doesn't publish those, but a scheduled one has a **Release date** card: **Change date**, pick the
 date and time, **Save new date**, then confirm with your passkey. For a Short there is also the **Comment** Bongsu posts
 as your channel once the video is public, with its **Approve the comment** button. See [YouTube](youtube.md).
 

@@ -30,22 +30,84 @@ export const jobFailed = (key: string, message: string): Note => ({
   text: message,
   target: key,
 });
-export const jobRefused = (key: string, reason: string): Note => ({
+/** `live`: the platform's name when the post may already be public there (the publishing call was made): the job
+ *  keeps it, never deleting or redoing it, so the owner has to look at it there. */
+const liveKept = (live?: string) =>
+  live ? `\nIt may already be public on ${live}: it was kept, so check it there.` : "";
+export const jobRefused = (key: string, reason: string, live?: string): Note => ({
   group: "problems",
   title: `${key}: refused`,
-  text: reason,
+  text: `${reason}${liveKept(live)}`,
   target: key,
 });
-export const jobHeld = (key: string, hours: number): Note => ({
-  group: "needs_you",
+/** A job held by its plan (its item on hold) while its post may already be public on `live`. */
+export const jobHeldLive = (key: string, reason: string, live: string): Note => ({
+  group: "problems",
   title: `${key}: held`,
-  text: `not published within ${hours} h of its time`,
+  text: `${reason}${liveKept(live)}`,
   target: key,
 });
-export const providerFailed = (key: string, platformName: string, error: string): Note => ({
+/** Held for the catch-up window; with `live` (it may already be public) it is a problem, like `jobHeldLive`. */
+export const jobHeld = (key: string, hours: number, live?: string): Note => ({
+  group: live ? "problems" : "needs_you",
+  title: `${key}: held`,
+  text: `not published within ${hours} h of its time${liveKept(live)}`,
+  target: key,
+});
+/** `video`: the job had uploaded a private video, which stays on the platform (never deleted on a failure): "kept"
+ *  after errors (it can be published by hand), "refused" when the platform rejected it (only to inspect). */
+export const providerFailed = (
+  key: string,
+  platformName: string,
+  error: string,
+  video: false | "kept" | "refused" = false,
+): Note => ({
   group: "problems",
   title: `${key}: failed`,
-  text: `${platformName} reported: ${error}`,
+  text: `${platformName} reported: ${error}${
+    video === "kept"
+      ? `\nThe video is still on ${platformName}, private: inspect it there or publish it by hand.`
+      : video === "refused"
+        ? `\n${platformName} refused the video: it is still there, private, for you to inspect.`
+        : ""
+  }`,
+  target: key,
+});
+/** YouTube's audit lock (providers/youtube.ts YouTubeLocked): the job's last_error is this text too. */
+export const YOUTUBE_LOCKED =
+  "YouTube keeps this video private until your Google project passes YouTube's audit (see the YouTube guide)";
+export const youtubeLocked = (key: string): Note => ({
+  group: "problems",
+  title: `${key}: failed`,
+  text: YOUTUBE_LOCKED,
+  target: key,
+});
+/** A job's earlier video, to be revised or replaced, isn't private any more (the owner published it by hand). */
+export const YOUTUBE_REPLACE_KEPT =
+  "the video uploaded earlier was published or scheduled by hand on YouTube, so it was kept and nothing was " +
+  "uploaded: record it as posted, or delete it there and approve again";
+/** A removed item's video that isn't private any more (published by hand): never deleted. Only YouTube uploads
+ *  leave a video to delete. */
+export const VIDEO_KEPT_PUBLIC =
+  "its video was published or scheduled by hand on YouTube, so it was kept: delete it there if it should go";
+/** The sweep found a removed item's video public (the refusal, if any, came earlier): sent once. */
+export const videoKept = (key: string): Note => ({
+  group: "problems",
+  title: `${key}: video kept`,
+  text: `removed from the plan; ${VIDEO_KEPT_PUBLIC}`,
+  target: key,
+});
+export const YOUTUBE_QUOTA = "YouTube's daily quota is used up: uploads continue after midnight Pacific time";
+/** Sent once per workspace per Pacific day (the tick dedupes it in settings). */
+export const youtubeQuota = (): Note => ({
+  group: "problems",
+  title: "YouTube quota used up",
+  text: YOUTUBE_QUOTA,
+});
+export const youtubeThumbnailRefused = (key: string): Note => ({
+  group: "problems",
+  title: `${key}: thumbnail refused`,
+  text: "YouTube refused the thumbnail: the channel needs YouTube's verified features (the video still goes out)",
   target: key,
 });
 export const processingTimeout = (key: string, platformName: string): Note => ({
