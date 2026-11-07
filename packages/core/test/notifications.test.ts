@@ -27,6 +27,11 @@ describe("notification builders", () => {
       text: "not published within 6 h of its time",
       target: KEY,
     });
+    // a held post that may already be live is a problem to look at, like a plan hold of one (jobHeldLive)
+    expect(N.jobHeld(KEY, 6, "YouTube")).toMatchObject({
+      group: "problems",
+      text: "not published within 6 h of its time\nIt may already be public on YouTube: it was kept, so check it there.",
+    });
     expect(N.providerFailed(KEY, "Instagram", "container EXPIRED")).toMatchObject({
       title: `${KEY}: failed`,
       text: "Instagram reported: container EXPIRED",

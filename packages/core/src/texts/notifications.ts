@@ -47,8 +47,9 @@ export const jobHeldLive = (key: string, reason: string, live: string): Note => 
   text: `${reason}${liveKept(live)}`,
   target: key,
 });
+/** Held for the catch-up window; with `live` (it may already be public) it is a problem, like `jobHeldLive`. */
 export const jobHeld = (key: string, hours: number, live?: string): Note => ({
-  group: "needs_you",
+  group: live ? "problems" : "needs_you",
   title: `${key}: held`,
   text: `not published within ${hours} h of its time${liveKept(live)}`,
   target: key,
