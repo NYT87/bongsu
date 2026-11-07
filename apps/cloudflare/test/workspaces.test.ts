@@ -90,6 +90,40 @@ describe("an agent key in workspace B", () => {
     });
   });
 
+  it("another workspace can't read or write an item's texts", async () => {
+    // a YouTube channel item with texts, in workspace A
+    const key = "reel:20261101_DEMO/clip1";
+    expect(
+      (
+        await call(KEY_A, "/v1/plan", {
+          account: "main",
+          format: "video",
+          folder: "vlogs/CONTENT/20261101_DEMO",
+          name: "clip1",
+          date: "2026-11-01",
+          texts: { title: "Private title" },
+        })
+      ).status,
+    ).toBe(200);
+    await call(KEY_A, "/v1/drafts", { kind: "reel", account: "main", texts: { title: "Draft title" } });
+    expect((await call(KEY_A, `/v1/items/${encodeURIComponent(key)}`)).json).toMatchObject({
+      texts: { title: "Private title" },
+    });
+    expect((await call(KEY_B, `/v1/items/${encodeURIComponent(key)}`)).status).toBe(404);
+    expect((await call(KEY_B, "/v1/plan/update", { key, texts: { title: "Taken over" } })).status).toBe(404);
+    expect(
+      JSON.parse(
+        (await env.DB.prepare("SELECT texts FROM plan_items WHERE item_key = ?1").bind(key).first<{ texts: string }>())
+          ?.texts ?? "null",
+      ),
+    ).toEqual({ title: "Private title" });
+    expect(JSON.stringify((await call(KEY_B, "/v1/drafts")).json)).not.toContain("Draft title");
+    // nor can it draft for A's channel
+    expect((await call(KEY_B, "/v1/drafts", { kind: "reel", account: "main", texts: { title: "x" } })).status).toBe(
+      400,
+    );
+  });
+
   it("plans only for its own accounts, and its items stay its own", async () => {
     const own = {
       kind: "reel",
@@ -111,6 +145,59 @@ describe("an agent key in workspace B", () => {
     expect((await call(KEY_A, "/v1/status")).json).toMatchObject({ timezone: "Asia/Seoul" });
   });
 
+  it("another workspace can't set a video's settings, edit its texts or schedule its draft in the app", async () => {
+    const key = "reel:20261101_DEMO/clip2";
+    await env.DB.batch(
+      [
+        `INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id, content, caption, texts) VALUES ('${key}', 'video', 'main', '20261101_DEMO', 'clip2', 1893456000, '{}', 0, 1, 0, 0, 'default', 'db', 'Description', '{"title":"Private title"}')`,
+        "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES ('d_yt_a', 'reel', 'main', '{\"media\":[]}', 'api', 'key:k', 'draft', 0, 0, 'default')",
+        "INSERT INTO users (id, email, name, created_at) VALUES ('ytb', 'ytb@example.com', 'ytb', 0) ON CONFLICT (id) DO NOTHING",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ytb', 'admin', 0) ON CONFLICT DO NOTHING",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    const e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test" } as Partial<Env>);
+    const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { userId: "ytb" });
+    await setSessionWorkspace(env.DB, token, "b");
+    const app = async (path: string, body: unknown) =>
+      (
+        await appRoutes(w.fetch).request(
+          `https://bongsu.test${path}`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Cookie: `bongsu_session=${token}` },
+            body: JSON.stringify(body),
+          },
+          e,
+        )
+      ).status;
+    expect(await app("/app-api/item/youtube", { key, privacy: "unlisted" })).toBe(404);
+    expect(await app("/app-api/item/texts", { key, caption: "Taken", texts: { title: "Taken over" } })).toBe(404);
+    expect(await app("/app-api/drafts/d_yt_a/schedule", { date: "2026-11-02", time: "18:00" })).toBe(404);
+    // the drafts page offers B's accounts only: A's channel isn't among them
+    const drafts = (await (
+      await appRoutes(w.fetch).request(
+        "https://bongsu.test/app-api/drafts",
+        { headers: { Cookie: `bongsu_session=${token}` } },
+        e,
+      )
+    ).json()) as { accounts: string[]; accountInfo: Record<string, unknown> };
+    expect(Object.keys(drafts.accountInfo)).toEqual(drafts.accounts);
+    expect(drafts.accountInfo).not.toHaveProperty("main");
+    const r = await env.DB.prepare("SELECT options, caption, texts FROM plan_items WHERE item_key = ?1")
+      .bind(key)
+      .first();
+    expect(r).toEqual({ options: "{}", caption: "Description", texts: '{"title":"Private title"}' });
+    expect(await env.DB.prepare("SELECT status FROM drafts WHERE id = 'd_yt_a'").first("status")).toBe("draft");
+    // the member list tests below count B's members
+    await env.DB.batch(
+      [
+        "DELETE FROM sessions WHERE user_id = 'ytb'",
+        "DELETE FROM memberships WHERE user_id = 'ytb'",
+        "DELETE FROM users WHERE id = 'ytb'",
+      ].map((q) => env.DB.prepare(q)),
+    );
+  });
+
   it("can't move workspace A's YouTube video", async () => {
     w.ytUploads = [
       {
@@ -125,6 +212,24 @@ describe("an agent key in workspace B", () => {
     const at = new Date(Date.now() + 10 * 86400e3).toISOString();
     expect((await call(KEY_B, "/v1/youtube/reschedule", { video: "v-sched", at })).status).toBe(404);
     expect(w.ytUpdates).toEqual([]);
+  });
+
+  it("can't move workspace A's Bongsu upload, nor learn it exists", async () => {
+    const { key } = await seedReel(w, { date: "2030-06-01" });
+    const due = () => env.DB.prepare("SELECT due_at FROM plan_items WHERE item_key = ?1").bind(key).first("due_at");
+    const before = await due();
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id) VALUES (?1, 'video', 'c_main', 1, 'container_created', 0, ?2, 0, 0, 'default')",
+    )
+      .bind(key, JSON.stringify({ username: "main", step: { state: "processing", data: { videoId: "vidA00000005" } } }))
+      .run();
+    const at = new Date((Number(before) + 86400) * 1000).toISOString();
+    const r = await call(KEY_B, "/v1/youtube/reschedule", { video: "vidA00000005", at });
+    expect(r.status).toBe(404);
+    expect(await due()).toBe(before);
+    // its own workspace's key (with the plan scope) moves it
+    expect((await call(KEY_A, "/v1/youtube/reschedule", { video: "vidA00000005", at })).status).toBe(200);
+    expect(await due()).toBe(Number(before) + 86400);
   });
 
   it("sees only its own drafts", async () => {
@@ -373,6 +478,39 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect((await as("bea", "pwa", video)).json.samples).toMatchObject([{ views: 7 }]);
   });
 
+  it("a Bongsu upload's video id points to its item only in its own workspace", async () => {
+    await env.DB.prepare("DELETE FROM post_metrics").run();
+    const { key } = await seedReel(w, { date: "2026-10-30" }); // the default workspace's item
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, media_id, dry_run, payload, created_at, updated_at, workspace_id) VALUES (?1, 'video', 'c_main', 1, 'done', 'vidU00000004', 0, '{\"username\":\"main\"}', 0, 0, 'default')",
+    )
+      .bind(key)
+      .run();
+    await upsertConnection(
+      env.DB,
+      { id: "c_b_tube", workspaceId: "b", provider: "youtube", kind: "oauth", secretName: "YT_B_OAUTH" },
+      0,
+    );
+    await upsertAccount(
+      env.DB,
+      { id: "b_tube", workspaceId: "b", platform: "youtube", handle: "b_tube", connectionId: "c_b_tube" },
+      0,
+    );
+    // workspace B's channel lists a video with the same id (a channel both connect), and has its series
+    const upload = { id: "vidU00000004", title: "U", privacy: "public", when: "2026-10-01T10:00:00Z", short: true };
+    await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('yt_uploads:b_tube', ?1, ?2)")
+      .bind(JSON.stringify([upload]), Math.floor(Date.now() / 1000))
+      .run();
+    await env.DB.prepare(
+      "INSERT INTO post_metrics (item_key, account, platform, media_id, taken_at, views, workspace_id) VALUES ('video:vidU00000004', 'b_tube', 'youtube', 'vidU00000004', 1, 4, 'b')",
+    ).run();
+    const video = "/app-api/video/metrics?video=vidU00000004";
+    expect((await as("owner", "pwa", video)).json).toEqual({ item_key: key });
+    const own = await as("bea", "pwa", video);
+    expect(own.json.item).toMatchObject({ key: "video:vidU00000004", account: "b_tube" });
+    expect(own.json.samples).toMatchObject([{ views: 4 }]);
+  });
+
   // Phase 13 part 1's routes (members, invites, workspaces, connecting from the app): workspace B's people reach
   // only workspace B. invites.test.ts and workspaces-admin.test.ts try each route's behaviour; here it's the boundary.
   const send = async (userId: string, app: "dashboard" | "pwa", path: string, body: unknown = {}) => {
@@ -403,6 +541,10 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     // bea is admin of B only: a member of the default workspace isn't hers to change, and its invite isn't there
     expect((await send("bea", "dashboard", "/admin-api/members/dan", { role: "admin" })).status).toBe(404);
     expect((await send("bea", "dashboard", "/admin-api/members/dan/remove")).status).toBe(404);
+    // another workspace's channel defaults (or any settings of its accounts) can't be set
+    expect(
+      (await send("bea", "dashboard", "/admin-api/accounts/demo_travel", { youtube: { category: "10" } })).status,
+    ).toBe(404);
     expect((await send("bea", "dashboard", "/admin-api/invites/inviteA000000000/revoke")).status).toBe(404);
     expect(await role("default", "dan")).toBe("editor");
     expect(

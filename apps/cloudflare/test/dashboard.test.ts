@@ -434,6 +434,47 @@ describe("signed in", () => {
     expect(instance.map((x) => x.action)).toContain("bootstrap");
   });
 
+  it("the dashboard sets a channel's YouTube defaults", async () => {
+    type Acc = { id: string; youtube: { madeForKids: boolean | null; category: string | null } | null };
+    const youtube = async (id: string) =>
+      ((await call("/admin-api/accounts")).json.accounts as Acc[]).find((x) => x.id === id)?.youtube;
+    expect(await youtube("main")).toEqual({ madeForKids: null, category: null });
+    expect(await youtube("demo_travel")).toBeNull();
+    expect((await call("/admin-api/accounts/main", { youtube: { madeForKids: true, category: "10" } })).status).toBe(
+      200,
+    );
+    expect(await youtube("main")).toEqual({ madeForKids: true, category: "10" });
+    // one field at a time; null drops a field
+    expect((await call("/admin-api/accounts/main", { youtube: { category: null } })).status).toBe(200);
+    expect(await youtube("main")).toEqual({ madeForKids: true, category: null });
+    const stored = await env.DB.prepare("SELECT settings FROM accounts WHERE id = 'main'").first<{
+      settings: string;
+    }>();
+    expect(JSON.parse(stored?.settings ?? "").youtube).toEqual({ madeForKids: true });
+  });
+
+  it("a bad category is refused", async () => {
+    for (const bad of [
+      { category: "abc" },
+      { category: "1234" },
+      { category: 22 },
+      { madeForKids: "yes" },
+      { privacy: "public" },
+    ]) {
+      const r = await call("/admin-api/accounts/main", { youtube: bad });
+      expect(r.status).toBe(400);
+    }
+    const stored = await env.DB.prepare("SELECT settings FROM accounts WHERE id = 'main'").first<{
+      settings: string;
+    }>();
+    expect(JSON.parse(stored?.settings ?? "{}").youtube).toBeUndefined();
+  });
+
+  it("an Instagram account has no YouTube defaults", async () => {
+    const r = await call("/admin-api/accounts/demo_travel", { youtube: { category: "22" } });
+    expect(r.status).toBe(400);
+  });
+
   it("caption rules per account: the defaults shown, an override stored, bad values refused, editors read-only", async () => {
     type Rules = { hashtagMax: number; foldChars: number; languageChecks: boolean };
     type Acc = { id: string; captionRules: (Rules & { defaults: Rules }) | null };
@@ -441,7 +482,8 @@ describe("signed in", () => {
       ((await call("/admin-api/accounts")).json.accounts as Acc[]).find((x) => x.id === id)?.captionRules;
     const defaults = { hashtagMax: 5, foldChars: 125, languageChecks: true };
     expect(await rules("demo_travel")).toEqual({ ...defaults, defaults });
-    expect(await rules("main")).toBeNull(); // YouTube lints nothing
+    // YouTube lints nothing by default, so there is nothing to tune: no rules editor for it
+    expect(await rules("main")).toBeNull();
     expect((await call("/admin-api/accounts/demo_travel", { captionRules: { hashtagMax: 10 } })).status).toBe(200);
     expect(await rules("demo_travel")).toEqual({ ...defaults, hashtagMax: 10, defaults }); // foldChars still 125
     // one field at a time: a later change keeps the earlier one, null puts a field back to the default

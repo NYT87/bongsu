@@ -73,9 +73,9 @@ describe("texts in the database only", () => {
       last_error: `no caption in the scheduler: add one in the app or with \`bongsu texts set ${key}\``,
     });
     const item = (await (await req(`/v1/items/${encodeURIComponent(key)}`)).json()) as {
-      texts: { by: string | null; repo_files: { caption: string } };
+      texts_source: { by: string | null; repo_files: { caption: string } };
     };
-    expect(item.texts).toMatchObject({
+    expect(item.texts_source).toMatchObject({
       by: null,
       repo_files: { caption: "channels/vlogs/CONTENT/20260823_LISBON/shorts/instagram/short2_y.txt" },
     });

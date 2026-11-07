@@ -8,6 +8,7 @@ import { mediaPath } from "@bongsu/core/media/folders";
 import { type MediaStores, mediaStores } from "@bongsu/core/media/index";
 import { assertOwns, MediaError } from "@bongsu/core/media/owns";
 import { isMedia, isVideo } from "@bongsu/core/media/store";
+import { isSubtitle, SUBTITLE_MAX, SUBTITLE_TOO_BIG, videoWithExtras } from "@bongsu/core/platforms/youtube";
 import { workspaceSettings } from "@bongsu/core/workspaces";
 
 /** Where the app's uploads land: the workspace's folder, `_uploads` (the inbox scan skips `_` folders). */
@@ -22,6 +23,8 @@ export class UploadError extends Error {
     super(msg);
   }
 }
+
+const subtitleMime = (name: string) => (name.endsWith(".vtt") ? "text/vtt" : "application/x-subrip");
 
 /** The store an upload goes to: the one asked for, else the default (when it takes uploads). */
 function uploadStore(stores: MediaStores, asked: unknown) {
@@ -47,10 +50,14 @@ export async function startUpload(
   store: string;
 }> {
   const name = String(b.name ?? "").slice(0, 200),
-    mime = String(b.mimeType ?? ""),
     size = Number(b.size);
-  if (!name || !isMedia({ mime })) throw new UploadError(400, "only images and videos");
+  // a YouTube video's subtitle file (<lang>.srt or .vtt) goes with it; phones often send no type for one
+  const sub = isSubtitle(name);
+  const mime = String(b.mimeType ?? "") || (sub ? subtitleMime(name) : "");
+  if (!name || !(isMedia({ mime }) || sub))
+    throw new UploadError(400, "only images, videos and subtitle files (<lang>.srt or .vtt)");
   if (!Number.isFinite(size) || size <= 0 || size > 1024 ** 3) throw new UploadError(400, "size: up to 1 GB");
+  if (sub && size > SUBTITLE_MAX) throw new UploadError(400, SUBTITLE_TOO_BIG(name));
   const store = uploadStore(await mediaStores(env, fetcher, workspaceId), b.store);
   const folder = appUploads((await workspaceSettings(env.DB, workspaceId)).mediaFolder);
   const t = await store.createUpload!(name, folder, mime, env.PUBLIC_URL.replace(/\/$/, ""));
@@ -97,8 +104,10 @@ export async function draftFromUploads(
   const files: { store: string; id: string; name: string; mime: string; checksum: string }[] = [];
   for (const id of ids) {
     const m = await store.stat(id);
-    if (!m || !folder || m.parent !== folder.id || !isMedia(m))
+    if (!m || !folder || m.parent !== folder.id || !(isMedia(m) || isSubtitle(m.name)))
       throw new UploadError(400, `${id} isn't an upload of this app`);
+    // the size the browser announced isn't the file's: the store's is
+    if (isSubtitle(m.name) && m.size > SUBTITLE_MAX) throw new UploadError(400, SUBTITLE_TOO_BIG(m.name));
     files.push({ store: store.id, id: m.id, name: m.name, mime: m.mime, checksum: m.checksum });
   }
   const known = await env.DB.prepare(
@@ -108,8 +117,10 @@ export async function draftFromUploads(
     .first<{ account: string }>();
   const accountIds = (await instagramAccounts(env.DB, workspaceId)).map((a) => a.id);
   const account = accountIds.includes(String(b.account)) ? String(b.account) : (known?.account ?? accountIds[0] ?? "");
+  if (!files.some((f) => isMedia(f))) throw new UploadError(400, "subtitle files go with a video");
   const video = files.some((f) => isVideo(f));
-  const kind = files.length > 1 ? "carousel" : video ? "reel" : "photo";
+  // a video with its subtitle files and thumbnail is one YouTube video, not a carousel (as in the inbox)
+  const kind = videoWithExtras(files) ? "reel" : files.length > 1 ? "carousel" : video ? "reel" : "photo";
   const t = (v: unknown, max: number) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : undefined);
   const payload = {
     title: `${project}/${name}`,

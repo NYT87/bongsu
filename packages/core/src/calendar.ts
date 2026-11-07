@@ -7,6 +7,7 @@ import type { Env } from "./env";
 import { shiftDate, utcIso, zoneDate, zoneStamp, zoneToUnix } from "./formats/time";
 import { platform } from "./platforms/index";
 import { type Format, formatLabel } from "./platforms/types";
+import { bongsuVideos } from "./youtube-videos";
 
 export interface CalEvent {
   date: string; // YYYY-MM-DD in the viewer's zone
@@ -143,10 +144,17 @@ export async function calendar(
       posted_at: posted,
     });
   }
-  for (const ch of await youtubeAccounts(env.DB, ws.id)) {
+  const channels = await youtubeAccounts(env.DB, ws.id);
+  // a video Bongsu uploaded is its plan item's event above, not a second one
+  const mine = await bongsuVideos(
+    env.DB,
+    channels.map((ch) => ch.id),
+    ws.id,
+  );
+  for (const ch of channels) {
     try {
       for (const u of await channelUploads(env, fetcher, ch, refresh)) {
-        if (!u.when) continue;
+        if (!u.when || mine.has(u.id)) continue;
         const z = zoned(Math.floor(Date.parse(u.when) / 1000), tz);
         if (z.date < from || z.date > to) continue;
         events.push({

@@ -62,8 +62,8 @@ option; 1 a command the CLI refuses or that fails (the reason is on stderr).
 | `logout` | Forgets a profile |
 | `status` | Paused or not, dry run, today, accounts, jobs of the last 7 days |
 | `queue [--days n] [--account id]` | What is due next and whether it is approved |
-| `texts get <key>` | Prints caption, comment, comment2 and alt |
-| `texts set <key> [--caption f] [--comment f] [--comment2 f] [--alt f]` | Sets texts from files (`-` is stdin) |
+| `texts get <key>` | Prints caption, comment, comment2 and alt; for a YouTube video, the caption (its description) and comments, then its title, language and translations |
+| `texts set <key> [--caption f] [--comment f] [--comment2 f] [--alt f] [--title t] [--language lang] [--translation lang --title t --description f]` | Sets texts from files (`-` is stdin) |
 | `approve <key> [--yes]` | Shows what you are approving, then approves |
 | `stats <key> \| --account id [--daily] [--from d] [--to d]` | A post's metrics series, or an account's followers and views per day |
 | `ingest <file.json \| ->` | Uploads metrics samples collected elsewhere (needs the `metrics` scope) |
@@ -88,6 +88,16 @@ for another time: approve it again) or `held`. Without items it says `nothing du
 bongsu texts get reel:demo/first_reel
 bongsu texts set reel:demo/first_reel --caption caption.txt --alt alt.txt
 echo "Link in bio" | bongsu texts set reel:demo/first_reel --comment -
+```
+
+For a YouTube video, `--title` sets the title, `--language` the video's own language, and
+`--translation <lang> --title <text> --description <file|->` adds or replaces one translation (a `--title` after
+`--translation` belongs to it, and a translation needs both). YouTube takes translations only with the video's
+language, so set it first (or in the same command). The other titles, translations and tags stay as they are.
+
+```sh
+bongsu texts set video:demo/first_video --title "Lisbon by tram" --language en
+bongsu texts set video:demo/first_video --translation es --title "Lisboa en tranvia" --description es.txt
 ```
 
 At least one field is needed, and `-` (stdin) may be used once per command. Approvals hash the texts, so an existing

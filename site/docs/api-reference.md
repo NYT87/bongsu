@@ -17,7 +17,7 @@ Keys look like `bongsu_<random>`. The database keeps only their sha256, a name a
 | `draft` | create and withdraw drafts |
 | `plan` | add, update, remove plan items and their texts; list Shorts comments (the owner approves their text); record manual posts and comments |
 | `pause` | pause publishing in the key's workspace (resuming needs a person's passkey, in the app) |
-| `reschedule` | move a scheduled YouTube video's release date, at least 1 hour ahead; not given by default |
+| `reschedule` | move a scheduled YouTube video's release date, only later and at least 1 hour ahead (a Bongsu upload also needs `plan`); not given by default |
 
 Create one in the dashboard ([Keys & tokens](the-dashboard.md#keys--tokens)): **Keys & tokens** → **Agent keys** → **Create a key**, name it after the agent or machine using it and tick
 its scopes. The key is shown once: store it in the agent's secret store. **Revoke** there stops it at once. (Both ask
@@ -92,10 +92,26 @@ checkout instead.
 | `shorts_add` | plan | `POST /v1/shorts` |
 | `record_commented` | plan | `POST /v1/shorts/commented` |
 | `pause_scheduler` | pause | `POST /v1/pause` |
-| `youtube_reschedule` | reschedule | `POST /v1/youtube/reschedule` |
+| `youtube_reschedule` | reschedule (and plan for a video Bongsu uploads) | `POST /v1/youtube/reschedule` |
 | `ingest_metrics` | metrics | `POST /v1/metrics` |
 
 MCP clients get the input schemas from `tools/list`.
+
+## YouTube videos
+
+`get_item` answers a YouTube video's own copy in `texts`: `{ title, language, audioLanguage, tags, translations,
+options }` (`null` on an Instagram post). **Breaking change:** the provenance block that `texts` used to hold
+(`{ at, by, repo_files }`) is now `texts_source`, so an agent that read `texts.at` reads `texts_source.at` instead. `plan_add`,
+`plan_update` and `create_draft` take the same `texts` object, and the description is the caption. Translations need
+`language` (YouTube refuses them without the video's own language): texts with translations and no language are
+refused with 400. A subtitle file
+(`<lang>.srt` or `.vtt`) or a `thumbnail.jpg`/`png` comes only with a draft made by `create_draft` or the inbox, not
+with `plan_add`.
+
+A YouTube row of `list_performance` (and of the channel stats the app reads) carries `source`: `"bongsu"` for a video
+Bongsu uploaded, whose `key` is the item's, or `"elsewhere"` for one uploaded some other way (`key` is
+`video:<id>`). The video page's own read (`GET /app-api/video/metrics?video=<id>`, used by the app) answers
+`{ item_key }` for a video Bongsu uploaded, so the app opens the item, and the series for any other.
 
 ## Stats
 

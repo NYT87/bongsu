@@ -2,14 +2,7 @@
 // scheduler's D1 only (the plan and the texts it posts). Nothing here can approve,
 // resume or publish: approval stays with the owner (the app's passkey, or the CLI with a token made with one).
 
-import {
-  findAccount,
-  instagramAccounts,
-  listAccounts,
-  trialCapable,
-  trialDefaultOn,
-  youtubeAccounts,
-} from "@bongsu/core/accounts";
+import { findAccount, listAccounts, trialCapable, trialDefaultOn, youtubeAccounts } from "@bongsu/core/accounts";
 import { channelUploads } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import { METRICS_DENSE_S, METRICS_MAX_POINTS } from "@bongsu/core/constants";
@@ -38,10 +31,12 @@ import {
   upcomingItems,
   WhenError,
   writeTexts,
+  writeYouTubeTexts,
 } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { altLines, captionText, comment2Text, commentText } from "@bongsu/core/formats/texts";
 import { shiftDate, utcIso, zoneDate, zoneStamp, zoneToUnix } from "@bongsu/core/formats/time";
+import { checkTexts, parseTexts } from "@bongsu/core/formats/youtube-texts";
 import { mediaStores } from "@bongsu/core/media/index";
 import { assertOwns, MediaError } from "@bongsu/core/media/owns";
 import { dailyGrowth, nearest24h, type Point, type Sample, series } from "@bongsu/core/metrics";
@@ -58,6 +53,7 @@ import { youtubeAnalytics } from "@bongsu/core/providers/youtube";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { jsonList } from "@bongsu/core/sql";
 import { callerZone, memberName, memberNames, workspaceSettings } from "@bongsu/core/workspaces";
+import { bongsuVideos } from "@bongsu/core/youtube-videos";
 import type { Caller } from "./auth";
 
 export class ApiError extends Error {
@@ -392,7 +388,9 @@ export async function item(c: OpCtx, key: string) {
     comment: commentText(caption, await readText(c.env.DB, paths.comment)),
     comment2: comment2Text(await readText(c.env.DB, paths.comment2)),
     alt: paths.alt ? altLines((await readText(c.env.DB, paths.alt)) ?? "") : undefined,
-    texts: {
+    // a YouTube video's title, translations and tags; null for an Instagram post
+    texts: parseTexts(i.texts),
+    texts_source: {
       at: stamp(i.texts_at ?? null, tz),
       by: i.texts_by ?? null,
       ...(paths.files ? { repo_files: paths.files } : {}),
@@ -489,8 +487,26 @@ export async function itemMetrics(c: OpCtx, o: MetricsQuery & { key: string }) {
   };
 }
 
-/** A YouTube upload's metrics series (`video:<id>`), when a channel of the caller's workspace lists it. */
+/** Video id → item key for the Bongsu uploads of these channels in the caller's workspace (D6). */
+const bongsuOf = (c: OpCtx, channels: { id: string }[]) =>
+  bongsuVideos(
+    c.env.DB,
+    channels.map((a) => a.id),
+    c.caller.workspaceId,
+  );
+
+/** The same for every YouTube channel of the caller's workspace: two accounts on one channel list the same video. */
+const workspaceBongsu = async (c: OpCtx) => bongsuOf(c, await youtubeAccounts(c.env.DB, c.caller.workspaceId));
+
+/** The video page's answer: a Bongsu upload answers `{ item_key }` (the app opens the item), any other video its
+ *  series, as `uploadMetrics`. */
 export async function videoMetrics(c: OpCtx, o: MetricsQuery & { video: string }) {
+  const key = (await workspaceBongsu(c)).get(o.video);
+  return key ? { item_key: key } : await uploadMetrics(c, o);
+}
+
+/** A YouTube upload's metrics series (`video:<id>`), when a channel of the caller's workspace lists it. */
+async function uploadMetrics(c: OpCtx, o: MetricsQuery & { video: string }) {
   for (const account of await youtubeAccounts(c.env.DB, c.caller.workspaceId)) {
     let upload: Awaited<ReturnType<typeof channelUploads>>[number] | undefined;
     try {
@@ -625,7 +641,7 @@ export async function listDrafts(c: OpCtx, opts: { status?: string } = {}) {
   const tz = await zoneOf(c);
   const status = opts.status ?? "draft";
   const r = await c.env.DB.prepare(
-    "SELECT id, kind, account, payload, source, created_by, user_id, status, created_at, updated_at FROM drafts WHERE status = ?1 AND workspace_id = ?2 ORDER BY created_at DESC LIMIT 100",
+    "SELECT id, kind, account, payload, texts, source, created_by, user_id, status, created_at, updated_at FROM drafts WHERE status = ?1 AND workspace_id = ?2 ORDER BY created_at DESC LIMIT 100",
   )
     .bind(status, c.caller.workspaceId)
     .all<{
@@ -633,6 +649,7 @@ export async function listDrafts(c: OpCtx, opts: { status?: string } = {}) {
       kind: string;
       account: string;
       payload: string;
+      texts: string | null;
       source: string;
       created_by: string;
       user_id: string | null;
@@ -642,8 +659,9 @@ export async function listDrafts(c: OpCtx, opts: { status?: string } = {}) {
     }>();
   const by = await draftAuthors(c, r.results);
   return {
-    drafts: r.results.map(({ user_id, ...d }) => ({
+    drafts: r.results.map(({ user_id, texts, ...d }) => ({
       ...d,
+      texts: parseTexts(texts),
       by: (user_id ? by.people.get(user_id) : by.keys.get(d.created_by)) ?? null,
       payload: JSON.parse(d.payload),
       created_at: stamp(d.created_at, tz),
@@ -658,6 +676,16 @@ export async function createDraft(c: OpCtx, body: Record<string, unknown>) {
   const account = String(body.account ?? "");
   const known = kind === "shorts_comment" ? await accountIds(c, "youtube") : await accountIds(c);
   if (!known.includes(account)) throw new ApiError(400, `account must be one of ${known.join(", ")}`);
+  const acc = await findAccount(c.env.DB, account, c.caller.workspaceId);
+  const plat = acc && platform(acc.platform);
+  // a YouTube channel takes videos (a reel draft is a video), not photos or carousels
+  if (plat?.id === "youtube" && kind !== "reel" && kind !== "shorts_comment")
+    throw new ApiError(400, `${plat.name} takes a reel (a video) or a shorts_comment`);
+  let texts: ReturnType<typeof checkTexts> = null;
+  if (body.texts !== undefined && body.texts !== null) {
+    if (!plat) throw new ApiError(400, `${account}: unknown platform`);
+    texts = checkOrFail(plat, body.texts);
+  }
   const payload: Record<string, unknown> = {};
   for (const k of [
     "title",
@@ -687,17 +715,31 @@ export async function createDraft(c: OpCtx, body: Record<string, unknown>) {
     }
     payload.media = refs;
   }
-  if (!payload.caption && !payload.comment && !payload.note)
-    throw new ApiError(400, "a draft needs at least a caption, a comment or a note");
+  if (body.options !== undefined) {
+    if (!plat) throw new ApiError(400, `${account}: unknown platform`);
+    // checked as a video (the format a reel draft becomes); the app applies them when it schedules the draft
+    payload.options = askedOptions({ options: body.options }, plat, "video");
+  }
+  if (!payload.caption && !payload.comment && !payload.note && !texts)
+    throw new ApiError(400, "a draft needs at least a caption, a comment, a note or texts");
   if (payload.date && !/^\d{4}-\d{2}-\d{2}$/.test(String(payload.date)))
     throw new ApiError(400, "date must be YYYY-MM-DD (your time zone)");
   if (payload.time && !/^\d{2}:\d{2}$/.test(String(payload.time)))
     throw new ApiError(400, "time must be HH:MM (your time zone)");
   const id = `d_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
   await c.env.DB.prepare(
-    "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id) VALUES (?1, ?2, ?3, ?4, 'api', ?5, 'draft', ?6, ?6, ?7)",
+    "INSERT INTO drafts (id, kind, account, payload, source, created_by, status, created_at, updated_at, workspace_id, texts) VALUES (?1, ?2, ?3, ?4, 'api', ?5, 'draft', ?6, ?6, ?7, ?8)",
   )
-    .bind(id, kind, account, JSON.stringify(payload), `key:${c.caller.id}`, nowS(c), c.caller.workspaceId)
+    .bind(
+      id,
+      kind,
+      account,
+      JSON.stringify(payload),
+      `key:${c.caller.id}`,
+      nowS(c),
+      c.caller.workspaceId,
+      texts === null ? null : JSON.stringify(texts),
+    )
     .run();
   await audit(c, "draft_create", id, { kind, account });
   return { id, status: "draft", note: "A draft is a proposal: the owner reviews and approves it; a key can't." };
@@ -747,10 +789,22 @@ export async function resume(c: OpCtx) {
 // caller's clock (dueFrom); the database keeps UTC.
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
-/** The ids of the caller's workspace's accounts (Instagram unless asked otherwise). */
-async function accountIds(c: OpCtx, platform: "instagram" | "youtube" = "instagram") {
-  const list = platform === "youtube" ? youtubeAccounts : instagramAccounts;
-  return (await list(c.env.DB, c.caller.workspaceId)).map((a) => a.id);
+/** The ids of the caller's workspace's accounts that publish items (every platform with formats), or only the
+ *  YouTube channels (Shorts comments). */
+async function accountIds(c: OpCtx, only?: "youtube") {
+  if (only === "youtube") return (await youtubeAccounts(c.env.DB, c.caller.workspaceId)).map((a) => a.id);
+  const all = await listAccounts(c.env.DB, { workspaceId: c.caller.workspaceId });
+  return all.filter((a) => platform(a.platform)?.formats.length).map((a) => a.id);
+}
+
+/** A video's texts, checked for the platform (a TextsError is the caller's mistake: 400). */
+function checkOrFail(p: Platform, raw: unknown) {
+  try {
+    return checkTexts(p, raw);
+  } catch (e) {
+    if (e instanceof TextsError) throw new ApiError(400, e.message);
+    throw e;
+  }
 }
 
 /** The format a caller asked for: `format` (one of the platform's), or the older `kind` ("reel" → video, "post" → decided
@@ -816,6 +870,8 @@ export async function planAdd(c: OpCtx, b: Record<string, unknown>) {
   if (!name || (format === "video" && name.includes("/")))
     throw new ApiError(400, "name: a video's base (short5_x) or a post's folder (posts/carousel3_green)");
   const options = askedOptions(b, plat, format);
+  // checked before the insert, so a refused one leaves nothing behind
+  const video = "texts" in b ? checkOrFail(plat, b.texts) : undefined;
   const tz = await zoneOf(c);
   const due = askedDue(b, format, tz) ?? null;
   const key = makeKey(keyClass(format), folder, name);
@@ -848,23 +904,27 @@ export async function planAdd(c: OpCtx, b: Record<string, unknown>) {
     )
     .first();
   if (!r) throw new ApiError(409, `${key} is already planned (use plan_update)`);
-  const texts = await setTexts(c, { item_key: key, format }, b);
+  const texts = await setTexts(c, { item_key: key, format }, plat, b, video);
   await audit(c, "plan_add", key, { due_at: iso(due), texts });
   return { key, added: true, due: stamp(due, tz), due_at: iso(due), texts };
 }
 
-const TEXT_FIELDS = ["caption", "comment", "comment2", "alt"] as const;
+const TEXT_FIELDS = ["caption", "comment", "comment2", "alt", "texts"] as const;
 
 /** An agent's texts for an item (plan_add / plan_update): straight into the scheduler's copy, which is what it posts. */
 async function setTexts(
   c: OpCtx,
   i: Pick<PlanItem, "item_key" | "format">,
+  p: Platform,
   b: Record<string, unknown>,
+  video: ReturnType<typeof checkTexts> | undefined,
 ): Promise<string[] | undefined> {
   const given = TEXT_FIELDS.filter((f) => f in b);
   if (!given.length) return undefined;
+  const by = `key:${c.caller.id}`;
   try {
-    await writeTexts(c.env.DB, i, b, `key:${c.caller.id}`, nowS(c));
+    await writeTexts(c.env.DB, i, b, by, nowS(c), p.limits.captionMax);
+    if (video !== undefined) await writeYouTubeTexts(c.env.DB, i.item_key, video, by, nowS(c));
   } catch (e) {
     if (e instanceof TextsError) throw new ApiError(400, e.message);
     throw e;
@@ -884,8 +944,11 @@ export async function planUpdate(c: OpCtx, b: Record<string, unknown>) {
   const acc = await findAccount(c.env.DB, i.account, c.caller.workspaceId);
   const plat = acc && platform(acc.platform);
   if (plat) next.options = JSON.stringify(askedOptions(b, plat, i.format ?? null, itemOptions(i)));
-  else if (b.options !== undefined || "location" in b) throw new ApiError(400, `${i.account}: unknown platform`);
+  // no platform: no options and no texts (no limits to check them by; dropping them would still answer 200)
+  else if (b.options !== undefined || "location" in b || TEXT_FIELDS.some((f) => f in b))
+    throw new ApiError(400, `${i.account}: unknown platform`);
   if ("note" in b) next.note = b.note ? String(b.note).slice(0, 1000) : null;
+  const video = plat && "texts" in b ? checkOrFail(plat, b.texts) : undefined;
   if (next.due_at !== null && next.due_at !== i.due_at && i.format !== "story") {
     const taken = await slotTaken(c.env.DB, i.account, next.due_at, tz, key);
     if (taken) throw await slotClash(c, i.account, next.due_at, key, taken);
@@ -897,7 +960,7 @@ export async function planUpdate(c: OpCtx, b: Record<string, unknown>) {
   )
     .bind(next.due_at, next.hold, next.options ?? "{}", next.note, c.caller.id, key, nowS(c), c.caller.workspaceId)
     .run();
-  const texts = await setTexts(c, i, b);
+  const texts = plat ? await setTexts(c, i, plat, b, video) : undefined;
   const a = (await latestApprovals(c.env.DB, [key])).get(key);
   const stillApproved = !!a && a.dueAt !== null && a.dueAt === next.due_at;
   await audit(c, "plan_update", key, {
@@ -1039,7 +1102,7 @@ export async function youtubeReschedule(c: OpCtx, b: Record<string, unknown>) {
       at,
       nowS: nowS(c),
       tz,
-      actor: { kind: "key", id: c.caller.id, name: c.caller.name },
+      actor: { kind: "key", id: c.caller.id, name: c.caller.name, plan: c.caller.scopes.includes("plan") },
     });
   } catch (e) {
     if (e instanceof ReleaseError) throw new ApiError(releaseStatus(e), e.message);
@@ -1092,8 +1155,11 @@ export async function channelStats(c: OpCtx, o: { account: string; days?: string
     .bind(a.id, ws)
     .all<{ taken_at: number; followers: number | null }>();
   const fpts: Point[] = acct.results.map((r) => ({ at: r.taken_at, value: r.followers }));
+  const mine = a.platform === "youtube" ? await workspaceBongsu(c) : new Map<string, string>();
   const byItem = await postRows(c, a.id, from - 8 * 86400);
-  const uploads = a.platform === "youtube" ? await cachedUploads(c, a.id) : [];
+  // a Bongsu upload counts once, under its item: an older video: series of it is left out
+  for (const id of mine.keys()) byItem.delete(`video:${id}`);
+  const uploads = (a.platform === "youtube" ? await cachedUploads(c, a.id) : []).filter((u) => !mine.has(u.id));
   const published = await publishedTimes(c, a.id, uploads);
   const viewDays = viewsPerDay(byItem, published, from, nowS, tz);
 
@@ -1130,6 +1196,7 @@ export async function channelStats(c: OpCtx, o: { account: string; days?: string
       title,
       platform: a.platform,
       follows: r.follows,
+      source: a.platform === "youtube" ? sourceOf(r.key) : undefined,
       // follows are gross and the change net (and YouTube rounds its count): a share over 100% would mislead
       share: periodChange && periodChange > 0 && r.follows <= periodChange ? r.follows / periodChange : null,
       href,
@@ -1152,6 +1219,9 @@ export async function channelStats(c: OpCtx, o: { account: string; days?: string
     analytics: a.platform === "youtube" ? await youtubeAnalytics(c.env, a.connection) : null,
   };
 }
+
+/** Where a YouTube video row comes from: an item key is a Bongsu upload, a `video:` key one uploaded elsewhere. */
+const sourceOf = (key: string): "bongsu" | "elsewhere" => (key.startsWith("video:") ? "elsewhere" : "bongsu");
 
 const OVERVIEW_DAYS = 7;
 const OVERVIEW_MAX = 10;
@@ -1197,6 +1267,7 @@ export async function statsOverview(c: OpCtx) {
       account: r.account as string,
       title: r.title as string,
       label: r.label as string | null,
+      source: r.platform === "youtube" ? sourceOf(r.key) : undefined,
       published_at: pub,
       views: r.views as number | null,
       likes: r.likes as number | null,
@@ -1318,8 +1389,12 @@ export async function agentItemMetrics(c: OpCtx, o: MetricsQuery & { key: string
   const pick = pickMetrics(o.metrics);
   const shape = (pts: Sample[]) => (pick ? pts.map(pick) : pts);
   if (o.key.startsWith("video:")) {
-    const v = await videoMetrics(c, { ...o, video: o.key.slice(6) });
-    return { ...v, samples: shape(v.samples) };
+    const mapped = (await workspaceBongsu(c)).get(o.key.slice(6));
+    if (!mapped) {
+      const v = await uploadMetrics(c, { ...o, video: o.key.slice(6) });
+      return { ...v, samples: shape(v.samples) };
+    }
+    return agentItemMetrics(c, { ...o, key: mapped }); // a Bongsu upload's series is its item's
   }
   const m = await itemMetrics(c, o);
   const posted = await getPosted(c.env.DB, o.key);
@@ -1409,8 +1484,10 @@ export async function performanceList(
   );
   const published = new Map<string, number>();
   const titles = new Map<string, { title: string; label: string }>();
+  const mine = await workspaceBongsu(c); // Bongsu uploads, counted under their item (D6)
+  const mineVideos = new Set([...mine.keys()].map((id) => `video:${id}`));
   for (const a of accounts) {
-    const uploads = a.platform === "youtube" ? await cachedUploads(c, a.id) : [];
+    const uploads = (a.platform === "youtube" ? await cachedUploads(c, a.id) : []).filter((u) => !mine.has(u.id));
     for (const [k, v] of await publishedTimes(c, a.id, uploads)) published.set(k, v);
     for (const u of uploads)
       titles.set(`video:${u.id}`, { title: u.title, label: (u as { short?: boolean }).short ? "Short" : "Video" });
@@ -1433,7 +1510,8 @@ export async function performanceList(
   );
   const byKey = new Map<string, typeof rows.results>();
   for (const r of rows.results)
-    if (accountOf.has(r.account)) byKey.set(r.item_key, [...(byKey.get(r.item_key) ?? []), { ...r, at: r.taken_at }]);
+    if (accountOf.has(r.account) && !mineVideos.has(r.item_key))
+      byKey.set(r.item_key, [...(byKey.get(r.item_key) ?? []), { ...r, at: r.taken_at }]);
   const keys = [...byKey.keys()].filter((k) => {
     const pub = published.get(k) ?? firsts.get(k);
     return pub !== undefined && pub >= lo && pub <= hi;
@@ -1442,14 +1520,14 @@ export async function performanceList(
   const bases = [...new Set(keys.filter((k) => !k.startsWith("video:")).map((k) => k.replace(/^trial:/, "")))];
   if (bases.length) {
     const items = await c.env.DB.prepare(
-      `SELECT item_key, name, title, format FROM plan_items WHERE workspace_id = ?1 AND item_key IN ${jsonList(c.env.DB, 2)}`,
+      `SELECT item_key, account, name, title, format FROM plan_items WHERE workspace_id = ?1 AND item_key IN ${jsonList(c.env.DB, 2)}`,
     )
       .bind(ws, JSON.stringify(bases))
-      .all<{ item_key: string; name: string; title: string | null; format: string | null }>();
+      .all<{ item_key: string; account: string; name: string; title: string | null; format: string | null }>();
     for (const i of items.results)
       titles.set(i.item_key, {
         title: i.title || i.name,
-        label: formatLabel(platform("instagram"), i.format as PlanItem["format"]),
+        label: formatLabel(platform(accountOf.get(i.account)?.platform ?? "instagram"), i.format as PlanItem["format"]),
       });
   }
   const all = keys.map((k) => {
@@ -1464,6 +1542,7 @@ export async function performanceList(
       account: last.account,
       title: t ? `${t.title}${k.startsWith("trial:") ? " · Trial Reel" : ""}` : base,
       label: k.startsWith("trial:") ? "Trial Reel" : (t?.label ?? null),
+      ...(last.platform === "youtube" ? { source: sourceOf(k) } : {}),
       published_at: iso(pub),
       at: last.at,
       ...Object.fromEntries(STAT_FIELDS.map((f) => [f, last[f]])),

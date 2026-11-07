@@ -130,7 +130,9 @@ describe("moveRelease", () => {
     } finally {
       await setDisplayName(env.DB, "default", "owner", null);
     }
-    await moveRelease(e, f, req({ actor: { kind: "key", id: "k1", name: "planner" } }));
+    // a key moves only later than the current release (the owner just moved it to 19:00)
+    const later = zoneToUnix("2099-11-06", "20:00", "Asia/Seoul") as number;
+    await moveRelease(e, f, req({ at: later, actor: { kind: "key", id: "k1", name: "planner", plan: false } }));
     expect(w.notifications[1].body).toMatch(/, by planner$/);
     // no person recorded: never "you" to everyone
     await moveRelease(e, f, req({ actor: { kind: "owner", userId: null } }));
@@ -140,13 +142,24 @@ describe("moveRelease", () => {
   it("a key needs an hour of lead; the owner doesn't", async () => {
     const e = await testEnv(env, { NOTIFY_URL: "https://ntfy.test/t" });
     const f = (i: RequestInfo | URL, r?: RequestInit) => w.fetch(i, r);
-    const key = { kind: "key", id: "k1", name: "planner" } as const;
+    const key = { kind: "key", id: "k1", name: "planner", plan: false } as const;
     await expect(moveRelease(e, f, req({ at: nowS + 1800, actor: key }))).rejects.toMatchObject({ reason: "lead" });
     expect(w.ytUpdates).toEqual([]);
     expect(
       (await env.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'release_move'").first<{ n: number }>())?.n,
     ).toBe(0);
     await expect(moveRelease(e, f, req({ at: nowS + 1800 }))).resolves.toMatchObject({ video: "v-sched" });
+  });
+
+  it("a key moves a video only to a later time than YouTube's current one; the owner may move it earlier", async () => {
+    const e = await testEnv(env, { NOTIFY_URL: "https://ntfy.test/t" });
+    const f = (i: RequestInfo | URL, r?: RequestInit) => w.fetch(i, r);
+    const key = { kind: "key", id: "k1", name: "planner", plan: false } as const;
+    // v-sched is due 2099-11-05 18:00 Seoul: 12:00 that day is earlier, though in the future and with the lead
+    const earlier = zoneToUnix("2099-11-05", "12:00", "Asia/Seoul") as number;
+    await expect(moveRelease(e, f, req({ at: earlier, actor: key }))).rejects.toMatchObject({ reason: "earlier" });
+    expect(w.ytUpdates).toEqual([]);
+    await expect(moveRelease(e, f, req({ at: earlier }))).resolves.toMatchObject({ video: "v-sched" });
   });
 
   it("another workspace's video is not found", async () => {

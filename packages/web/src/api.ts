@@ -1,4 +1,10 @@
 // The app's only backend: /app-api on the same origin (the scheduler Worker), with the session cookie.
+import type { YouTubeTexts } from "@bongsu/core/formats/youtube-texts";
+import type { YouTubeSettings } from "@bongsu/core/platforms/youtube";
+import type { UploadProgress } from "@bongsu/core/upload-progress";
+
+export type { UploadProgress, YouTubeSettings, YouTubeTexts };
+
 export class HttpError extends Error {
   constructor(
     public status: number,
@@ -138,6 +144,19 @@ export interface Item {
   failed?: { error: string | null; again: boolean } | null;
   /** The server's fingerprint of what's shown; approving sends it back and is refused if the item changed since. */
   fingerprint?: string;
+  /** What a YouTube video adds to the approval: its texts, the subtitle files and thumbnail among `media` (by
+   *  name), and the settings it goes out with; null off YouTube. */
+  youtube?: {
+    texts: YouTubeTexts | null;
+    subtitles: { lang: string; name: string }[];
+    thumbnail: string | null;
+    roles: string[];
+    settings: YouTubeSettings;
+    /** The channel's own defaults: a setting equal to one is sent as null, so the video follows the channel. */
+    channel: YouTubeSettings;
+  } | null;
+  /** A YouTube upload's phase while its job runs (core/upload-progress.ts); null otherwise. */
+  progress?: UploadProgress;
 }
 
 /** `/app-api/stats/channel`: an account's page over a period (days on the workspace's clock). */
@@ -153,7 +172,15 @@ export interface ChannelStats {
   };
   followers: { total: { at: number; value: number | null }[]; daily: { at: number; value: number | null }[] };
   views: { at: number; value: number | null }[];
-  brought: { key: string; title: string; platform: string; follows: number; share: number | null; href: string }[];
+  brought: {
+    key: string;
+    title: string;
+    platform: string;
+    follows: number;
+    share: number | null;
+    href: string;
+    source?: "bongsu" | "elsewhere";
+  }[];
   /** A YouTube channel's: whether its connection holds the analytics scope; null for Instagram. */
   analytics: boolean | null;
 }

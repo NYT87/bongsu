@@ -27,9 +27,43 @@ describe("notification builders", () => {
       text: "not published within 6 h of its time",
       target: KEY,
     });
+    // a held post that may already be live is a problem to look at, like a plan hold of one (jobHeldLive)
+    expect(N.jobHeld(KEY, 6, "YouTube")).toMatchObject({
+      group: "problems",
+      text: "not published within 6 h of its time\nIt may already be public on YouTube: it was kept, so check it there.",
+    });
     expect(N.providerFailed(KEY, "Instagram", "container EXPIRED")).toMatchObject({
       title: `${KEY}: failed`,
       text: "Instagram reported: container EXPIRED",
+      target: KEY,
+    });
+    expect(N.providerFailed(KEY, "YouTube", "YouTube rejected the video: duplicate", "refused")).toMatchObject({
+      group: "problems",
+      text: "YouTube reported: YouTube rejected the video: duplicate\nYouTube refused the video: it is still there, private, for you to inspect.",
+    });
+    expect(N.providerFailed(KEY, "YouTube", "videos.list: 500", "kept")).toMatchObject({
+      group: "problems",
+      text: "YouTube reported: videos.list: 500\nThe video is still on YouTube, private: inspect it there or publish it by hand.",
+    });
+    expect(N.youtubeLocked(KEY)).toMatchObject({
+      group: "problems",
+      title: `${KEY}: failed`,
+      text: "YouTube keeps this video private until your Google project passes YouTube's audit (see the YouTube guide)",
+      target: KEY,
+    });
+    expect(N.videoKept(KEY)).toEqual({
+      group: "problems",
+      title: `${KEY}: video kept`,
+      text: "removed from the plan; its video was published or scheduled by hand on YouTube, so it was kept: delete it there if it should go",
+      target: KEY,
+    });
+    expect(N.youtubeQuota()).toMatchObject({
+      group: "problems",
+      text: "YouTube's daily quota is used up: uploads continue after midnight Pacific time",
+    });
+    expect(N.youtubeThumbnailRefused(KEY)).toMatchObject({
+      group: "problems",
+      text: "YouTube refused the thumbnail: the channel needs YouTube's verified features (the video still goes out)",
       target: KEY,
     });
     expect(N.processingTimeout(KEY, "Instagram")).toMatchObject({
@@ -184,6 +218,7 @@ describe("every builder has a group", () => {
     jobFailed: N.jobFailed(KEY, "boom"),
     jobRefused: N.jobRefused(KEY, "no"),
     jobHeld: N.jobHeld(KEY, 6),
+    jobHeldLive: N.jobHeldLive(KEY, "on hold", "YouTube"),
     providerFailed: N.providerFailed(KEY, "Instagram", "x"),
     processingTimeout: N.processingTimeout(KEY, "Instagram"),
     dryRunPublish: N.dryRunPublish(KEY, "reel", "demo_travel"),
@@ -200,6 +235,10 @@ describe("every builder has a group", () => {
     connectionProblem: N.connectionProblem("x"),
     mediaStoreProblem: N.mediaStoreProblem("x"),
     releaseMoved: N.releaseMoved("t", "a", "b", "c"),
+    youtubeLocked: N.youtubeLocked(KEY),
+    youtubeQuota: N.youtubeQuota(),
+    youtubeThumbnailRefused: N.youtubeThumbnailRefused(KEY),
+    videoKept: N.videoKept(KEY),
   };
 
   it("covers every exported builder", () => {
@@ -217,11 +256,16 @@ describe("every builder has a group", () => {
         "jobVerdict",
         "jobFailed",
         "jobRefused",
+        "jobHeldLive",
         "providerFailed",
         "processingTimeout",
         "connectionProblem",
         "cleanupRefused",
         "mediaStoreProblem",
+        "youtubeLocked",
+        "youtubeQuota",
+        "youtubeThumbnailRefused",
+        "videoKept",
       ],
       published: ["published", "publishedTrial", "commented", "dryRunPublish", "dryRunComment", "results"],
       inbox: ["newDrafts", "newComments", "releaseMoved"],

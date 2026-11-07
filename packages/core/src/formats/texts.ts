@@ -25,3 +25,6 @@ export function altLines(raw: string): string[] {
     .map((l) => l.replace(/^\s*\d{1,2}\t/, "").trim())
     .filter(Boolean);
 }
+
+/** A text refused on write (too long, wrong field, bad value); routes turn it into a 400. */
+export class TextsError extends Error {}

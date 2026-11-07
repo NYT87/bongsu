@@ -1287,3 +1287,42 @@ a.aud {
 .segmented.grid button + button {
   border-left: 0;
 }
+
+/* a YouTube video's fields: tags as chips (neutral: the green outline is for the free-slot choices), one block per
+   added language, the facts the approval covers, the upload's progress */
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 4px 0;
+}
+.chip.tag {
+  border-color: var(--line);
+}
+.form .label-text {
+  display: block;
+  font-size: 15px;
+  margin-top: 10px;
+}
+.lang-block {
+  border-top: 1px solid var(--line);
+  margin-top: 12px;
+  padding-top: 4px;
+}
+.lang-head {
+  margin-top: 8px;
+}
+.form .add-lang {
+  align-items: flex-end;
+}
+.form .add-lang button {
+  margin-bottom: 6px;
+}
+.facts {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+.upload-bar {
+  width: 100%;
+  accent-color: var(--accent);
+}

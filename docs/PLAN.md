@@ -829,7 +829,8 @@ New networks on the 2.10 interfaces: a platform file, a provider, its fake, a do
 - [ ] **LinkedIn** (`linkedin-posts`): personal and page posts with images or video.
 - [ ] **Cross-posting:** one draft planned to several accounts on different networks at once (each still its own item
       and approval, texts adapted per platform's limits).
-- [ ] YouTube uploads (Shorts and videos) through `start` / `check` / `finish`, beside the existing comments.
+- [x] YouTube uploads (Shorts and videos) through `start` / `check` / `finish`, beside the existing comments, with
+      titles, translations, subtitles and a thumbnail. (Done 2026-11-06, #31.)
 
 ---
 
