@@ -24,6 +24,7 @@ interface Translation {
 }
 interface YouTubeTexts {
   title: string;
+  language?: string;
   translations?: Record<string, Translation>;
   tags?: string[];
 }
@@ -38,12 +39,15 @@ async function get(ctx: Ctx, args: string[]): Promise<number> {
   const key = oneKey(positionals, "texts get");
   const it = await (await apiFor(ctx)).get<TextItem>(path(key));
   const shown = (f: Field) => (f === "alt" ? (it.alt?.length ? it.alt.join("\n") : "") : it[f]) || "(none)";
-  emit(ctx, it, () => (it.texts ? youtubeText(it.texts) : FIELDS.map((f) => `== ${f}\n${shown(f)}\n`).join("\n")));
+  // a YouTube video's caption is its description, and it has comments too: its own texts come after them
+  const fields = it.texts ? FIELDS.filter((f) => f !== "alt") : FIELDS;
+  const base = fields.map((f) => `== ${f}\n${shown(f)}\n`).join("\n");
+  emit(ctx, it, () => (it.texts ? `${base}\n${youtubeText(it.texts)}` : base));
   return 0;
 }
 
 function youtubeText(t: YouTubeTexts): string {
-  const parts = [`== title\n${t.title || "(none)"}\n`];
+  const parts = [`== title\n${t.title || "(none)"}\n`, `== language\n${t.language || "(none)"}\n`];
   for (const [lang, tr] of Object.entries(t.translations ?? {})) {
     parts.push(`== translation ${lang}\n${tr.title}\n\n${tr.description}\n`);
   }
@@ -75,6 +79,7 @@ async function set(ctx: Ctx, args: string[]): Promise<number> {
         comment2: { type: "string" },
         alt: { type: "string" },
         title: { type: "string", multiple: true },
+        language: { type: "string" },
         translation: { type: "string", multiple: true },
         description: { type: "string", multiple: true },
       },
@@ -104,8 +109,13 @@ async function set(ctx: Ctx, args: string[]): Promise<number> {
       throw new UsageError(`translation ${tr.lang} needs both a --title and a --description`);
     }
   }
-  if (!given.length && title === undefined && !translations.length) {
-    throw new CliError("give at least one of --caption, --comment, --comment2, --alt, --title, --translation");
+  const language = values.language as string | undefined;
+  if (language !== undefined && !LANG.test(language))
+    throw new UsageError(`"${language}" is not a language tag (like en or pt-BR)`);
+  if (!given.length && title === undefined && language === undefined && !translations.length) {
+    throw new CliError(
+      "give at least one of --caption, --comment, --comment2, --alt, --title, --language, --translation",
+    );
   }
 
   const body: { key: string; texts?: YouTubeTexts } & Partial<Record<Field, string>> = { key };
@@ -117,13 +127,18 @@ async function set(ctx: Ctx, args: string[]): Promise<number> {
   }
   const api = await apiFor(ctx);
   const changed: string[] = [...given];
-  if (title !== undefined || translations.length) {
+  if (title !== undefined || language !== undefined || translations.length) {
     // plan_update replaces the texts whole, so start from what is there.
     const current = (await api.get<TextItem>(path(key))).texts ?? { title: "" };
     const merged: YouTubeTexts = { ...current };
     if (title !== undefined) {
       merged.title = title;
       changed.push("title");
+    }
+    // YouTube takes translations only with the video's own language
+    if (language !== undefined) {
+      merged.language = language;
+      changed.push("language");
     }
     for (const tr of translations) {
       const description = await source(ctx, tr.description as string, stdinUsed);
@@ -141,7 +156,7 @@ async function set(ctx: Ctx, args: string[]): Promise<number> {
 export const texts: Command = {
   name: "texts",
   summary:
-    "texts get <key> | set <key> [--caption f] [--comment f] [--comment2 f] [--alt f] [--title t] [--translation lang --title t --description f]   read or set texts (- is stdin)",
+    "texts get <key> | set <key> [--caption f] [--comment f] [--comment2 f] [--alt f] [--title t] [--language lang] [--translation lang --title t --description f]   read or set texts (- is stdin)",
   async run(ctx: Ctx, args: string[]) {
     const [sub, ...rest] = args;
     if (sub === "get") return get(ctx, rest);

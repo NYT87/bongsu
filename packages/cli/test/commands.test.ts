@@ -376,13 +376,28 @@ describe("texts", () => {
       expect(calls).toHaveLength(0);
     });
 
-    it("texts get prints the title and translations", async () => {
-      const { ctx, out } = fakeCtx({ config, responses: { [`GET ${ytPath}`]: yt } });
+    it("texts get prints the description and comments, then the title, language and translations", async () => {
+      const item = { ...yt, caption: "About the video", comment: "First!", texts: { ...yt.texts, language: "en" } };
+      const { ctx, out } = fakeCtx({ config, responses: { [`GET ${ytPath}`]: item } });
       expect(await main(["texts", "get", yt.key], ctx)).toBe(0);
       const text = out.join("");
+      expect(text).toContain("== caption\nAbout the video\n");
+      expect(text).toContain("== comment\nFirst!\n");
+      expect(text).toContain("== comment2\n(none)\n");
       expect(text).toContain("== title\nOld\n");
+      expect(text).toContain("== language\nen\n");
       expect(text).toContain("== translation es\nViejo\n\nDesc\n");
-      expect(text).not.toContain("== caption");
+    });
+
+    it("texts set --language sends the video's language (YouTube needs it with translations)", async () => {
+      const { ctx, calls } = fakeCtx({
+        config,
+        responses: { [`GET ${ytPath}`]: yt, "POST /v1/plan/update": yt },
+      });
+      expect(await main(["texts", "set", yt.key, "--language", "en"], ctx)).toBe(0);
+      const post = calls.find((c) => c.url.endsWith("/v1/plan/update"));
+      expect(post?.body).toEqual({ key: yt.key, texts: { ...yt.texts, language: "en" } });
+      expect(await main(["texts", "set", yt.key, "--language", "English!"], ctx)).toBe(2);
     });
   });
 });
