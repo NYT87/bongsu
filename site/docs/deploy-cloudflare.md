@@ -131,6 +131,10 @@ Check `https://<PUBLIC_URL>/health`: `ok: true`, all tables present, no missing 
 
 When dry runs look right, set `DRY_RUN = "0"` in both wrangler files and deploy both Workers again.
 
+Publishing YouTube videos? Watch the first real upload: if YouTube answers it with 400 or 411, or the run hits the CPU
+limit, set `YOUTUBE_UPLOAD_MODE = "chunk"` on the cron Worker
+([YouTube: uploads on Cloudflare](youtube.md#uploads-on-cloudflare)).
+
 ## Updating
 
 Pull, apply the migrations, build and deploy both Workers again: [Updating](updating.md#on-cloudflare).

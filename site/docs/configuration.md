@@ -103,7 +103,7 @@ dashboard's mark.
 | `RP_ID` | passkey relying-party id: the app's hostname |
 | `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` | Web Push |
 | `JOBS_PER_TICK` | optional, on the cron Worker: publishing jobs advanced per run (default `4`, at most `100`). See [How many go out at once](#how-many-go-out-at-once) |
-| `YOUTUBE_UPLOAD_MODE` | optional, on the cron Worker: `"chunk"` sends YouTube uploads in 8 MiB pieces instead of streaming the file in one request. Leave it unset unless an upload fails on the CPU limit (see [YouTube](youtube.md#uploads-on-cloudflare)) |
+| `YOUTUBE_UPLOAD_MODE` | optional, on the cron Worker: `"chunk"` sends YouTube uploads in 8 MiB pieces instead of streaming the file in one request. Leave it unset unless YouTube answers the upload with 400 or 411, or an upload fails on the CPU limit: watch the first real upload (see [YouTube](youtube.md#uploads-on-cloudflare)) |
 | `INBOX_WORKSPACES_PER_RUN` | optional, on the cron Worker: workspaces whose inbox folder one run scans (default `3`, at most `100`); the next run carries on with the following ones. Set at deploy time, never in the dashboard |
 
 ## Secrets

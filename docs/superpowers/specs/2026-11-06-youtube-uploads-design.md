@@ -209,6 +209,9 @@ The job keeps `videoId`. When a new approval reopens it:
   the worktree, so it wasn't run and the cost of streaming on Workers is **not measured**. Streaming stays the
   default and chunk mode is built and tested, behind `YOUTUBE_UPLOAD_MODE=chunk` (an operator's switch, set on the
   cron Worker; see `site/docs/configuration.md`). If an upload fails on the CPU limit, set the variable and redeploy.
+- **Release gate: the first real upload is watched.** The streamed PUT (a `ReadableStream` body, a hand-set
+  `Content-Length`, `duplex: "half"`) is untried on workerd. If YouTube answers the PUT with 400 or 411, or the run hits
+  the CPU limit, the operator sets `YOUTUBE_UPLOAD_MODE=chunk` (`site/docs/youtube.md`, `site/docs/deploy-cloudflare.md`).
 - **Fallback:** if the CPU time exceeds what the plan allows (the free plan's limit), `check` instead sends
   `CHUNK_BYTES` (8 MiB, a multiple of 256 KiB) per request, as many as fit in `UPLOAD_BUDGET_S`. Nothing else changes.
 

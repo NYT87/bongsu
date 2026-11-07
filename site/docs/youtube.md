@@ -163,6 +163,12 @@ resumes from the offset YouTube kept. Streaming's CPU cost on the Workers free p
 needs a deploy). If an upload fails on the CPU limit, set the variable `YOUTUBE_UPLOAD_MODE` to `chunk` on the cron
 Worker (a `[vars]` entry in `wrangler.cron.toml`, then deploy): the file then goes in 8 MiB pieces. Node doesn't need it.
 
+**Watch the first real upload.** The streamed upload sends the file as a stream with its length set by hand, which hasn't
+been tried on Cloudflare yet. Schedule a first video you can watch going up
+(`pnpm exec wrangler tail --config wrangler.cron.toml` in `apps/cloudflare`). If YouTube answers the upload with **400**
+or **411**, or the run stops on the **CPU limit**, set `YOUTUBE_UPLOAD_MODE = "chunk"` as above and deploy the cron Worker
+again.
+
 ## Moving a release date
 
 A video uploaded as private with a release time elsewhere can have that time moved (for a video Bongsu uploaded, move the
