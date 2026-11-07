@@ -458,10 +458,20 @@ export class YouTube {
   async setThumbnail(videoId: string, source: string): Promise<void> {
     const src = await this.fetcher(source);
     if (!src.ok) return this.refuse(src, "thumbnail source");
+    // streamed through with the source's length, as the video is (an image may be 50 MB); a source that doesn't say
+    // its length is read whole, since a stream body needs one
+    const length = src.headers.get("Content-Length");
+    const stream = length && src.body;
     const r = await this.fetcher(`${UPLOAD}/thumbnails/set?videoId=${encodeURIComponent(videoId)}`, {
       method: "POST",
-      headers: { ...(await this.auth()), "Content-Type": src.headers.get("Content-Type") ?? "image/jpeg" },
-      body: await src.arrayBuffer(),
+      headers: {
+        ...(await this.auth()),
+        "Content-Type": src.headers.get("Content-Type") ?? "image/jpeg",
+        ...(stream ? { "Content-Length": length } : {}),
+      },
+      body: stream ? src.body : await src.arrayBuffer(),
+      // @ts-expect-error: `duplex` is required for a stream body by fetch implementations, absent from the DOM types
+      duplex: "half",
     });
     if (!r.ok) return this.refuse(r, "thumbnails.set");
   }

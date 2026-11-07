@@ -146,6 +146,29 @@ describe("YouTube client uploads", () => {
 });
 
 describe("YouTube client after the upload", () => {
+  it("a thumbnail is streamed from its source with its length, not held in memory", async () => {
+    file("clip.mp4", 10);
+    const thumb = new Uint8Array(40).map((_, i) => i);
+    const session = await start(10);
+    const id = (await yt.uploadFrom(session, SRC, 0, 10, { budgetMs: 10_000 })).videoId as string;
+    const sent: { body: unknown; length: string | null }[] = [];
+    const real = w.fetch;
+    const f: typeof fetch = async (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      // a source that says its length, as the scheduler's media links do
+      if (url === "https://files.example.com/thumb.jpg")
+        return new Response(thumb, { headers: { "Content-Type": "image/png", "Content-Length": "40" } });
+      if (url.includes("/thumbnails/set"))
+        sent.push({ body: init?.body, length: new Headers(init?.headers).get("Content-Length") });
+      return real(input, init);
+    };
+    await new YouTube(OAUTH, f).setThumbnail(id, "https://files.example.com/thumb.jpg");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toBeInstanceOf(ReadableStream);
+    expect(sent[0].length).toBe("40");
+    expect(w.ytVideos.get(id)?.thumbnail).toEqual({ bytes: 40, type: "image/png" });
+  });
+
   it("captions, thumbnail, update and delete reach YouTube", async () => {
     file("clip.mp4", 10);
     file("es.srt", 20);
