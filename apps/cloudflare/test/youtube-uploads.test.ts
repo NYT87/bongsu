@@ -426,7 +426,57 @@ function countDeletes() {
   return calls;
 }
 
+/** Goes public at T, but the read after the update fails: the job keeps `publishing`, the video is public. */
+async function publishedUnread() {
+  await uploadAhead();
+  const real = w.fetch;
+  let updated = false;
+  w.fetch = async (input, init) => {
+    const req = new Request(input, init);
+    const u = new URL(req.url);
+    if (u.hostname === "www.googleapis.com" && u.pathname === "/youtube/v3/videos") {
+      if (req.method === "PUT") updated = true;
+      else if (req.method === "GET" && updated)
+        return Response.json({ error: { code: 500, message: "backendError" } }, { status: 500 });
+    }
+    return real(input, init);
+  };
+  await run(T);
+  w.fetch = real;
+  expect(await job()).toMatchObject({ state: "container_created", attempts: 1 });
+  expect((await step()) as { publishing?: boolean }).toMatchObject({ publishing: true });
+  expect(privacy()).toBe("public");
+}
+
 describe("YouTube uploads: changes, removal, quota and errors", () => {
+  it("a video that may be live is never deleted when its item is removed", async () => {
+    await publishedUnread();
+    await removeItem();
+    const deletes = countDeletes();
+    await run(at(300));
+    await run(at(600)); // nor by the sweep
+    expect(await job()).toMatchObject({ state: "refused", last_error: "removed from the plan", videoId: "vid-1" });
+    expect(w.ytVideos.has("vid-1")).toBe(true);
+    expect(privacy()).toBe("public");
+    expect(deletes.n).toBe(0);
+    expect(await deletedRows()).toEqual([]);
+  });
+
+  it("a refused job that may be live is never reopened by a new approval", async () => {
+    await publishedUnread();
+    await env.DB.prepare("UPDATE plan_items SET due_at = ?1 WHERE item_key = ?2")
+      .bind(await localToUnix("2026-10-20", "19:00"), KEY)
+      .run();
+    await run(at(300));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    await approveVideo({ approvedAt: "2026-10-20T09:10:00Z", time: "19:00" });
+    await run(at(900));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    expect((await step()) as { publishing?: boolean }).toMatchObject({ publishing: true });
+    expect(privacy()).toBe("public"); // not made private again by a revision
+    expect(w.ytSessions.size).toBe(1);
+  });
+
   it("a texts-only edit after the upload updates the video", async () => {
     await uploadAhead();
     const changed = { ...TEXTS, title: "A better title" };

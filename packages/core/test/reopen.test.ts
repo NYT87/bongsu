@@ -43,6 +43,13 @@ describe("reopens", () => {
     expect(reopens(failed, p({ publishing: true }), after)).toBe(false);
   });
 
+  it("never brings back a refused or held job that may have gone live", () => {
+    expect(reopens({ state: "refused" }, p({ publishing: true }), after)).toBe(false);
+    expect(reopens({ state: "refused", media_id: "media-1" }, p(), after)).toBe(false);
+    expect(reopens({ state: "held" }, p({ publishing: true }), after)).toBe(false);
+    expect(reopens({ state: "held" }, p({ onHold: true, publishing: true }), after)).toBe(false);
+  });
+
   it("brings back a private upload made ahead of its time on a newer approval, never an Instagram container", () => {
     const upload = (data: Record<string, unknown>, o: Partial<Payload> = {}) =>
       p({ step: { state: "ready", data }, ...o });

@@ -411,22 +411,22 @@ async function discover(c: Ctx, a: Account) {
 /** Whether an approval brings a closed job back (as a fresh job: no container, no attempts). A refused/held job comes
  *  back when you approve it again (a newer approval line); one held for its item's hold comes back when the item is
  *  released (it's due again, dueItems leaves out held ones). A failed job comes back on an approval made after it
- *  failed, unless the publishing call was ever made: the post may be live then (a timeout on Instagram's side), and
- *  posting again could double it; the owner checks the account and records it by hand (#148). */
+ *  failed. None comes back once the publishing call was ever made: the post may be live then (a timeout on
+ *  Instagram's side, a read-back YouTube didn't answer), and posting again could double it, revising a YouTube video
+ *  would make it private again; the owner checks the account and records it by hand (#148). */
 export function reopens(
   job: { state: string; media_id?: string | null; updated_at?: number },
   p: Payload,
   a: Pick<Approval, "dueAt" | "approvedAt">,
 ): boolean {
-  if (a.dueAt === null) return false;
+  if (a.dueAt === null || mayBeLive(job, p)) return false;
   const newer = a.approvedAt !== p.approvedAt;
   if (job.state === "refused") return newer;
   // a private upload under way ahead of its time: a new approval revises it before its time (previousUpload);
   // Instagram's containers have neither, and stay as they are
-  if (job.state === "container_created")
-    return newer && !mayBeLive(job, p) && !!(p.step?.data.videoId || p.step?.data.session);
+  if (job.state === "container_created") return newer && !!(p.step?.data.videoId || p.step?.data.session);
   if (job.state === "held") return newer || !!p.onHold;
-  if (job.state !== "failed" || !newer || mayBeLive(job, p)) return false;
+  if (job.state !== "failed" || !newer) return false;
   return job.updated_at !== undefined && Date.parse(a.approvedAt) / 1000 > job.updated_at; // NaN: never
 }
 
@@ -604,9 +604,10 @@ async function recheck(c: Ctx, job: JobRow, p: Payload): Promise<Recheck | null>
 
 /** What recheck found: the job settles (done, refused), or is held until the item is released (discover brings it
  *  back; a held job doesn't take one of the tick's slots while it waits). A refusal keeps the step (a private video,
- *  for the next approval to revise), except when the item is gone: then the video is deleted. */
+ *  for the next approval to revise), except when the item is gone: then the video is deleted, unless it may be live
+ *  (the publishing call was made): a public video is never deleted for the plan's sake. */
 async function settle(c: Ctx, job: JobRow, p: Payload, r: Recheck) {
-  if (r.state === "refused" && r.removed && previousUpload(p))
+  if (r.state === "refused" && r.removed && previousUpload(p) && !mayBeLive(job, p))
     return refuse(c, job, r.reason, await discard(c, job, p));
   if (r.state === "refused") return refuse(c, job, r.reason, p);
   if (r.state === "done") return c.setJob(job.id, { state: "done", last_error: r.reason });
