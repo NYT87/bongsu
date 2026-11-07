@@ -4,8 +4,9 @@
 import { type Connection, connectionSecret } from "../accounts";
 import { ANALYTICS_SCOPE, type VideoMeta, type VideoState, YouTube, YouTubeRefused } from "../clients/youtube";
 import { MediaRolesError, mediaRoles, youtubePermalink, youtubeSettings } from "../platforms/youtube";
-import { YOUTUBE_LOCKED } from "../texts/notifications";
+import { YOUTUBE_LOCKED, YOUTUBE_REPLACE_KEPT } from "../texts/notifications";
 import type {
+  Discarded,
   Grant,
   OAuthContext,
   OutgoingMedia,
@@ -95,7 +96,10 @@ export class YouTubeProvider implements Provider {
   }
 
   /** Uploads the video private, or, given the job's earlier step with an uploaded video, revises that one: the same
-   *  file keeps the video and changes only what differs; another file, or a removed thumbnail, replaces it. */
+   *  file keeps the video and changes only what differs; another file, or a removed thumbnail, replaces it. An earlier
+   *  video that isn't private any more was published by hand: it is never revised (that would make it private again)
+   *  nor deleted, and nothing is uploaded either (a second copy would go public): the step fails, so the owner
+   *  decides. */
   async start(post: OutgoingPost, previous?: Step): Promise<Step> {
     let roles: ReturnType<typeof rolesOf>;
     try {
@@ -107,13 +111,16 @@ export class YouTubeProvider implements Provider {
     const settings = post.settings ?? youtubeSettings(post.options, {});
     const meta = metaOf(post, settings.madeForKids, settings.category);
     const old = previous?.data as Partial<UploadData> | undefined;
-    if (old?.videoId) {
+    // a video gone from YouTube is uploaded again
+    const state = old?.videoId ? await this.yt.videoState(old.videoId) : null;
+    if (old?.videoId && state) {
+      if (state.privacyStatus !== "private")
+        return { state: "failed", data: { keptVideoId: old.videoId }, error: YOUTUBE_REPLACE_KEPT };
       // the Data API sets a custom thumbnail but can't take one off: a thumbnail removed since replaces the video
       const thumbnailGone = !!old.thumbnailMd5 && !roles.thumbnail;
-      if (old.videoChecksum === roles.video.checksum && !thumbnailGone) {
-        const revised = await this.revise(old as UploadData, post, roles, meta, settings.privacy);
-        if (revised) return revised;
-      } else await this.yt.deleteVideo(old.videoId);
+      if (old.videoChecksum === roles.video.checksum && !thumbnailGone)
+        return this.revise(old as UploadData, state, post, roles, meta, settings.privacy);
+      await this.yt.deleteVideo(old.videoId);
     }
 
     const { size, mime } = await this.probe(roles.video.url);
@@ -133,18 +140,17 @@ export class YouTubeProvider implements Provider {
     return { state: "processing", data: data as unknown as Record<string, unknown> };
   }
 
-  /** The same video file: new texts and settings (still private), and only the tracks and thumbnail that changed.
-   *  Null when the video is gone from YouTube (it is uploaded again). */
+  /** The same video file, still private (`state`): new texts and settings, and only the tracks and thumbnail that
+   *  changed. */
   private async revise(
     old: UploadData,
+    state: VideoState,
     post: OutgoingPost,
     roles: ReturnType<typeof rolesOf>,
     meta: VideoMeta,
     privacy: "public" | "unlisted",
-  ): Promise<Step | null> {
+  ): Promise<Step> {
     const id = old.videoId as string;
-    const state = await this.yt.videoState(id);
-    if (!state) return null;
     await this.yt.updateVideo(id, meta, { ...writable(state.status), privacyStatus: "private" });
     const langs = new Set(roles.subtitles.map((s) => s.lang));
     const thumbnail = roles.thumbnail;
@@ -320,15 +326,21 @@ export class YouTubeProvider implements Provider {
     return v;
   }
 
-  /** Deletes the uploaded private video, if there is one; best effort. True when it is gone now (deleted, or YouTube
-   *  no longer had it); false when there was none or the delete failed. */
-  async discard(step: Step): Promise<boolean> {
+  /** Deletes the uploaded video if it is still private; best effort. "gone" when it is gone now (deleted, or YouTube
+   *  no longer had it); "kept" when it isn't private (the owner published it by hand: a public video is never
+   *  deleted); "failed" when there was none or a call failed. */
+  async discard(step: Step): Promise<Discarded> {
     const id = (step.data as Partial<UploadData>).videoId;
-    if (!id) return false;
-    return this.yt.deleteVideo(id).then(
-      () => true,
-      () => false,
-    );
+    if (!id) return "failed";
+    try {
+      const v = await this.yt.videoState(id);
+      if (!v) return "gone";
+      if (v.privacyStatus !== "private") return "kept";
+      await this.yt.deleteVideo(id);
+      return "gone";
+    } catch {
+      return "failed";
+    }
   }
 
   /** A top-level comment as the channel; returns the thread id. */

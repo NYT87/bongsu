@@ -652,11 +652,15 @@ async function recheck(c: Ctx, job: JobRow, p: Payload): Promise<Recheck | null>
 /** What recheck found: the job settles (done, refused), or is held until the item is released (discover brings it
  *  back; a held job doesn't take one of the tick's slots while it waits). A refusal keeps the step (a private video,
  *  for the next approval to revise), except when the item is gone: then the video is deleted, unless it may be live
- *  (the publishing call was made): a public video is never deleted for the plan's sake, and the note (refused or held)
- *  tells the owner it may be public, kept, to check on the platform. */
+ *  (the publishing call was made) or isn't private any more (published by hand: kept, the refusal says so): a public
+ *  video is never deleted for the plan's sake, and the note (refused or held) tells the owner it may be public, kept,
+ *  to check on the platform. */
 async function settle(c: Ctx, job: JobRow, p: Payload, r: Recheck) {
-  if (r.state === "refused" && r.removed && previousUpload(p) && !mayBeLive(job, p))
-    return refuse(c, job, r.reason, await discard(c, job, p));
+  if (r.state === "refused" && r.removed && previousUpload(p) && !mayBeLive(job, p)) {
+    const d = await discard(c, job, p);
+    // one note: the refusal says the video was kept
+    return refuse(c, job, d.kept ? `${r.reason}; ${N.VIDEO_KEPT_PUBLIC}` : r.reason, d.payload);
+  }
   // a post that may be live stays as it is whatever the plan says now (nothing deletes, revises or reopens it): only
   // the owner can tell, on the platform, whether it went out
   const live = r.state !== "done" && mayBeLive(job, p) ? await platformOf(c, p, job.workspace_id) : undefined;
@@ -674,19 +678,31 @@ async function platformOf(c: Ctx, p: Payload, workspaceId: string): Promise<stri
 
 /** Deletes the private video a job uploaded for an item that is gone, best effort; the audit row records a video
  *  that is gone now. Returns the payload with the step's videoId dropped when it is (else kept: nothing claims it was
- *  deleted, and the sweep tries again). Dry run deletes nothing: it audits what it would delete and keeps the step. */
-async function discard(c: Ctx, job: JobRow, p: Payload): Promise<Payload> {
+ *  deleted, and the sweep tries again). A video that isn't private any more (the owner published it by hand) is never
+ *  deleted: it is audited as kept, its videoId moves to keptVideoId so nothing tries again, and `kept` tells the
+ *  caller to say so. Dry run deletes nothing: it audits what it would delete and keeps the step. */
+async function discard(c: Ctx, job: JobRow, p: Payload): Promise<{ payload: Payload; kept?: boolean }> {
   const step = p.step!;
   const videoId = step.data.videoId;
   if (c.dry) {
     await audit(c.env.DB, c.nowS, "would_delete", job.item_key, { videoId }, job.workspace_id);
-    return p;
+    return { payload: p };
   }
   const pr = await c.provider(p, job.workspace_id);
-  if (!(await pr.discard?.(step))) return p;
-  await audit(c.env.DB, c.nowS, "youtube_video_deleted", job.item_key, { videoId }, job.workspace_id);
+  const got = (await pr.discard?.(step)) ?? "failed";
+  if (got === "failed") return { payload: p };
   const { videoId: _gone, ...data } = step.data;
-  return { ...p, step: { ...step, data } };
+  const kept = got === "kept";
+  await audit(
+    c.env.DB,
+    c.nowS,
+    kept ? "youtube_video_kept" : "youtube_video_deleted",
+    job.item_key,
+    { videoId },
+    job.workspace_id,
+  );
+  const payload = { ...p, step: { ...step, data: kept ? { ...data, keptVideoId: videoId } : data } };
+  return { payload, kept };
 }
 
 /** Deletes per run at most, in the sweep below: each costs a token refresh and a videos.delete, on top of what the
@@ -696,8 +712,8 @@ const SWEEP_PER_RUN = 1;
 /**
  * A private video left by a job that is no longer active (refused, held or failed, keeping its video for a new
  * approval) whose item has since been removed: nothing would ever reach it, so it is deleted here, as the active path
- * does. Never one that may be live (the publishing call was made), never in dry run, nor in a held workspace. The
- * LIKE filters only narrow the rows; the payload decides.
+ * does. Never one that may be live (the publishing call was made) or that the owner published by hand (kept, noted
+ * once), never in dry run, nor in a held workspace. The LIKE filters only narrow the rows; the payload decides.
  */
 async function sweepRemoved(c: Ctx) {
   if (c.dry) return;
@@ -718,7 +734,9 @@ async function sweepRemoved(c: Ctx) {
       continue;
     }
     try {
-      await c.setJob(job.id, { payload: await discard(c, job, p) });
+      const d = await discard(c, job, p);
+      await c.setJob(job.id, { payload: d.payload });
+      if (d.kept) await c.note.send(N.videoKept(job.item_key), job.workspace_id);
     } catch {
       await c.setJob(job.id, {});
     }

@@ -51,6 +51,12 @@ describe("notification builders", () => {
       text: "YouTube keeps this video private until your Google project passes YouTube's audit (see the YouTube guide)",
       target: KEY,
     });
+    expect(N.videoKept(KEY)).toEqual({
+      group: "problems",
+      title: `${KEY}: video kept`,
+      text: "removed from the plan; its video isn't private on YouTube any more (published by hand), so it was kept: delete it there if it should go",
+      target: KEY,
+    });
     expect(N.youtubeQuota()).toMatchObject({
       group: "problems",
       text: "YouTube's daily quota is used up: uploads continue after midnight Pacific time",
@@ -232,6 +238,7 @@ describe("every builder has a group", () => {
     youtubeLocked: N.youtubeLocked(KEY),
     youtubeQuota: N.youtubeQuota(),
     youtubeThumbnailRefused: N.youtubeThumbnailRefused(KEY),
+    videoKept: N.videoKept(KEY),
   };
 
   it("covers every exported builder", () => {
@@ -258,6 +265,7 @@ describe("every builder has a group", () => {
         "youtubeLocked",
         "youtubeQuota",
         "youtubeThumbnailRefused",
+        "videoKept",
       ],
       published: ["published", "publishedTrial", "commented", "dryRunPublish", "dryRunComment", "results"],
       inbox: ["newDrafts", "newComments", "releaseMoved"],

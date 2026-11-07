@@ -59,7 +59,9 @@ read.
 API keys are stored as sha256 only, have scopes, a rate limit (60/min) and can be revoked. No scope allows approving,
 resuming or managing keys. The `reschedule` scope, which no default set includes, lets a key move the release date of
 a scheduled YouTube video. It never makes a video public (the privacy setting is not touched), the new time must be at
-least an hour ahead, and each move is audited (`release_move`) and notified. See [the API reference](api-reference.md).
+least an hour ahead, and each move is audited (`release_move`) and notified. A video Bongsu uploads is its plan item:
+moving it also needs the `plan` scope, only to a later time, and voids its approval. Bongsu never deletes a video
+that isn't private (one you published by hand is kept). See [the API reference](api-reference.md).
 The `metrics` scope, also in no default set, lets a key upload metrics samples (`ingest_metrics`, audited): numbers
 only, at least an hour old, into the series the charts read; it reaches nothing an approval covers.
 

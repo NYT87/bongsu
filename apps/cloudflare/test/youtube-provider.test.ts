@@ -268,11 +268,37 @@ describe("YouTube provider", () => {
 
   it("discard deletes the uploaded video, best effort", async () => {
     const { step } = await walk(await pr.start(post()));
-    expect(await pr.discard(step)).toBe(true);
+    expect(await pr.discard(step)).toBe("gone");
     expect(w.ytVideos.has("vid-1")).toBe(false);
-    expect(await pr.discard(step)).toBe(true); // already gone (404): no error
-    expect(await pr.discard({ state: "processing", data: { phase: "uploading" } })).toBe(false);
-    w.ytQuota = true; // a delete YouTube refuses: no error, reported
-    expect(await pr.discard({ state: "processing", data: { videoId: "vid-9" } })).toBe(false);
+    expect(await pr.discard(step)).toBe("gone"); // already gone: no error
+    expect(await pr.discard({ state: "processing", data: { phase: "uploading" } })).toBe("failed");
+    // a call YouTube refuses (the read before the delete): no error, reported
+    const failing = new YouTubeProvider(OAUTH, (async (input, init) => {
+      if (new URL(String(input instanceof Request ? input.url : input)).pathname === "/youtube/v3/videos")
+        return Response.json({ error: { code: 500, message: "backendError" } }, { status: 500 });
+      return w.fetch(input, init);
+    }) as typeof fetch);
+    expect(await failing.discard({ state: "processing", data: { videoId: "vid-9" } })).toBe("failed");
+  });
+
+  it("discard never deletes a video that isn't private (published by hand)", async () => {
+    const { step } = await walk(await pr.start(post()));
+    for (const privacy of ["public", "unlisted"]) {
+      w.ytVideos.get("vid-1")!.status.privacyStatus = privacy;
+      expect(await pr.discard(step)).toBe("kept");
+      expect(w.ytVideos.has("vid-1")).toBe(true);
+    }
+  });
+
+  it("a new start never revises nor replaces a video published by hand", async () => {
+    const { step } = await walk(await pr.start(post()));
+    w.ytVideos.get("vid-1")!.status.privacyStatus = "public";
+    for (const media2 of [post().media, [media("clip.mp4", "v2", true), media("es.srt", "s1")]]) {
+      const s = await pr.start(post({ media: media2 }), step);
+      expect(s).toMatchObject({ state: "failed", data: { keptVideoId: "vid-1" } });
+      expect(s.error).toContain("published by hand");
+    }
+    expect(w.ytVideos.get("vid-1")?.status.privacyStatus).toBe("public");
+    expect(w.ytSessions.size).toBe(1);
   });
 });

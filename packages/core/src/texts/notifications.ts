@@ -82,6 +82,21 @@ export const youtubeLocked = (key: string): Note => ({
   text: YOUTUBE_LOCKED,
   target: key,
 });
+/** A job's earlier video, to be revised or replaced, isn't private any more (the owner published it by hand). */
+export const YOUTUBE_REPLACE_KEPT =
+  "the video uploaded earlier isn't private on YouTube any more (published by hand), so it was kept and nothing was " +
+  "uploaded: record it as posted, or delete it there and approve again";
+/** A removed item's video that isn't private any more (published by hand): never deleted. Only YouTube uploads
+ *  leave a video to delete. */
+export const VIDEO_KEPT_PUBLIC =
+  "its video isn't private on YouTube any more (published by hand), so it was kept: delete it there if it should go";
+/** The sweep found a removed item's video public (the refusal, if any, came earlier): sent once. */
+export const videoKept = (key: string): Note => ({
+  group: "problems",
+  title: `${key}: video kept`,
+  text: `removed from the plan; ${VIDEO_KEPT_PUBLIC}`,
+  target: key,
+});
 export const YOUTUBE_QUOTA = "YouTube's daily quota is used up: uploads continue after midnight Pacific time";
 /** Sent once per workspace per Pacific day (the tick dedupes it in settings). */
 export const youtubeQuota = (): Note => ({

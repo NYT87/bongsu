@@ -98,8 +98,8 @@ INSERT INTO accounts (id, workspace_id, platform, handle, display_name, external
 A video is a plan item on a YouTube channel, planned like a Reel and approved with your passkey in the app. Its **title**
 is 1 to 100 characters (it may be empty while you edit, but approval needs it), and its **description** is the caption
 (at most 5000 characters; a description is required, as every caption is). It can also have a language, the audio
-language, tags (500 characters as YouTube counts them), **translations** (a title and a description per language, at
-most 5 read from the inbox; YouTube takes them only with the video's language set), **subtitles** and a **thumbnail**. Instagram posts have no title or translations, and a
+language, tags (500 characters as YouTube counts them), **translations** (a title and a description per language, up
+to 20 languages, at most 5 read from the inbox; YouTube takes them only with the video's language set), **subtitles** and a **thumbnail**. Instagram posts have no title or translations, and a
 video draft with subtitle or thumbnail files can't be scheduled on an Instagram account.
 
 Edit them on the item's page in the app, with `plan_add` / `plan_update` / `create_draft` (`texts`), or with
@@ -119,7 +119,10 @@ ready video stays private past its time and goes out after you resume, within th
 
 Approving again during the lead (a new title, new subtitles, a new thumbnail) **revises the same video in place**: only
 what changed is sent. A different video file replaces the upload instead: the old private video is deleted and the new
-one goes up. So does removing the thumbnail, since YouTube can't take a custom thumbnail off a video. Instagram posts at the same time are never held up by a long upload: each run advances them first.
+one goes up. So does removing the thumbnail, since YouTube can't take a custom thumbnail off a video. A video you
+published by hand in the meantime is never revised (that would make it private again) nor replaced: the job fails with
+a note and uploads nothing, so a second copy never goes out. Record it as posted, or delete it on YouTube and approve
+again. Instagram posts at the same time are never held up by a long upload: each run advances them first.
 
 A **dry run** sends its note at the upload time, 6 hours before the planned one, and uploads nothing.
 
@@ -130,7 +133,9 @@ not while the workspace is paused or archived: the delete waits until it isn't. 
 private video, and the note says it is there to look at or publish by hand. A video Bongsu was making public when its
 answer got lost may already be public: removing or holding its item, editing it before the retry, or the retry missing
 its catch-up window then keeps it as it is, never deleted or made private again, and the note asks you to check it on
-the channel.
+the channel. Bongsu also reads a video before deleting it: one that isn't private any more (you published it by hand,
+say after a failure) is **kept**, never deleted. The audit records it as `youtube_video_kept`, and one note tells you it
+is still on the channel, to delete there if it should go.
 
 ### The audit lock
 
@@ -147,7 +152,8 @@ A video's folder in the inbox (`inbox/<project>/<post>/`) holds the video plus a
 - `title.txt` and `caption.txt`;
 - `caption.<lang>.txt` and `title.<lang>.txt`: a translation needs both, and at most 5 are read. The files don't say
   the video's own language, which YouTube needs with translations: the draft says so, and you set it before scheduling;
-- `<lang>.srt` or `<lang>.vtt`: a subtitle track, one per language (`es.srt` beside `es.vtt` is refused);
+- `<lang>.srt` or `<lang>.vtt`: a subtitle track, one per language (`es.srt` beside `es.vtt` is refused), up to 5 MB.
+  A larger one is left out of the inbox's draft (its note says so) and refused by the app's uploads and by approval;
 - `thumbnail.jpg` or `thumbnail.png`: at most one, up to 50 MB;
 - for a lone `<name>.mp4`: `<name>.title.txt`.
 
@@ -188,7 +194,9 @@ with a release time in the future. Bongsu changes the time and nothing else, so 
   passkey check from the last 10 minutes. **Check YouTube now** re-reads the channel.
 - **API and MCP:** `youtube_reschedule` (`POST /v1/youtube/reschedule`) with the `reschedule` scope. A key must leave at
   least an hour; the owner has no minimum beyond "in the future". A public video gets 409, and so does a past time for
-  the owner. A key's time under an hour ahead (a past time included) gets 400.
+  the owner. A key's time under an hour ahead (a past time included) gets 400. A video Bongsu uploads moves its plan
+  item, so a key also needs the `plan` scope for it (403 without), may only move it later (400 otherwise), and the move
+  needs a new approval.
 
 Each move is audited (`release_move`) and you get a "Release moved" notification saying who did it.
 

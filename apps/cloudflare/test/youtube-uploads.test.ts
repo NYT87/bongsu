@@ -406,6 +406,15 @@ describe("YouTube uploads: the tick", () => {
     )
       .bind(JSON.stringify({ username: "main", account: "main", step: { state: "ready", data: { videoId: "vid-9" } } }))
       .run();
+    // still private on YouTube: the sweep deletes it
+    w.ytVideos.set("vid-9", {
+      size: 10,
+      received: 10,
+      meta: {},
+      status: { privacyStatus: "private", uploadStatus: "processed" },
+      processing: "succeeded",
+      captions: new Map(),
+    });
     const deletes = countDeletes();
     await run(at(-3600)); // the one job advanced is a video waiting for its time: no subrequests spent
     expect(await job()).toMatchObject({ state: "container_created", phase: "waiting" });
@@ -466,6 +475,29 @@ const deletedRows = async () =>
       detail: string;
     }>()
   ).results.map((r) => ({ target: r.target, detail: JSON.parse(r.detail) }));
+const keptRows = async () =>
+  (
+    await env.DB.prepare("SELECT target, detail FROM audit WHERE action = 'youtube_video_kept'").all<{
+      target: string;
+      detail: string;
+    }>()
+  ).results.map((r) => ({ target: r.target, detail: JSON.parse(r.detail) }));
+const KEPT_PUBLIC =
+  "its video isn't private on YouTube any more (published by hand), so it was kept: delete it there if it should go";
+const REPLACE_KEPT =
+  "the video uploaded earlier isn't private on YouTube any more (published by hand), so it was kept and nothing was uploaded";
+/** Counts YouTube's videos.list calls (a video's state) from here on. */
+function countVideoReads() {
+  const calls = { n: 0 };
+  const real = w.fetch;
+  w.fetch = async (input, init) => {
+    const req = new Request(input, init);
+    const u = new URL(req.url);
+    if (req.method === "GET" && u.hostname === "www.googleapis.com" && u.pathname === "/youtube/v3/videos") calls.n++;
+    return real(input, init);
+  };
+  return calls;
+}
 /** Counts YouTube's videos.delete calls from here on. */
 function countDeletes() {
   const calls = { n: 0 };
@@ -763,6 +795,70 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
     await run(at(300));
     expect(w.ytVideos.has("vid-1")).toBe(false);
     expect(await deletedRows()).toEqual([{ target: KEY, detail: { videoId: "vid-1" } }]);
+  });
+
+  it("a failed job's video published by hand is kept when its item is removed, noted once, not retried", async () => {
+    await uploadAhead();
+    w.ytKeepPrivate = true;
+    await run(T);
+    expect(await job()).toMatchObject({ state: "failed", videoId: "vid-1" });
+    w.ytVideos.get("vid-1")!.status.privacyStatus = "public"; // the owner publishes it in YouTube Studio
+    await removeItem();
+    const deletes = countDeletes();
+    const reads = countVideoReads();
+    await run(at(300));
+    await run(at(600));
+    await run(at(900));
+    expect(w.ytVideos.has("vid-1")).toBe(true);
+    expect(privacy()).toBe("public");
+    expect(deletes.n).toBe(0);
+    expect(reads.n).toBe(1); // read once, then left alone
+    expect(await deletedRows()).toEqual([]);
+    expect(await keptRows()).toEqual([{ target: KEY, detail: { videoId: "vid-1" } }]);
+    expect(await job()).toMatchObject({ state: "failed", videoId: undefined });
+    expect(notes(/kept/).map((n) => n.body)).toEqual([`removed from the plan; ${KEPT_PUBLIC}`]);
+  });
+
+  it("a waiting video published by hand is kept when its item is removed, with one refusal note", async () => {
+    await uploadAhead();
+    w.ytVideos.get("vid-1")!.status.privacyStatus = "unlisted";
+    await removeItem();
+    const deletes = countDeletes();
+    await run(at(-3600)); // the active job settles
+    await run(at(-3300)); // and the sweep passes it by
+    expect(w.ytVideos.has("vid-1")).toBe(true);
+    expect(deletes.n).toBe(0);
+    expect(await deletedRows()).toEqual([]);
+    expect(await keptRows()).toEqual([{ target: KEY, detail: { videoId: "vid-1" } }]);
+    expect(await job()).toMatchObject({ state: "refused", videoId: undefined });
+    expect(notes(/refused|kept/).map((n) => n.body)).toEqual([`removed from the plan; ${KEPT_PUBLIC}`]);
+  });
+
+  it.each([
+    ["the same file", false],
+    ["a new file", true],
+  ])("a new approval with %s never revises nor replaces a video published by hand", async (_, newFile) => {
+    await uploadAhead();
+    await env.DB.prepare("UPDATE plan_items SET due_at = ?1 WHERE item_key = ?2")
+      .bind(await localToUnix("2026-10-20", "19:00"), KEY)
+      .run();
+    await run(at(-3600));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    w.ytVideos.get("vid-1")!.status.privacyStatus = "public";
+    if (newFile) w.drive.get(ids.clip)!.md5 = "d".repeat(32);
+    const deletes = countDeletes();
+    await approveVideo({
+      approvedAt: "2026-10-20T08:00:00Z",
+      time: "19:00",
+      ...(newFile ? { clipMd5: "d".repeat(32) } : {}),
+    });
+    await run(at(-3300));
+    expect(await job()).toMatchObject({ state: "failed", videoId: undefined });
+    expect(privacy()).toBe("public"); // not made private again
+    expect(w.ytVideos.get("vid-1")?.meta.title).toBe("Demo");
+    expect(deletes.n).toBe(0);
+    expect(w.ytSessions.size).toBe(1); // nothing uploaded again
+    expect(notes(/failed/).map((n) => n.body)).toEqual([expect.stringContaining(REPLACE_KEPT)]);
   });
 
   it("dry run never deletes a removed item's video", async () => {

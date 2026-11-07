@@ -127,6 +127,9 @@ export interface KeptAlive {
 /** A connection that can't work any more until the owner reconnects it (a revoked or expired grant). */
 export class ConnectionBroken extends Error {}
 
+/** What `Provider.discard` did with a step's leftover. */
+export type Discarded = "gone" | "kept" | "failed";
+
 export interface Provider {
   readonly id: string;
   /** The platform it reaches (platforms/index.ts). */
@@ -138,9 +141,9 @@ export interface Provider {
   /** `run`: the tick's budget for the run, which a long step (an upload) spends from. */
   check(step: Step, run?: RunBudget): Promise<Step>;
   finish(step: Step): Promise<Published>;
-  /** Removes what a step left on the platform and won't publish (an uploaded private video); best effort. True when
-   *  it is gone now. */
-  discard?(step: Step): Promise<boolean>;
+  /** Removes what a step left on the platform and won't publish (an uploaded private video); best effort. "gone" when
+   *  it is gone now, "kept" when it is public (published by hand: never deleted), "failed" otherwise. */
+  discard?(step: Step): Promise<Discarded>;
   /** Optional features, present when the platform has them (Platform.features). */
   /** A comment as the account on a post; returns its id when the platform gives one. */
   comment?(mediaId: string, text: string): Promise<string | null | undefined | void>;
