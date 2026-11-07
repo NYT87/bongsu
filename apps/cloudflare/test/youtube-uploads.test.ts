@@ -526,6 +526,25 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
     expect(notes(/held/).map((n) => n.body)).toEqual([`on hold: it goes out once released\n${LIVE_KEPT}`]);
   });
 
+  it("a video that may be live and fails its fingerprint check at the retry is kept, with the note", async () => {
+    await publishedUnread();
+    await env.DB.prepare("UPDATE plan_items SET texts = ?1 WHERE item_key = ?2")
+      .bind(JSON.stringify({ ...TEXTS, title: "Changed" }), KEY)
+      .run();
+    await run(at(300));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    expect(privacy()).toBe("public");
+    expect(notes(/refused/).map((n) => n.body.endsWith(`\n${LIVE_KEPT}`))).toEqual([true]);
+  });
+
+  it("a video that may be live and misses the catch-up window is held, with the note", async () => {
+    await publishedUnread();
+    await run(at(7 * 3600));
+    expect(await job()).toMatchObject({ state: "held", videoId: "vid-1" });
+    expect(privacy()).toBe("public");
+    expect(notes(/held/).map((n) => n.body.endsWith(`\n${LIVE_KEPT}`))).toEqual([true]);
+  });
+
   it("a private video refused for a removed item gets no such note", async () => {
     await uploadAhead();
     await removeItem();

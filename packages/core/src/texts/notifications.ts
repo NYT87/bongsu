@@ -47,10 +47,10 @@ export const jobHeldLive = (key: string, reason: string, live: string): Note => 
   text: `${reason}${liveKept(live)}`,
   target: key,
 });
-export const jobHeld = (key: string, hours: number): Note => ({
+export const jobHeld = (key: string, hours: number, live?: string): Note => ({
   group: "needs_you",
   title: `${key}: held`,
-  text: `not published within ${hours} h of its time`,
+  text: `not published within ${hours} h of its time${liveKept(live)}`,
   target: key,
 });
 /** `video`: the job had uploaded a private video, which stays on the platform (never deleted on a failure): "kept"

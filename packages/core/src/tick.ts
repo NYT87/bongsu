@@ -1060,13 +1060,15 @@ async function stepAhead(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: St
     if (moved) await c.setJob(job.id, { payload: p, attempts: 0 });
     return;
   }
+  // a publishing call that went unanswered (retried here) may have made it public: the notes send the owner to check
+  const live = mayBeLive(job, p) ? await platformOf(c, p, job.workspace_id) : undefined;
   if (c.nowS - job.due_at > CATCH_UP_S) {
     await c.setJob(job.id, { state: "held", last_error: "missed the catch-up window", notified: true, payload: p });
-    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600), job.workspace_id);
+    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600, live), job.workspace_id);
     return;
   }
   const v = await verify(c, p, job.workspace_id, job.item_key);
-  if (v.problem) return refuse(c, job, v.problem, p);
+  if (v.problem) return refuse(c, job, v.problem, p, live);
   return publish(c, job, p, pr, step);
 }
 
