@@ -705,7 +705,7 @@ async function discard(c: Ctx, job: JobRow, p: Payload): Promise<{ payload: Payl
   return { payload, kept };
 }
 
-/** Deletes per run at most, in the sweep below: each costs a token refresh and a videos.delete, on top of what the
+/** Deletes per run at most, in the sweep below: each costs a token refresh, a videos.list and a videos.delete, on top of what the
  *  run's jobs spent of its subrequest budget; the rest go on the next runs. */
 const SWEEP_PER_RUN = 1;
 

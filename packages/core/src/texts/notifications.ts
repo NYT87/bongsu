@@ -84,12 +84,12 @@ export const youtubeLocked = (key: string): Note => ({
 });
 /** A job's earlier video, to be revised or replaced, isn't private any more (the owner published it by hand). */
 export const YOUTUBE_REPLACE_KEPT =
-  "the video uploaded earlier isn't private on YouTube any more (published by hand), so it was kept and nothing was " +
+  "the video uploaded earlier was published or scheduled by hand on YouTube, so it was kept and nothing was " +
   "uploaded: record it as posted, or delete it there and approve again";
 /** A removed item's video that isn't private any more (published by hand): never deleted. Only YouTube uploads
  *  leave a video to delete. */
 export const VIDEO_KEPT_PUBLIC =
-  "its video isn't private on YouTube any more (published by hand), so it was kept: delete it there if it should go";
+  "its video was published or scheduled by hand on YouTube, so it was kept: delete it there if it should go";
 /** The sweep found a removed item's video public (the refusal, if any, came earlier): sent once. */
 export const videoKept = (key: string): Note => ({
   group: "problems",

@@ -54,7 +54,7 @@ describe("notification builders", () => {
     expect(N.videoKept(KEY)).toEqual({
       group: "problems",
       title: `${KEY}: video kept`,
-      text: "removed from the plan; its video isn't private on YouTube any more (published by hand), so it was kept: delete it there if it should go",
+      text: "removed from the plan; its video was published or scheduled by hand on YouTube, so it was kept: delete it there if it should go",
       target: KEY,
     });
     expect(N.youtubeQuota()).toMatchObject({

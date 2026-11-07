@@ -290,13 +290,24 @@ describe("YouTube provider", () => {
     }
   });
 
+  it("a video scheduled by hand (private with a publishAt) is kept like a public one", async () => {
+    const { step } = await walk(await pr.start(post()));
+    w.ytVideos.get("vid-1")!.status.publishAt = "2099-11-05T09:00:00Z"; // Bongsu never sets one: the owner did
+    expect(await pr.discard(step)).toBe("kept");
+    expect(w.ytVideos.has("vid-1")).toBe(true);
+    const s = await pr.start(post({ media: [media("clip.mp4", "v2", true), media("es.srt", "s1")] }), step);
+    expect(s).toMatchObject({ state: "failed", data: { keptVideoId: "vid-1" } });
+    expect(w.ytVideos.get("vid-1")?.status.publishAt).toBe("2099-11-05T09:00:00Z");
+    expect(w.ytSessions.size).toBe(1);
+  });
+
   it("a new start never revises nor replaces a video published by hand", async () => {
     const { step } = await walk(await pr.start(post()));
     w.ytVideos.get("vid-1")!.status.privacyStatus = "public";
     for (const media2 of [post().media, [media("clip.mp4", "v2", true), media("es.srt", "s1")]]) {
       const s = await pr.start(post({ media: media2 }), step);
       expect(s).toMatchObject({ state: "failed", data: { keptVideoId: "vid-1" } });
-      expect(s.error).toContain("published by hand");
+      expect(s.error).toContain("published or scheduled by hand");
     }
     expect(w.ytVideos.get("vid-1")?.status.privacyStatus).toBe("public");
     expect(w.ytSessions.size).toBe(1);

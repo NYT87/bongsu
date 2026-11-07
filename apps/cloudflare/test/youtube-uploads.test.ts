@@ -483,9 +483,9 @@ const keptRows = async () =>
     }>()
   ).results.map((r) => ({ target: r.target, detail: JSON.parse(r.detail) }));
 const KEPT_PUBLIC =
-  "its video isn't private on YouTube any more (published by hand), so it was kept: delete it there if it should go";
+  "its video was published or scheduled by hand on YouTube, so it was kept: delete it there if it should go";
 const REPLACE_KEPT =
-  "the video uploaded earlier isn't private on YouTube any more (published by hand), so it was kept and nothing was uploaded";
+  "the video uploaded earlier was published or scheduled by hand on YouTube, so it was kept and nothing was uploaded";
 /** Counts YouTube's videos.list calls (a video's state) from here on. */
 function countVideoReads() {
   const calls = { n: 0 };

@@ -81,6 +81,10 @@ function metaOf(post: OutgoingPost, madeForKids: boolean, category: string): Vid
   };
 }
 
+/** The owner took the video over on YouTube: published it (public, unlisted) or scheduled it (a private video with a
+ *  `publishAt`, which Bongsu never sets: it makes its uploads public itself). Such a video is never deleted or replaced. */
+const byHand = (v: VideoState) => v.privacyStatus !== "private" || typeof v.status.publishAt === "string";
+
 export class YouTubeProvider implements Provider {
   readonly id = "youtube-data";
   readonly platform = "youtube";
@@ -114,8 +118,7 @@ export class YouTubeProvider implements Provider {
     // a video gone from YouTube is uploaded again
     const state = old?.videoId ? await this.yt.videoState(old.videoId) : null;
     if (old?.videoId && state) {
-      if (state.privacyStatus !== "private")
-        return { state: "failed", data: { keptVideoId: old.videoId }, error: YOUTUBE_REPLACE_KEPT };
+      if (byHand(state)) return { state: "failed", data: { keptVideoId: old.videoId }, error: YOUTUBE_REPLACE_KEPT };
       // the Data API sets a custom thumbnail but can't take one off: a thumbnail removed since replaces the video
       const thumbnailGone = !!old.thumbnailMd5 && !roles.thumbnail;
       if (old.videoChecksum === roles.video.checksum && !thumbnailGone)
@@ -326,7 +329,7 @@ export class YouTubeProvider implements Provider {
     return v;
   }
 
-  /** Deletes the uploaded video if it is still private; best effort. "gone" when it is gone now (deleted, or YouTube
+  /** Deletes the uploaded video if it is still private and unscheduled; best effort. "gone" when it is gone now (deleted, or YouTube
    *  no longer had it); "kept" when it isn't private (the owner published it by hand: a public video is never
    *  deleted); "failed" when there was none or a call failed. */
   async discard(step: Step): Promise<Discarded> {
@@ -335,7 +338,7 @@ export class YouTubeProvider implements Provider {
     try {
       const v = await this.yt.videoState(id);
       if (!v) return "gone";
-      if (v.privacyStatus !== "private") return "kept";
+      if (byHand(v)) return "kept";
       await this.yt.deleteVideo(id);
       return "gone";
     } catch {

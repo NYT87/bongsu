@@ -120,7 +120,7 @@ ready video stays private past its time and goes out after you resume, within th
 Approving again during the lead (a new title, new subtitles, a new thumbnail) **revises the same video in place**: only
 what changed is sent. A different video file replaces the upload instead: the old private video is deleted and the new
 one goes up. So does removing the thumbnail, since YouTube can't take a custom thumbnail off a video. A video you
-published by hand in the meantime is never revised (that would make it private again) nor replaced: the job fails with
+published or scheduled by hand in the meantime is never revised (that would make it private again) nor replaced: the job fails with
 a note and uploads nothing, so a second copy never goes out. Record it as posted, or delete it on YouTube and approve
 again. Instagram posts at the same time are never held up by a long upload: each run advances them first.
 
