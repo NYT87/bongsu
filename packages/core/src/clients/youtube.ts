@@ -1,4 +1,5 @@
 // YouTube Data API for the Shorts comments, with the channel's refresh token.
+import { SUBTITLE_MAX } from "../platforms/youtube";
 import { refreshToken } from "./google";
 
 const API = "https://www.googleapis.com/youtube/v3";
@@ -65,7 +66,7 @@ export function isoSeconds(d: string): number {
 /** Why a release date can't be moved: no such video, not a scheduled one, a time not in the future, too soon, or an hour another item of the channel holds. */
 export class ReleaseError extends Error {
   constructor(
-    public reason: "missing" | "not_scheduled" | "past" | "lead" | "conflict",
+    public reason: "missing" | "not_scheduled" | "past" | "lead" | "conflict" | "scope" | "earlier",
     message: string,
   ) {
     super(message);
@@ -489,7 +490,7 @@ export class YouTube {
     const parts = [
       enc.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n`),
       enc.encode(`--${boundary}\r\nContent-Type: application/octet-stream\r\n\r\n`),
-      new Uint8Array(await src.arrayBuffer()),
+      await readCapped(src, SUBTITLE_MAX, `the ${lang} subtitle file is over 5 MB`),
       enc.encode(`\r\n--${boundary}--`),
     ];
     const body = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
@@ -524,6 +525,36 @@ export class YouTube {
     });
     if (!r.ok && r.status !== 404) return this.refuse(r, "videos.delete");
   }
+}
+
+/** A response's body, refused past `max` bytes: by its Content-Length before reading, else as the bytes arrive, so
+ *  an oversized file is never held whole. */
+async function readCapped(r: Response, max: number, tooBig: string): Promise<Uint8Array> {
+  if (Number(r.headers.get("Content-Length") ?? 0) > max) {
+    await r.body?.cancel();
+    throw new Error(tooBig);
+  }
+  if (!r.body) return new Uint8Array(0);
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  const reader = r.body.getReader();
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    n += value.length;
+    if (n > max) {
+      await reader.cancel();
+      throw new Error(tooBig);
+    }
+    chunks.push(value);
+  }
+  const out = new Uint8Array(n);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
 }
 
 function snippetOf(m: VideoMeta) {

@@ -50,6 +50,8 @@ export class World {
       mimeType: string;
       trashed?: boolean;
       bytes?: string;
+      /** The size Drive reports, when it isn't the bytes' (a large file without its bytes). */
+      size?: number;
       name?: string;
       parent?: string;
       modified?: string;
@@ -57,7 +59,10 @@ export class World {
   >();
 
   /** Put a file at a Drive path under UPLOADS/ (folders created as needed); returns its id. */
-  drivePut(path: string, file: { md5: string; mimeType: string; bytes?: string; modified?: string }): string {
+  drivePut(
+    path: string,
+    file: { md5: string; mimeType: string; bytes?: string; size?: number; modified?: string },
+  ): string {
     const parts = path.split("/");
     let parent: string | undefined;
     for (const [i, name] of parts.entries()) {
@@ -302,7 +307,7 @@ export class World {
           name: f.name,
           mimeType: f.mimeType,
           md5Checksum: f.md5 || undefined,
-          size: String((f.bytes ?? "bytes").length),
+          size: String(f.size ?? (f.bytes ?? "bytes").length),
           modifiedTime: f.modified ?? "2026-10-01T00:00:00Z",
           parents: f.parent ? [f.parent] : [],
         }));
@@ -332,7 +337,7 @@ export class World {
         name: f.name,
         modifiedTime: f.modified ?? "2026-10-01T00:00:00Z",
         md5Checksum: f.md5,
-        size: String((f.bytes ?? "bytes").length),
+        size: String(f.size ?? (f.bytes ?? "bytes").length),
         mimeType: f.mimeType,
         trashed: !!f.trashed,
         parents: f.parent ? [f.parent] : [],

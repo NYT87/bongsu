@@ -26,7 +26,7 @@ import { mediaStores } from "./media/index";
 import { isMedia, isVideo, type MediaEntry, type MediaStore } from "./media/store";
 import { notifier } from "./notify";
 import { platform } from "./platforms/index";
-import { isSubtitle, THUMBNAIL, videoWithExtras } from "./platforms/youtube";
+import { isSubtitle, SUBTITLE_MAX, SUBTITLE_TOO_BIG, THUMBNAIL, videoWithExtras } from "./platforms/youtube";
 import { jsonList } from "./sql";
 import { newDrafts } from "./texts/notifications";
 import { workspaceSettings } from "./workspaces";
@@ -50,6 +50,8 @@ interface Item {
   stem: string | null;
   /** More translation languages were there than are read. */
   capped: boolean;
+  /** Subtitle files left out for their size (the draft's note names them). */
+  tooBig: string[];
 }
 
 /** Languages whose translation files are read per item: each costs two store reads. */
@@ -191,6 +193,7 @@ async function inboxItems(
         titles: inboxTextFiles(kids, s).files,
         stem: s,
         capped: false,
+        tooBig: [],
       });
     }
     for (const dir of kids.filter((k) => k.folder && !k.name.startsWith("_"))) {
@@ -200,7 +203,9 @@ async function inboxItems(
       const images = inner.filter((k) => isMedia(k));
       // subtitles and a thumbnail belong to a folder of exactly one video; anything else is a post as before
       const one = images.filter((k) => !THUMBNAIL.test(k.name)).length === 1 && images.some((k) => isVideo(k));
-      const media = (one ? [...images, ...inner.filter((k) => isSubtitle(k.name))] : images).sort((a, b) =>
+      const subs = one ? inner.filter((k) => isSubtitle(k.name)) : [];
+      // an oversized subtitle file is left out (approval would refuse it), and the draft says so
+      const media = [...images, ...subs.filter((k) => k.size <= SUBTITLE_MAX)].sort((a, b) =>
         a.name.localeCompare(b.name),
       );
       const text = inboxTextFiles(inner, null);
@@ -215,6 +220,7 @@ async function inboxItems(
         titles: text.files,
         stem: null,
         capped: text.capped,
+        tooBig: subs.filter((k) => k.size > SUBTITLE_MAX).map((k) => k.name),
       });
     }
   }
@@ -340,6 +346,7 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
     const { texts, partial } = readTexts(read, i.stem);
     const notes: string[] = [];
     if (i.capped) notes.push(`only the first ${MAX_TRANSLATIONS} translations were read`);
+    for (const name of i.tooBig) notes.push(`${SUBTITLE_TOO_BIG(name)}, so it was left out`);
     if (partial.length)
       notes.push(`${partial.map((c) => `${c}: needs both caption.${c}.txt and title.${c}.txt`).join("; ")}`);
     let checked: YouTubeTexts | null = null;

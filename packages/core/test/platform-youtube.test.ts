@@ -69,6 +69,13 @@ describe("youtube platform", () => {
     expect(() => mediaRoles([clip, e("b.mp4", "video/mp4")])).toThrow(/one video per post/);
   });
 
+  it("refuses a subtitle file over 5 MB", () => {
+    expect(() => mediaRoles([clip, e("es.srt", "application/x-subrip", 5242881)])).toThrow(
+      "es.srt is over 5 MB: a subtitle file can't be that large",
+    );
+    expect(mediaRoles([clip, e("es.vtt", "text/vtt", 5242880)]).subtitles).toHaveLength(1);
+  });
+
   it("links a short vertical video to shorts and the rest to watch", () => {
     expect(youtubePermalink("abc", 180, 1080, 1920)).toBe("https://youtube.com/shorts/abc");
     expect(youtubePermalink("abc", 181, 1080, 1920)).toBe("https://youtube.com/watch?v=abc");

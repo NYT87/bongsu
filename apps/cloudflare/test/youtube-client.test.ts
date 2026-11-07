@@ -122,7 +122,7 @@ describe("YouTube client uploads", () => {
     file("clip.mp4", 10);
     const session = await start(10);
     const failing = new YouTube(OAUTH, (async (input, init) => {
-      if (String(input).startsWith("https://files.example.com")) throw new TypeError("network down");
+      if (new URL(String(input)).host === "files.example.com") throw new TypeError("network down");
       return w.fetch(input, init);
     }) as typeof fetch);
     const putsBefore = w.ytPuts.length;
@@ -136,7 +136,7 @@ describe("YouTube client uploads", () => {
     file("clip.mp4", 100);
     const session = await start(100);
     const ignoring = new YouTube(OAUTH, (async (input, init) => {
-      if (String(input).startsWith("https://files.example.com"))
+      if (new URL(String(input)).host === "files.example.com")
         return new Response(w.ytFiles.get("clip.mp4"), { status: 200 });
       return w.fetch(input, init);
     }) as typeof fetch);
@@ -235,6 +235,38 @@ describe("YouTube client after the upload", () => {
     expect(w.ytVideos.has(id)).toBe(false);
     await expect(yt.deleteVideo(id)).resolves.toBeUndefined(); // 404 counts as done
     await expect(yt.videoState(id)).resolves.toBeNull();
+  });
+
+  it("a subtitle file over 5 MB is refused before it is held whole, with or without its length", async () => {
+    file("clip.mp4", 10);
+    const session = await start(10);
+    const id = (await yt.uploadFrom(session, SRC, 0, 10, { signal: AbortSignal.timeout(10_000) })).videoId as string;
+    const big = 5 * MIB + 1;
+    let pulled = 0;
+    const source = (withLength: boolean) =>
+      new YouTube(OAUTH, (async (input, init) => {
+        if (new URL(String(input)).host !== "files.example.com") return w.fetch(input, init);
+        pulled = 0;
+        // a stream of 1 MiB pieces, counting what is read of it
+        const body = new ReadableStream<Uint8Array>({
+          pull(ctl) {
+            if (pulled >= big) return ctl.close();
+            const n = Math.min(MIB, big - pulled);
+            pulled += n;
+            ctl.enqueue(new Uint8Array(n));
+          },
+        });
+        return new Response(body, { headers: withLength ? { "Content-Length": String(big) } : {} });
+      }) as typeof fetch);
+    const refused = "the es subtitle file is over 5 MB";
+    await expect(source(true).insertCaption(id, "es", "https://files.example.com/es.srt", "es")).rejects.toThrow(
+      refused,
+    );
+    expect(pulled).toBeLessThanOrEqual(MIB); // refused by its Content-Length, before reading it
+    await expect(source(false).insertCaption(id, "es", "https://files.example.com/es.srt", "es")).rejects.toThrow(
+      refused,
+    );
+    expect(w.ytVideos.get(id)?.captions.size).toBe(0);
   });
 
   it("the audit lock keeps an update private", async () => {

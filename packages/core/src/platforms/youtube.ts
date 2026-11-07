@@ -5,6 +5,9 @@ import { isVideo } from "../media/store";
 import { NO_FEATURES, NO_LINT, type Platform } from "./types";
 
 export const THUMBNAIL_MAX = 52428800;
+/** A subtitle file is sent to YouTube in one request, held whole in memory: a few MB is far more than any real one. */
+export const SUBTITLE_MAX = 5 * 1024 * 1024;
+export const SUBTITLE_TOO_BIG = (name: string) => `${name} is over 5 MB: a subtitle file can't be that large`;
 const DESCRIPTION_MAX = 5000;
 /** YouTube counts a video as a Short up to this long (and vertical). */
 const SHORT_MAX_S = 180;
@@ -81,6 +84,7 @@ export function mediaRoles<T>(entries: RoleEntry<T>[]): MediaRoles<T> {
     else if (sub && LANG.test(sub[1])) {
       if (subtitles.some((s) => s.lang === sub[1]))
         throw new MediaRolesError(`two subtitle files for ${sub[1]}: keep one`);
+      if (e.size > SUBTITLE_MAX) throw new MediaRolesError(SUBTITLE_TOO_BIG(e.name));
       subtitles.push({ lang: sub[1], ref: e.ref });
     } else if (THUMBNAIL.test(e.name)) {
       if (thumbnail !== undefined) throw new MediaRolesError("one thumbnail per video");

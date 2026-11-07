@@ -8,7 +8,7 @@ import { mediaPath } from "@bongsu/core/media/folders";
 import { type MediaStores, mediaStores } from "@bongsu/core/media/index";
 import { assertOwns, MediaError } from "@bongsu/core/media/owns";
 import { isMedia, isVideo } from "@bongsu/core/media/store";
-import { isSubtitle, videoWithExtras } from "@bongsu/core/platforms/youtube";
+import { isSubtitle, SUBTITLE_MAX, SUBTITLE_TOO_BIG, videoWithExtras } from "@bongsu/core/platforms/youtube";
 import { workspaceSettings } from "@bongsu/core/workspaces";
 
 /** Where the app's uploads land: the workspace's folder, `_uploads` (the inbox scan skips `_` folders). */
@@ -57,6 +57,7 @@ export async function startUpload(
   if (!name || !(isMedia({ mime }) || sub))
     throw new UploadError(400, "only images, videos and subtitle files (<lang>.srt or .vtt)");
   if (!Number.isFinite(size) || size <= 0 || size > 1024 ** 3) throw new UploadError(400, "size: up to 1 GB");
+  if (sub && size > SUBTITLE_MAX) throw new UploadError(400, SUBTITLE_TOO_BIG(name));
   const store = uploadStore(await mediaStores(env, fetcher, workspaceId), b.store);
   const folder = appUploads((await workspaceSettings(env.DB, workspaceId)).mediaFolder);
   const t = await store.createUpload!(name, folder, mime, env.PUBLIC_URL.replace(/\/$/, ""));
@@ -105,6 +106,8 @@ export async function draftFromUploads(
     const m = await store.stat(id);
     if (!m || !folder || m.parent !== folder.id || !(isMedia(m) || isSubtitle(m.name)))
       throw new UploadError(400, `${id} isn't an upload of this app`);
+    // the size the browser announced isn't the file's: the store's is
+    if (isSubtitle(m.name) && m.size > SUBTITLE_MAX) throw new UploadError(400, SUBTITLE_TOO_BIG(m.name));
     files.push({ store: store.id, id: m.id, name: m.name, mime: m.mime, checksum: m.checksum });
   }
   const known = await env.DB.prepare(

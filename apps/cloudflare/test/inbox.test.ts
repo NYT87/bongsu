@@ -143,6 +143,17 @@ describe("the Drive inbox", () => {
     expect(p.note).toMatch(/language: YouTube needs the video's own language with translations/);
   });
 
+  it("a subtitle file over 5 MB is left out of the draft, which says so", async () => {
+    const P = "UPLOADS/inbox/demo/clip9";
+    w.drivePut(`${P}/clip.mp4`, { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    w.drivePut(`${P}/es.srt`, { md5: "s", mimeType: "application/x-subrip", modified: OLD });
+    w.drivePut(`${P}/de.srt`, { md5: "g", mimeType: "application/x-subrip", size: 5242881, modified: OLD });
+    const { d } = await yt();
+    const p = JSON.parse(d.results[0].payload);
+    expect(p.files.map((f: { name: string }) => f.name)).toEqual(["clip.mp4", "es.srt"]);
+    expect(p.note).toContain("de.srt is over 5 MB: a subtitle file can't be that large, so it was left out");
+  });
+
   it("a translation needs both files", async () => {
     const P = "UPLOADS/inbox/demo/clip2";
     w.drivePut(`${P}/clip.mp4`, { md5: MD5, mimeType: "video/mp4", modified: OLD });

@@ -220,6 +220,18 @@ describe("scheduling a draft to a YouTube channel", () => {
       "es.srt",
       "thumbnail.jpg",
     ]);
+    // a subtitle file over 5 MB is refused, at the start and when the draft is made (the store's size counts)
+    const big = await post("/app-api/uploads/start", { name: "de.srt", mimeType: "", size: 5242881 });
+    expect(big.status).toBe(400);
+    expect(await json(big)).toEqual({ error: "de.srt is over 5 MB: a subtitle file can't be that large" });
+    const huge = w.drivePut("UPLOADS/_uploads/de.srt", {
+      md5: "e".repeat(32),
+      mimeType: "application/x-subrip",
+      size: 5242881,
+    });
+    const refused = await post("/app-api/drafts/new", { files: [files[0], huge], project: "demo", name: "big" });
+    expect(refused.status).toBe(400);
+    expect(await json(refused)).toEqual({ error: "de.srt is over 5 MB: a subtitle file can't be that large" });
     // a subtitle file alone is no draft
     const lone = w.drivePut("UPLOADS/_uploads/fr.srt", { md5: "d".repeat(32), mimeType: "application/x-subrip" });
     expect((await post("/app-api/drafts/new", { files: [lone], project: "demo", name: "x" })).status).toBe(400);
