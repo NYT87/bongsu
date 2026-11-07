@@ -130,7 +130,8 @@ export async function scheduleDraft(
   const story = b.format === "story";
   if (story && media.length !== 1) throw new ScheduleError(400, "a Story is one image or one video");
   const caption = story ? null : text(b.caption, plat.limits.captionMax);
-  // a YouTube video's description is optional: it may have none, and only its title is asked for (at approval)
+  // a YouTube video's description may be empty here (a draft is scheduled before it's written), but approval asks
+  // for a non-empty one, as for any caption
   if (!story && !caption && !tube) throw new ScheduleError(400, "a caption is needed");
   const project = String(p.folder ?? "drafts");
   const name = String(b.name ?? p.name ?? id);

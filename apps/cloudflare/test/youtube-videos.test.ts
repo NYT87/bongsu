@@ -266,6 +266,18 @@ describe("one video, one place", () => {
     expect(approved?.dueAt).toBe(DUE);
     expect(approved?.dueAt).not.toBe(asked);
     expect(w.ytUpdates).toEqual([]);
+    // who moved it is recorded on the item, as plan_update records it
+    const by = () => env.DB.prepare("SELECT updated_by, hold FROM plan_items WHERE item_key = ?1").bind(KEY).first();
+    expect(await by()).toEqual({ updated_by: "owner@app", hold: 0 });
+    await moveRelease(e, w.fetch, {
+      workspaceId: "default",
+      videoId: "vid-1",
+      at: asked + 2 * HOUR,
+      nowS: Math.floor(Date.now() / 1000),
+      tz: "Asia/Seoul",
+      actor: { kind: "key", id: "k1", name: "planner" },
+    });
+    expect(await by()).toEqual({ updated_by: "k1", hold: 0 });
   });
 
   it("a release move into an hour another item of the channel holds is a 409 and changes nothing", async () => {

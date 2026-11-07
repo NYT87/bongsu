@@ -164,6 +164,22 @@ describe("texts for a YouTube channel", () => {
     expect((await api("/v1/plan/update", { key: ig.json.key, caption: "c".repeat(2201) })).status).toBe(400);
   });
 
+  it("texts for an account on an unknown platform are refused, not dropped", async () => {
+    const key = (await add({ caption: "Before" })).json.key as string;
+    await env.DB.prepare("UPDATE accounts SET platform = 'elsewhere' WHERE id = 'main'").run();
+    try {
+      const u = await api("/v1/plan/update", { key, caption: "After" });
+      expect(u.status).toBe(400);
+      expect(u.json.error).toBe("main: unknown platform");
+      expect((await stored(key))?.caption).toBe("Before");
+      // a move or a hold needs no platform
+      expect((await api("/v1/plan/update", { key, hold: true })).status).toBe(200);
+    } finally {
+      // the accounts outlive the test: the next ones need the channel back
+      await env.DB.prepare("UPDATE accounts SET platform = 'youtube' WHERE id = 'main'").run();
+    }
+  });
+
   it("YouTube options are validated", async () => {
     expect((await add({ options: { privacy: "private" } })).status).toBe(400);
     const ok = await add({ options: { privacy: "unlisted", madeForKids: true, category: "10" } });

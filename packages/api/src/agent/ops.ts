@@ -944,7 +944,9 @@ export async function planUpdate(c: OpCtx, b: Record<string, unknown>) {
   const acc = await findAccount(c.env.DB, i.account, c.caller.workspaceId);
   const plat = acc && platform(acc.platform);
   if (plat) next.options = JSON.stringify(askedOptions(b, plat, i.format ?? null, itemOptions(i)));
-  else if (b.options !== undefined || "location" in b) throw new ApiError(400, `${i.account}: unknown platform`);
+  // no platform: no options and no texts (no limits to check them by; dropping them would still answer 200)
+  else if (b.options !== undefined || "location" in b || TEXT_FIELDS.some((f) => f in b))
+    throw new ApiError(400, `${i.account}: unknown platform`);
   if ("note" in b) next.note = b.note ? String(b.note).slice(0, 1000) : null;
   const video = plat && "texts" in b ? checkOrFail(plat, b.texts) : undefined;
   if (next.due_at !== null && next.due_at !== i.due_at && i.format !== "story") {

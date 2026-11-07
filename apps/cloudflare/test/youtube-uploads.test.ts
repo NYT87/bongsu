@@ -591,6 +591,27 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
     expect(await deletedRows()).toHaveLength(1);
   });
 
+  it("a run that advanced its full share of jobs leaves the sweep for a later one", async () => {
+    await uploadAhead();
+    await env.DB.prepare("UPDATE plan_items SET due_at = ?1 WHERE item_key = ?2")
+      .bind(await localToUnix("2026-10-20", "19:00"), KEY)
+      .run();
+    await run(at(-3600));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    await removeItem();
+    await setup({ JOBS_PER_TICK: "1" });
+    const { key: reel } = await seedReel(w, { time: "18:05" });
+    igHappyPath(w);
+    const deletes = countDeletes();
+    await run(at(360)); // the Reel takes the run's one job
+    expect((await job(reel))?.state).toBe("container_created");
+    expect(deletes.n).toBe(0);
+    await setup();
+    await run(at(660));
+    expect(deletes.n).toBe(1);
+    expect(w.ytVideos.has("vid-1")).toBe(false);
+  });
+
   it("a failed job's video is deleted once its item is removed", async () => {
     await uploadAhead();
     w.ytKeepPrivate = true;

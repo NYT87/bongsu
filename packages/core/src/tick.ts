@@ -283,7 +283,8 @@ export async function tick(
         await discover(c, a);
     const active = await activeJobs(c, accounts);
     for (const job of active) await advance(c, job);
-    await sweepRemoved(c);
+    // a full run has spent its subrequests on the jobs: the sweep waits for a quieter one
+    if (active.length < jobsPerTick(env)) await sweepRemoved(c);
     return {
       status: "ok",
       detail: { part, advanced: active.length, held: [...c.held.keys()], dry_run: c.dry },
@@ -596,7 +597,7 @@ async function recheck(c: Ctx, job: JobRow, p: Payload): Promise<Recheck | null>
   }
   if (item.account !== p.username)
     return { state: "refused", reason: `planned for ${item.account} now, approved for ${p.username}: approve again` };
-  const a = p.username ? await findAccount(c.env.DB, p.username, job.workspace_id) : null;
+  const a = await c.account(p, job.workspace_id);
   if (p.username && a?.status !== "active") return { state: "refused", reason: `${p.username} is disabled` };
   return null;
 }
@@ -629,9 +630,9 @@ async function discard(c: Ctx, job: JobRow, p: Payload): Promise<Payload> {
   return { ...p, step: { ...step, data } };
 }
 
-/** Deletes per run at most, in the sweep below: each costs a token refresh and a videos.delete, within the run's
- *  subrequest budget; the rest go on the next runs. */
-const SWEEP_PER_RUN = 3;
+/** Deletes per run at most, in the sweep below: each costs a token refresh and a videos.delete, on top of what the
+ *  run's jobs spent of its subrequest budget; the rest go on the next runs. */
+const SWEEP_PER_RUN = 1;
 
 /**
  * A private video left by a job that is no longer active (refused, held or failed, keeping its video for a new

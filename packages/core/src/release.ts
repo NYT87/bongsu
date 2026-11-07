@@ -70,8 +70,12 @@ async function moveItem(env: Env, req: ReleaseRequest, itemKey: string) {
       `${slotMessage(item.account, taken, req.tz)}${free.length ? ` (free: ${free.map((f) => `${f.date} ${f.time}`).join(", ")})` : ""}`,
     );
   }
-  await env.DB.prepare("UPDATE plan_items SET due_at = ?1, updated_at = ?2 WHERE item_key = ?3 AND workspace_id = ?4")
-    .bind(req.at, req.nowS, itemKey, req.workspaceId)
+  // who moved it, as the app (owner@app) and plan_update (the key's id) record it; the hold is left as it is
+  const by = req.actor.kind === "owner" ? "owner@app" : req.actor.id;
+  await env.DB.prepare(
+    "UPDATE plan_items SET due_at = ?1, updated_at = ?2, updated_by = ?5 WHERE item_key = ?3 AND workspace_id = ?4",
+  )
+    .bind(req.at, req.nowS, itemKey, req.workspaceId, by)
     .run();
   return {
     account: item.account,
