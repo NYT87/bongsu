@@ -5,6 +5,7 @@
 // revoked grant, a token past its expiry), and notifies once: the usual channels, plus an email to the workspace's
 // owners and admins when a Mailer is set (core/mail.ts).
 import type { Connection } from "../accounts";
+import { BudgetSpent, canAfford, type StepDeps } from "../budget";
 import { encryptSecret } from "../crypto";
 import type { Env } from "../env";
 import { mailer, workspaceAdmins } from "../mail";
@@ -14,6 +15,8 @@ import { providerRegistration } from "./index";
 import { ConnectionBroken } from "./types";
 
 export const RENEW_EVERY_S = 7 * 86400;
+/** The most calls one connection's renewal makes: Instagram's token refresh, or Google's. */
+const CONNECTIONS_UNIT_CALLS = 1;
 /** Renew sooner when the credentials run out within this. */
 const RENEW_BEFORE_S = 10 * 86400;
 
@@ -31,10 +34,7 @@ interface Row {
   last_checked_at: number | null;
 }
 
-export async function refreshConnections(
-  env: Env,
-  deps: { fetch: typeof fetch; now: Date },
-): Promise<{ renewed: string[]; failed: string[] }> {
+export async function refreshConnections(env: Env, deps: StepDeps): Promise<{ renewed: string[]; failed: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const rows = await env.DB.prepare(
     `SELECT id, workspace_id, provider, kind, label, external_ref, credentials, secret_name, status, expires_at,
@@ -51,6 +51,8 @@ export async function refreshConnections(
       r.last_checked_at <= nowS - every ||
       (r.expires_at !== null && r.expires_at <= nowS + RENEW_BEFORE_S);
     if (!due) continue;
+    // out of calls for this run: the rest are still due next run
+    if (!canAfford(deps, CONNECTIONS_UNIT_CALLS)) break;
     const c: Connection = {
       id: r.id,
       workspaceId: r.workspace_id,
@@ -76,6 +78,8 @@ export async function refreshConnections(
       out.renewed.push(r.id);
       continue;
     } catch (e) {
+      // the run's calls, not the connection, ran out: it stays as it is, and the problems found so far are still told
+      if (e instanceof BudgetSpent) break;
       error = (e as Error).message.slice(0, 300);
       broken = e instanceof ConnectionBroken;
     }

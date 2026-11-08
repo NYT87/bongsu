@@ -3,6 +3,7 @@
 // default) matches that minute, so the two runtimes can't drift.
 
 import { sampleAccounts } from "./account-metrics";
+import { recordRun, runBudget, runSubrequests, type StepDeps } from "./budget";
 import { cleanMedia } from "./cleanup";
 import { pollComments } from "./comments";
 import { CRON_INSTAGRAM, CRON_SHORTS, CRON_UPKEEP } from "./constants";
@@ -122,37 +123,57 @@ export async function runSchedule(
   at: Date,
   gapS: number,
 ): Promise<void> {
-  const deps = { fetch: fetcher, now: at };
-  if (name === "upkeep") {
-    // The inbox in each workspace's media folder, a few workspaces a run (drafts only: nothing is published), moving
-    // posted media aside, the daily digest, the 24 h results and new comments; runs while paused too (none of it
-    // publishes). Its lock is `upkeep`: a leftover `inbox` lock from before the rename expires on its own.
-    const nowS = Math.floor(at.getTime() / 1000),
-      holder = crypto.randomUUID();
-    if (!(await acquire(env.DB, "upkeep", holder, nowS, 600))) return console.log("upkeep: locked");
-    try {
-      console.log(`upkeep: inbox ${JSON.stringify(await scanInbox(env, deps))}`);
-      console.log(`upkeep: cleanup ${JSON.stringify(await cleanMedia(env, deps))}`); // posted media → <folder>/_posted/ (move only)
-      console.log(`upkeep: digest ${await dailyDigest(env, deps)}`); // once a day, at the workspace's digest hour
-      // Each in its own try: one failing (a Composio or YouTube hiccup) doesn't stop the others.
-      for (const [step, run] of [
-        ["results", postResults],
-        ["metrics", sampleMetrics],
-        ["accounts", sampleAccounts], // each account's followers, once a day
-        ["comments", pollComments],
-        ["connections", refreshConnections], // Instagram tokens renewed weekly
-        ["media stores", checkStores], // each store still answers, weekly
-      ] as const) {
-        try {
-          console.log(`upkeep: ${step} ${JSON.stringify(await run(env, deps))}`);
-        } catch (e) {
-          console.log(`upkeep: ${step} failed: ${(e as Error).message}`);
-        }
+  if (name === "upkeep") return runUpkeep(env, fetcher, at);
+  console.log(`${name}: ${JSON.stringify(await tick(env, { fetch: fetcher, now: at, intervalS: gapS }, name))}`);
+}
+
+/** The upkeep steps, in order: the inbox in each workspace's media folder, a few workspaces a run (drafts only:
+ *  nothing is published), moving posted media aside, the daily digest, the 24 h results, the metrics, the followers,
+ *  new comments, the connections and the media stores. */
+export const UPKEEP_STEPS: readonly (readonly [string, (env: Env, deps: StepDeps) => Promise<unknown>])[] = [
+  ["inbox", scanInbox],
+  ["cleanup", cleanMedia], // posted media → <folder>/_posted/ (move only)
+  ["digest", dailyDigest], // once a day, at the workspace's digest hour
+  ["results", postResults],
+  ["metrics", sampleMetrics],
+  ["accounts", sampleAccounts], // each account's followers, once a day
+  ["comments", pollComments],
+  ["connections", refreshConnections], // Instagram tokens renewed weekly
+  ["media stores", checkStores], // each store still answers, weekly
+];
+
+/** The upkeep run: runs while paused too (none of it publishes). Its lock is `upkeep`: a leftover `inbox` lock from
+ *  before the rename expires on its own. The steps share the run's calls (RUN_SUBREQUESTS) by fair share, and each
+ *  runs in its own try: one failing (a Composio or YouTube hiccup, or a BudgetSpent past its share) doesn't stop the
+ *  others. */
+export async function runUpkeep(
+  env: Env,
+  fetcher: typeof fetch,
+  at: Date,
+  steps: typeof UPKEEP_STEPS = UPKEEP_STEPS,
+): Promise<void> {
+  const nowS = Math.floor(at.getTime() / 1000),
+    holder = crypto.randomUUID();
+  if (!(await acquire(env.DB, "upkeep", holder, nowS, 600))) return console.log("upkeep: locked");
+  const limit = runSubrequests(env);
+  const calls = runBudget(limit.value, fetcher);
+  try {
+    for (const [i, [step, run]] of steps.entries()) {
+      // made only when the step starts, so its share counts what the steps before it left
+      const budget = calls.step(step, steps.length - i);
+      try {
+        const out = await run(env, { fetch: budget.fetch, now: at, budget });
+        const stopped = calls.stopped().includes(step) ? " (stopped: out of calls for this run)" : "";
+        console.log(`upkeep: ${step} ${typeof out === "string" ? out : JSON.stringify(out)}${stopped}`);
+      } catch (e) {
+        console.log(`upkeep: ${step} failed: ${(e as Error).message}`);
       }
+    }
+  } finally {
+    try {
+      await recordRun(env.DB, "upkeep", nowS, calls, limit.invalid);
     } finally {
       await release(env.DB, "upkeep", holder);
     }
-    return;
   }
-  console.log(`${name}: ${JSON.stringify(await tick(env, { ...deps, intervalS: gapS }, name))}`);
 }

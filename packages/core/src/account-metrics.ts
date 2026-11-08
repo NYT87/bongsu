@@ -3,6 +3,7 @@
 // nightly snapshots (imported from the earlier collector) backfill it once per workspace, so the channel page's
 // chart starts with their history.
 import { type Account, listAccounts } from "./accounts";
+import { BudgetSpent, canAfford, type StepDeps } from "./budget";
 import {
   ACCOUNT_BACKFILL_PER_RUN,
   ACCOUNT_METRICS_S,
@@ -19,6 +20,8 @@ import { callerZone } from "./workspaces";
 
 const FAILED = "account_metrics_failed:";
 const BACKFILLED = "account_metrics_backfill:";
+/** The most calls one account's count makes: a YouTube token and channels.list; Instagram's is one. */
+const ACCOUNTS_UNIT_CALLS = 2;
 
 /** An account's follower (or subscriber) count now; null when the platform hides it. */
 async function followersOf(env: Env, fetcher: typeof fetch, a: Account): Promise<number | null> {
@@ -111,10 +114,7 @@ async function backfill(env: Env, nowS: number): Promise<number> {
  * stamped and waits METRICS_DENSE_S, so a broken connection doesn't hold up the others; ACCOUNTS_ATTEMPTS_PER_RUN
  * bounds the calls a run makes.
  */
-export async function sampleAccounts(
-  env: Env,
-  deps: { fetch: typeof fetch; now: Date },
-): Promise<{ sampled: string[]; backfilled: number }> {
+export async function sampleAccounts(env: Env, deps: StepDeps): Promise<{ sampled: string[]; backfilled: number }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const backfilled = await backfill(env, nowS);
   await env.DB.prepare("DELETE FROM settings WHERE key LIKE ?1 AND updated_at < ?2")
@@ -154,6 +154,8 @@ export async function sampleAccounts(
   let attempts = 0;
   for (const { a } of due) {
     if (sampled.length >= ACCOUNTS_PER_RUN || attempts >= ACCOUNTS_ATTEMPTS_PER_RUN) break;
+    // out of calls for this run: the rest are still due next run
+    if (!canAfford(deps, ACCOUNTS_UNIT_CALLS)) break;
     attempts++;
     try {
       const followers = await followersOf(env, deps.fetch, a);
@@ -168,6 +170,8 @@ export async function sampleAccounts(
           .run();
       sampled.push(a.id);
     } catch (e) {
+      // the run's calls ran out, not the account: no failure stamped
+      if (e instanceof BudgetSpent) break;
       console.log(`accounts ${a.id}: ${(e as Error).message}`);
       await env.DB.prepare(
         "INSERT INTO settings (key, value, updated_at) VALUES (?1, '1', ?2) ON CONFLICT (key) DO UPDATE SET updated_at = excluded.updated_at",

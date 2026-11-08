@@ -3,6 +3,7 @@
 // of starving the steps after it; what it leaves unspent goes back to the shares of the later steps.
 
 import { RUN_SUBREQUESTS, RUN_SUBREQUESTS_MAX, RUN_SUBREQUESTS_MIN, SUBREQUESTS_KEPT } from "./constants";
+import type { Db } from "./db";
 import type { Env } from "./env";
 
 export class BudgetSpent extends Error {
@@ -34,6 +35,17 @@ export interface StepBudget {
   canAfford(n: number): boolean;
   used(): number;
 }
+
+/** What an upkeep step is given: the step's own fetch and its budget. A direct caller (a route, a test) passes no
+ *  budget: no limit but the step's own caps. */
+export interface StepDeps {
+  fetch: typeof fetch;
+  now: Date;
+  budget?: StepBudget;
+}
+
+/** Whether the step can spend `n` more calls on its next unit of work (no budget: always). */
+export const canAfford = (deps: Pick<StepDeps, "budget">, n: number): boolean => deps.budget?.canAfford(n) ?? true;
 
 export interface RunCalls {
   fetch: typeof fetch;
@@ -95,4 +107,16 @@ export function runBudget(limit: number, fetcher: typeof fetch): RunCalls {
     },
   };
   return run;
+}
+
+/** What a run spent of its calls (`run_last:<name>`), for the dashboard: the variable lives on the cron side, not the
+ *  API's, so a RUN_SUBREQUESTS it refused (`invalid`) is told there too. An unlimited run's limit is the word: JSON has
+ *  no Infinity. */
+export async function recordRun(db: Db, name: string, nowS: number, calls: RunCalls, invalid: string | null) {
+  const limit = Number.isFinite(calls.limit) ? calls.limit : "unlimited";
+  const value = { at: nowS, used: calls.used(), limit, stopped: calls.stopped(), invalid };
+  await db
+    .prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
+    .bind(`run_last:${name}`, JSON.stringify(value))
+    .run();
 }

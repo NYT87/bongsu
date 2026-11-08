@@ -4,6 +4,7 @@
 // (src/app/routes.ts → replyToComment).
 
 import { ARCHIVED, findAccount, listAccounts } from "./accounts";
+import { BudgetSpent, canAfford, type StepDeps } from "./budget";
 import type { Env } from "./env";
 import { notifier } from "./notify";
 import { providerFor } from "./providers/index";
@@ -12,6 +13,9 @@ import { newComments } from "./texts/notifications";
 
 const WINDOW_S = 14 * 86400;
 const PER_RUN = 4;
+/** The most calls one video's check makes: a YouTube token, the channel's id (once per channel) and the comments; an
+ *  Instagram post's is one. */
+const COMMENTS_UNIT_CALLS = 3;
 
 interface Poll {
   media_id: string;
@@ -24,10 +28,7 @@ type Found = { id: string; author: string; text: string; at: number; own: boolea
 
 const unix = (iso: string) => Math.floor(Date.parse(iso.replace(/([+-]\d\d)(\d\d)$/, "$1:$2")) / 1000);
 
-export async function pollComments(
-  env: Env,
-  deps: { fetch: typeof fetch; now: Date },
-): Promise<{ checked: number; fresh: number }> {
+export async function pollComments(env: Env, deps: StepDeps): Promise<{ checked: number; fresh: number }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const since = nowS - WINDOW_S;
   // What to watch: posts and commented Shorts from the last 14 days (new ones join with checked_at 0, so first).
@@ -57,6 +58,8 @@ export async function pollComments(
   const accounts = new Map((await listAccounts(env.DB, { all: true, working: true })).map((a) => [a.id, a]));
   const fresh: { who: string; text: string; item: string | null; workspaceId: string }[] = [];
   for (const p of polls.results) {
+    // out of calls for this run: the rest, checked least recently, come first next run
+    if (!canAfford(deps, COMMENTS_UNIT_CALLS)) break;
     let found: Found[] = [];
     try {
       if (p.platform === "ig") {
@@ -87,6 +90,8 @@ export async function pollComments(
         }));
       }
     } catch (e) {
+      // the run's calls ran out: this post isn't marked checked, and what was found so far is still told
+      if (e instanceof BudgetSpent) break;
       console.log(`comments ${p.media_id}: ${(e as Error).message}`);
     }
     for (const c of found) {

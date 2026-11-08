@@ -1,6 +1,7 @@
 // Post metrics: the schedule rule and the series math (pure), then the sampler that takes the samples (database and
 // providers, run by the inbox cron).
 import { type Account, workingAccounts } from "./accounts";
+import { BudgetSpent, canAfford, type StepDeps } from "./budget";
 import { channelUploads, YT_TTL_S } from "./calendar";
 import type { Upload } from "./clients/youtube";
 import {
@@ -30,6 +31,11 @@ const NO_FOLLOWS = "metrics_nofollows:";
 /** Analytics publishes a video's numbers a day or more late: before this age a missing row is "not yet", after it
  *  "none gained". */
 const ANALYTICS_LAG_S = 72 * 3600;
+/** The most calls one post's sample makes: a channel's first due video costs a token, videos.list and the Analytics
+ *  query (the channel's other videos then cost none); an Instagram post's insights and their retry, two. */
+const METRICS_UNIT_CALLS = 3;
+/** The calls one refresh of a channel's uploads list makes: a token, channels, playlistItems and videos.list. */
+const METRICS_REFRESH_CALLS = 4;
 
 /** A post's insights, with the follow metrics when the media type has them: one call for all; when Instagram refuses
  *  the metrics ("metric[n] must be one of …", a 400 that names them), one retry without them, so an older post or an
@@ -274,7 +280,7 @@ async function stampFailure(env: Env, itemKeys: string[], nowS: number) {
  * METRICS_REFRESH_PER_RUN oldest are refreshed, the rest keep their cached list (if any) until a later run, so a
  * workspace with many channels doesn't refresh them all at once.
  */
-async function uploadLists(env: Env, deps: { fetch: typeof fetch }, nowS: number) {
+async function uploadLists(env: Env, deps: StepDeps, nowS: number) {
   const cached = await settingsLike(env, "yt_uploads:");
   // an archived workspace stops completely: its channels aren't read
   const accounts = await workingAccounts(env.DB, "youtube");
@@ -290,7 +296,8 @@ async function uploadLists(env: Env, deps: { fetch: typeof fetch }, nowS: number
   for (const account of accounts) {
     const c = cached.get(account.id);
     let uploads = c ? (JSON.parse(c.value) as Upload[]) : null;
-    if (refresh.has(account.id)) {
+    // out of calls for this run: the cached list, if any, serves until a later run refreshes it
+    if (refresh.has(account.id) && canAfford(deps, METRICS_REFRESH_CALLS)) {
       try {
         uploads = await channelUploads(env, deps.fetch, account, true, nowS);
       } catch (e) {
@@ -309,10 +316,7 @@ async function uploadLists(env: Env, deps: { fetch: typeof fetch }, nowS: number
  * interval and ranks behind the others, so a few broken posts can't take every run's attempts; one failure of an
  * account (or channel) ends its turn for the run.
  */
-export async function sampleMetrics(
-  env: Env,
-  deps: { fetch: typeof fetch; now: Date },
-): Promise<{ sampled: string[] }> {
+export async function sampleMetrics(env: Env, deps: StepDeps): Promise<{ sampled: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
   // a stamp older than the sampling stop belongs to a post past sampling: no success would ever clear it
   await env.DB.prepare("DELETE FROM settings WHERE (key LIKE ?1 OR key LIKE ?2) AND updated_at < ?3")
@@ -413,6 +417,7 @@ export async function sampleMetrics(
             // loses its first (Pacific) day; days before an upload count nothing anyway
             subs = await pr.subscribers(ids, day(Math.min(...mine.map((d) => d.publishedAt)) - 86400), day(nowS));
           } catch (e) {
+            if (e instanceof BudgetSpent) throw e; // a sample without its subscribers would stay that way
             console.log(`metrics ${c.account.id}: ${(e as Error).message}`); // the counts still get sampled
           }
         }
@@ -428,6 +433,8 @@ export async function sampleMetrics(
         return out;
       });
       p = p.catch((e: Error) => {
+        // the run's calls ran out, not the channel: its videos aren't stamped as failed
+        if (e instanceof BudgetSpent) throw e;
         console.log(`metrics ${c.account.id}: ${e.message}`);
         return null;
       });
@@ -446,6 +453,10 @@ export async function sampleMetrics(
   for (const c of due) {
     if (sampled.length >= METRICS_PER_RUN || attempts >= METRICS_ATTEMPTS_PER_RUN) break;
     if (failedAccounts.has(c.account.id)) continue;
+    // a channel's statistics, once asked, serve its other videos for free
+    const cost = c.account.platform === "youtube" && stats.has(c.account.id) ? 0 : METRICS_UNIT_CALLS;
+    // out of calls for this run: the rest, oldest due first, come first next run
+    if (cost && !canAfford(deps, cost)) break;
     attempts++;
     try {
       if (c.account.platform === "youtube") {
@@ -481,6 +492,7 @@ export async function sampleMetrics(
           .bind(FAILED + c.itemKey)
           .run();
     } catch (e) {
+      if (e instanceof BudgetSpent) break; // no failure stamped: the post is tried again next run
       failedAccounts.add(c.account.id);
       await fail(c, (e as Error).message);
     }

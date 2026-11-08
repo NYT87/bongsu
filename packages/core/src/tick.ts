@@ -21,7 +21,7 @@
 // dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
 
 import { type Account, findAccount, listAccounts } from "./accounts";
-import { BudgetSpent, type RunCalls, runBudget, runSubrequests } from "./budget";
+import { BudgetSpent, type RunCalls, recordRun, runBudget, runSubrequests } from "./budget";
 import { QuotaExceeded, SessionGone } from "./clients/youtube";
 import {
   AUDIT_KEEP_S,
@@ -334,22 +334,11 @@ export async function tick(
     };
   } finally {
     try {
-      await recordRun(env, part, nowS, run.calls, run.invalid);
+      await recordRun(env.DB, part, nowS, run.calls, run.invalid); // the tick runs no budget steps: none stopped
     } finally {
       await release(env.DB, lock, holder);
     }
   }
-}
-
-/** What the run spent of its calls (`run_last:<part>`), for the dashboard: the variable lives on this Worker, not the
- *  API's, so a RUN_SUBREQUESTS it refused (`invalid`) is told there too. An unlimited run's limit is the word: JSON has
- *  no Infinity. The tick runs no budget steps, so none stopped. */
-async function recordRun(env: Env, part: Part, nowS: number, calls: RunCalls, invalid: string | null) {
-  const limit = Number.isFinite(calls.limit) ? calls.limit : "unlimited";
-  const value = { at: nowS, used: calls.used(), limit, stopped: calls.stopped(), invalid };
-  await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
-    .bind(`run_last:${part}`, JSON.stringify(value))
-    .run();
 }
 
 /** The jobs this run advances: those due within their platform's lead, in three groups, each in due order: the
