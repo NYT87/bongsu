@@ -62,7 +62,7 @@ const MAX_TRANSLATIONS = 5;
 export const INBOX_READ_BUDGET = 30;
 /** The calls a workspace's look at its inbox makes at the least (a Drive token, the inbox folder's listing and one
  *  project's): a workspace isn't started without them in the run's share; listing more projects may stop on it. */
-const INBOX_UNIT_CALLS = 3;
+export const INBOX_UNIT_CALLS = 3;
 
 const TEXT_FILE = /^(caption|title)\.([^.]+(?:\.[^.]+)*)\.txt$/;
 /** The language code in a translation file's name, or "" when it isn't one. */

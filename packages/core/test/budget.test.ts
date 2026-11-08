@@ -26,30 +26,35 @@ describe("runBudget", () => {
     return { f, run: runBudget(limit, f as unknown as typeof fetch) };
   };
 
-  it("gives each step a fair share and re-shares what is left", async () => {
+  it("lets a step spend what is left less the reserve and what the later steps keep", async () => {
     const { run } = make(50);
-    const a = run.step("a", 3);
-    expect(a.left()).toBe(14);
-    for (let i = 0; i < 4; i++) await a.fetch("https://example.com");
-    expect(a.used()).toBe(4);
-    expect(run.step("b", 2).left()).toBe(20);
-    expect(run.used()).toBe(4);
-    expect(run.left()).toBe(46);
+    const a = run.step("a", 8);
+    expect(a.left()).toBe(36);
+    for (let i = 0; i < 30; i++) await a.fetch("https://example.com");
+    expect(a.used()).toBe(30);
+    expect(run.step("b", 2).left()).toBe(12);
+    expect(run.used()).toBe(30);
+    expect(run.left()).toBe(20);
+  });
+
+  it("gives a step nothing when the later steps keep more than is left", () => {
+    const { run } = make(50);
+    expect(run.step("z", 100).left()).toBe(0);
   });
 
   it("stops a step at its share without calling fetch", async () => {
     const { f, run } = make(50);
-    const a = run.step("a", 3);
+    const a = run.step("a", 30);
     for (let i = 0; i < 14; i++) await a.fetch("https://example.com");
     await expect(a.fetch("https://example.com")).rejects.toThrow(BudgetSpent);
-    await expect(a.fetch("https://example.com")).rejects.toThrow(/a/);
+    await expect(a.fetch("https://example.com")).rejects.toThrow("for a");
     expect(f).toHaveBeenCalledTimes(14);
     expect(run.stopped()).toEqual(["a"]);
   });
 
   it("canAfford agrees with fetch and records a refusal", async () => {
     const { run } = make(50);
-    const a = run.step("a", 3);
+    const a = run.step("a", 30);
     for (let i = 0; i < 12; i++) await a.fetch("https://example.com");
     expect(a.canAfford(2)).toBe(true);
     expect(run.stopped()).toEqual([]);
@@ -65,7 +70,7 @@ describe("runBudget", () => {
     const { f, run } = make(20);
     for (let i = 0; i < 10; i++) await run.fetch("https://example.com");
     expect(run.used()).toBe(10);
-    const a = run.step("a", 1);
+    const a = run.step("a", 0);
     expect(a.left()).toBe(4);
     for (let i = 0; i < 4; i++) await a.fetch("https://example.com");
     await expect(a.fetch("https://example.com")).rejects.toThrow(BudgetSpent);

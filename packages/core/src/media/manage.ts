@@ -32,7 +32,7 @@ const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
 export const CHECK_EVERY_S = 7 * 86400;
 /** The most calls one store's check makes: a Drive token and a walk to the media folder (two levels), or an S3
  *  object read and a listing. */
-const STORES_UNIT_CALLS = 3;
+export const STORES_UNIT_CALLS = 3;
 
 export class StoreError extends Error {}
 

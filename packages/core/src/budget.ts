@@ -1,6 +1,7 @@
 // A run's call budget: Workers count every fetch of an invocation (50 on the free plan), so a run counts its own and
-// shares the limit among its steps. A step may spend its fair share of what is left, then stops (BudgetSpent) instead
-// of starving the steps after it; what it leaves unspent goes back to the shares of the later steps.
+// shares the limit among its steps, in order: a step may spend what is left less the reserve and what the steps after
+// it keep (a unit of work each), then stops (BudgetSpent) instead of starving them; what it leaves unspent goes to the
+// steps after it.
 
 import { RUN_SUBREQUESTS, RUN_SUBREQUESTS_MAX, RUN_SUBREQUESTS_MIN, SUBREQUESTS_KEPT } from "./constants";
 import type { Db } from "./db";
@@ -53,7 +54,8 @@ export interface RunCalls {
   /** The run's total left, the reserve included. */
   left(): number;
   limit: number;
-  step(name: string, stepsLeft: number): StepBudget;
+  /** A step's budget, made when it starts: `keepForLater` calls stay for the steps after it. */
+  step(name: string, keepForLater: number): StepBudget;
   /** The steps that hit their share, in the order they did. */
   stopped(): string[];
 }
@@ -77,10 +79,10 @@ export function runBudget(limit: number, fetcher: typeof fetch): RunCalls {
     used: () => total,
     left: runLeft,
     stopped: () => [...stopped],
-    step(name, stepsLeft) {
+    step(name, keepForLater) {
       // the reserve stays out of the shares, for what the run does after its steps
       const share = Number.isFinite(limit)
-        ? Math.max(0, Math.floor((limit - SUBREQUESTS_KEPT - total) / Math.max(1, stepsLeft)))
+        ? Math.max(0, limit - total - SUBREQUESTS_KEPT - keepForLater)
         : Number.POSITIVE_INFINITY;
       let used = 0;
       // a step never goes past the run's limit either, whatever the run's own calls spent meanwhile

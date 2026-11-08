@@ -2,20 +2,20 @@
 // (apps/node) both call runDue every minute, which starts the runs whose schedule (a CRON_* variable, or its
 // default) matches that minute, so the two runtimes can't drift.
 
-import { sampleAccounts } from "./account-metrics";
+import { ACCOUNTS_UNIT_CALLS, sampleAccounts } from "./account-metrics";
 import { recordRun, runBudget, runSubrequests, type StepDeps } from "./budget";
-import { cleanMedia } from "./cleanup";
-import { pollComments } from "./comments";
+import { CLEANUP_UNIT_CALLS, cleanMedia } from "./cleanup";
+import { COMMENTS_UNIT_CALLS, pollComments } from "./comments";
 import { CRON_INSTAGRAM, CRON_SHORTS, CRON_UPKEEP } from "./constants";
 import { type Cron, matches, nextFiring, parseCron, shortestGap } from "./cron";
-import { dailyDigest } from "./digest";
+import { DIGEST_UNIT_CALLS, dailyDigest } from "./digest";
 import type { Env } from "./env";
-import { scanInbox } from "./inbox";
+import { INBOX_UNIT_CALLS, scanInbox } from "./inbox";
 import { acquire, release } from "./lock";
-import { checkStores } from "./media/manage";
-import { sampleMetrics } from "./metrics";
-import { refreshConnections } from "./providers/refresh";
-import { postResults } from "./results";
+import { checkStores, STORES_UNIT_CALLS } from "./media/manage";
+import { METRICS_UNIT_CALLS, sampleMetrics } from "./metrics";
+import { CONNECTIONS_UNIT_CALLS, refreshConnections } from "./providers/refresh";
+import { postResults, RESULTS_UNIT_CALLS } from "./results";
 import { tick } from "./tick";
 
 export type RunName = "instagram" | "shorts" | "upkeep";
@@ -142,9 +142,24 @@ export const UPKEEP_STEPS: readonly (readonly [string, (env: Env, deps: StepDeps
   ["media stores", checkStores], // each store still answers, weekly
 ];
 
+/** The most calls one unit of each step's work makes: while a step runs, the steps after it keep one unit each, so
+ *  none is starved while the ones before it (the inbox first) can use the rest of the run. A step not named here
+ *  (a test's) keeps one call. */
+export const UPKEEP_UNIT_CALLS: Readonly<Record<string, number>> = {
+  inbox: INBOX_UNIT_CALLS,
+  cleanup: CLEANUP_UNIT_CALLS,
+  digest: DIGEST_UNIT_CALLS,
+  results: RESULTS_UNIT_CALLS,
+  metrics: METRICS_UNIT_CALLS,
+  accounts: ACCOUNTS_UNIT_CALLS,
+  comments: COMMENTS_UNIT_CALLS,
+  connections: CONNECTIONS_UNIT_CALLS,
+  "media stores": STORES_UNIT_CALLS,
+};
+
 /** The upkeep run: runs while paused too (none of it publishes). Its lock is `upkeep`: a leftover `inbox` lock from
- *  before the rename expires on its own. The steps share the run's calls (RUN_SUBREQUESTS) by fair share, and each
- *  runs in its own try: one failing (a Composio or YouTube hiccup, or a BudgetSpent past its share) doesn't stop the
+ *  before the rename expires on its own. The steps share the run's calls (RUN_SUBREQUESTS) in order, each keeping a
+ *  unit of work for every step after it (UPKEEP_UNIT_CALLS), and each runs in its own try: one failing (a Composio or YouTube hiccup, or a BudgetSpent past its share) doesn't stop the
  *  others. */
 export async function runUpkeep(
   env: Env,
@@ -160,7 +175,8 @@ export async function runUpkeep(
   try {
     for (const [i, [step, run]] of steps.entries()) {
       // made only when the step starts, so its share counts what the steps before it left
-      const budget = calls.step(step, steps.length - i);
+      const keep = steps.slice(i + 1).reduce((n, [later]) => n + (UPKEEP_UNIT_CALLS[later] ?? 1), 0);
+      const budget = calls.step(step, keep);
       try {
         const out = await run(env, { fetch: budget.fetch, now: at, budget });
         const stopped = calls.stopped().includes(step) ? " (stopped: out of calls for this run)" : "";

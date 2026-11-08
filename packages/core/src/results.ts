@@ -19,7 +19,7 @@ const PER_RUN = 3;
 const REUSE_S = 3600; // a sample taken within the hour is the 24 h result
 const MEDIAN_OF = 20; // earlier posts the median covers
 /** The most calls one post's insights make: the call, and its retry without the follow metrics (insightsOf). */
-const RESULTS_UNIT_CALLS = 2;
+export const RESULTS_UNIT_CALLS = 2;
 
 interface Due {
   item_key: string;

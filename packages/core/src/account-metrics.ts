@@ -21,7 +21,7 @@ import { callerZone } from "./workspaces";
 const FAILED = "account_metrics_failed:";
 const BACKFILLED = "account_metrics_backfill:";
 /** The most calls one account's count makes: a YouTube token and channels.list; Instagram's is one. */
-const ACCOUNTS_UNIT_CALLS = 2;
+export const ACCOUNTS_UNIT_CALLS = 2;
 
 /** An account's follower (or subscriber) count now; null when the platform hides it. */
 async function followersOf(env: Env, fetcher: typeof fetch, a: Account): Promise<number | null> {

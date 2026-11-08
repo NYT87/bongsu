@@ -16,7 +16,7 @@ import { ConnectionBroken } from "./types";
 
 export const RENEW_EVERY_S = 7 * 86400;
 /** The most calls one connection's renewal makes: Instagram's token refresh, or Google's. */
-const CONNECTIONS_UNIT_CALLS = 1;
+export const CONNECTIONS_UNIT_CALLS = 1;
 /** Renew sooner when the credentials run out within this. */
 const RENEW_BEFORE_S = 10 * 86400;
 

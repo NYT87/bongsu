@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { runBudget } from "@bongsu/core/budget";
 import { dailyDigest } from "@bongsu/core/digest";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearPlan, planItem, seedReel, testEnv, World } from "./world";
@@ -31,5 +32,22 @@ describe("the daily digest", () => {
     expect(n.body).toContain("reel:X/short0: failed (container ERROR)");
     expect(await dailyDigest(e, { fetch: w.fetch, now: new Date(AT.getTime() + 15 * 60_000) })).toBe("already sent");
     expect(await dailyDigest(e, { fetch: w.fetch, now: new Date(AT.getTime() + 86400_000) })).toBe("sent"); // next day
+  });
+
+  it("waits for a run with calls enough, without marking the day sent", async () => {
+    await seedReel(w, { base: "short1_today", date: "2026-10-20", time: "18:00" });
+    const e = await testEnv(env);
+    const run = (limit: number, keep: number) => {
+      const budget = runBudget(limit, w.fetch).step("digest", keep);
+      return dailyDigest(e, { fetch: budget.fetch, now: AT, budget });
+    };
+    // two channels' upload lists and the message don't fit 4 calls: skipped, nothing claimed or sent
+    expect(await run(20, 10)).toBe("not yet");
+    expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'digest_last'").first()).toBeNull();
+    expect(w.notifications).toEqual([]);
+    // the next run has the calls: it's sent then, and once
+    expect(await run(50, 0)).toBe("sent");
+    expect(w.notifications).toHaveLength(1);
+    expect(await run(50, 0)).toBe("already sent");
   });
 });

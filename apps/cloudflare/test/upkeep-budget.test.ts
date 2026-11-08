@@ -2,11 +2,12 @@
 // before a unit of work, and a step that overshoots is stopped (BudgetSpent) without stopping the steps after it.
 import { env } from "cloudflare:workers";
 import { sampleAccounts } from "@bongsu/core/account-metrics";
-import { BudgetSpent, type StepBudget } from "@bongsu/core/budget";
+import { BudgetSpent, type StepBudget, type StepDeps } from "@bongsu/core/budget";
 import { ACCOUNTS_PER_RUN, METRICS_PER_RUN } from "@bongsu/core/constants";
+import { scanInbox } from "@bongsu/core/inbox";
 import { checkStores } from "@bongsu/core/media/manage";
 import { refreshConnections } from "@bongsu/core/providers/refresh";
-import { runUpkeep, UPKEEP_STEPS } from "@bongsu/core/schedules";
+import { runUpkeep, UPKEEP_STEPS, UPKEEP_UNIT_CALLS } from "@bongsu/core/schedules";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clearPlan, MD5, testEnv, World } from "./world";
 
@@ -126,6 +127,43 @@ describe("upkeep under RUN_SUBREQUESTS", () => {
     expect(last.stopped).toEqual(stopped);
     // the lock is freed
     expect(await env.DB.prepare("SELECT 1 FROM locks WHERE name = 'upkeep'").first()).toBeNull();
+  });
+
+  it("leaves the inbox, first, most of the run, and still a unit for every step after it", async () => {
+    // Compared in the steady state, each inbox folder's id already cached (settings.inbox_folder:*), as every run
+    // after a workspace's first: a first run also walks the path to each inbox.
+    const again = () =>
+      env.DB.batch(
+        [
+          "DELETE FROM drafts",
+          "DELETE FROM inbox_seen",
+          "DELETE FROM settings WHERE key IN ('inbox_cursor', 'inbox_last')",
+        ].map((q) => env.DB.prepare(q)),
+      );
+    await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
+    await again();
+    // the inbox alone under its own caps, as before the run had a budget
+    const before = await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
+    expect(before.drafted.length).toBeGreaterThan(0);
+    await again();
+    const e = await testEnv(env, { RUN_SUBREQUESTS: "50" }); // the token and folder caches cleared too
+    calls = 0;
+    const shares = new Map<string, number>();
+    const watched = UPKEEP_STEPS.map(
+      ([name, run]) =>
+        [
+          name,
+          (en: typeof e, deps: StepDeps) => {
+            shares.set(name, deps.budget?.left() ?? 0);
+            return run(en, deps);
+          },
+        ] as const,
+    );
+    await runUpkeep(e, counted, NOW, watched);
+    expect(calls).toBeLessThanOrEqual(50);
+    const drafted = await env.DB.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>();
+    expect(drafted?.n).toBeGreaterThanOrEqual(before.drafted.length);
+    for (const name of NAMES.slice(1)) expect(shares.get(name)).toBeGreaterThanOrEqual(UPKEEP_UNIT_CALLS[name]);
   });
 
   it("stops a step that ignores its share, and the steps after it still run", async () => {

@@ -18,7 +18,7 @@ export const MOVE_AFTER_S = 86400;
 const FILES_PER_RUN = 8;
 /** The most calls one move makes (Drive): the file's stat, then the move's read of it, its look up of _posted/ and the
  *  change of parent. */
-const CLEANUP_UNIT_CALLS = 4;
+export const CLEANUP_UNIT_CALLS = 4;
 
 export async function cleanMedia(env: Env, deps: StepDeps): Promise<{ moved: number; refused: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);

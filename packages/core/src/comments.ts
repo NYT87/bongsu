@@ -15,7 +15,7 @@ const WINDOW_S = 14 * 86400;
 const PER_RUN = 4;
 /** The most calls one video's check makes: a YouTube token, the channel's id (once per channel) and the comments; an
  *  Instagram post's is one. */
-const COMMENTS_UNIT_CALLS = 3;
+export const COMMENTS_UNIT_CALLS = 3;
 
 interface Poll {
   media_id: string;

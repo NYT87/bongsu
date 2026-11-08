@@ -1,6 +1,8 @@
 // The daily digest: once a day from the workspace's digest hour (its own time zone), in the inbox's cron run, one
 // notification (push + ntfy) with today's items and their status, what still needs approval in the next 3 days,
 // and the jobs that failed or were refused since yesterday. settings.digest_last holds the last day sent.
+import { youtubeAccounts } from "./accounts";
+import { canAfford, type StepDeps } from "./budget";
 import { type CalEvent, calendar } from "./calendar";
 import { pausedState } from "./data";
 import type { Env } from "./env";
@@ -11,6 +13,12 @@ import { digest as digestNote } from "./texts/notifications";
 import { type WorkspaceSettings, workspaceSettings } from "./workspaces";
 
 const AHEAD_DAYS = 3;
+/** The calls one channel's uploads list costs the calendar when it isn't cached: a token, channels, playlistItems and
+ *  videos.list. */
+const CHANNEL_CALLS = 4;
+/** The calls a digest makes for a workspace with one channel: its uploads list and the ntfy message. Each further
+ *  channel adds CHANNEL_CALLS. */
+export const DIGEST_UNIT_CALLS = CHANNEL_CALLS + 1;
 const NEEDS = new Set(["not approved", "re-approve"]);
 const line = (e: CalEvent) =>
   `${e.time ?? "--:--"} ${e.label}${e.account_name ? ` ${e.account_name}` : ""} ${e.title}${!e.account_name && e.account ? ` @${e.account}` : ""}: ${e.status}`;
@@ -56,10 +64,7 @@ export async function buildDigest(
 
 /** Sends each workspace's digest once per day (in its time zone), from its digest hour on. An archived workspace
  *  gets none. */
-export async function dailyDigest(
-  env: Env,
-  deps: { fetch: typeof fetch; now: Date },
-): Promise<"sent" | "not yet" | "already sent"> {
+export async function dailyDigest(env: Env, deps: StepDeps): Promise<"sent" | "not yet" | "already sent"> {
   const ids = await env.DB.prepare(
     `SELECT s.workspace_id FROM workspace_settings s JOIN workspaces w ON w.id = s.workspace_id
      WHERE w.archived_at IS NULL ORDER BY s.workspace_id`,
@@ -73,6 +78,21 @@ export async function dailyDigest(
     }
     const today = zoneDate(deps.now, ws.timezone);
     const key = workspace_id === "default" ? "digest_last" : `digest_last:${workspace_id}`;
+    if (deps.budget) {
+      // out of calls for this run: the day isn't claimed, so a later run sends it (a day already sent costs no check)
+      const sent = await env.DB.prepare("SELECT value FROM settings WHERE key = ?1")
+        .bind(key)
+        .first<{ value: string }>();
+      if (sent && sent.value >= today) {
+        outcomes.push("already sent");
+        continue;
+      }
+      const channels = (await youtubeAccounts(env.DB, workspace_id)).length;
+      if (!canAfford(deps, DIGEST_UNIT_CALLS + Math.max(0, channels - 1) * CHANNEL_CALLS)) {
+        outcomes.push("not yet");
+        continue;
+      }
+    }
     const claimed = await env.DB.prepare(
       "INSERT INTO settings (key, value) VALUES (?2, ?1) ON CONFLICT (key) DO UPDATE SET value = ?1 WHERE settings.value < ?1 RETURNING key",
     )

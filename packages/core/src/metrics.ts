@@ -33,7 +33,7 @@ const NO_FOLLOWS = "metrics_nofollows:";
 const ANALYTICS_LAG_S = 72 * 3600;
 /** The most calls one post's sample makes: a channel's first due video costs a token, videos.list and the Analytics
  *  query (the channel's other videos then cost none); an Instagram post's insights and their retry, two. */
-const METRICS_UNIT_CALLS = 3;
+export const METRICS_UNIT_CALLS = 3;
 /** The calls one refresh of a channel's uploads list makes: a token, channels, playlistItems and videos.list. */
 const METRICS_REFRESH_CALLS = 4;
 
