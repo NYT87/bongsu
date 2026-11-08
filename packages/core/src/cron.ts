@@ -108,8 +108,9 @@ export function shortestGap(cron: Cron): number {
     else first = m;
     prev = m;
   }
-  if (prev < 0) throw new CronError(`cron "${cron.expr}" never fires`);
-  best = Math.min(best, first + WEEK_MINUTES - prev) * 60;
+  // No firing in the walked week does not mean never (e.g. the 1st of a month). Anything sparser than weekly reports
+  // as a week, which the lock clamp makes equivalent; `nextFiring` is what detects a schedule that never fires.
+  best = prev < 0 ? WEEK_MINUTES * 60 : Math.min(best, first + WEEK_MINUTES - prev) * 60;
   gaps.set(cron.expr, best);
   return best;
 }

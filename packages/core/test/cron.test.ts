@@ -51,6 +51,8 @@ describe("shortestGap", () => {
     ["7,22,37,52 * * * *", 900],
     ["* * * * *", 60],
     ["0 9 * * 1", 604800],
+    ["0 9 1 * *", 604800],
+    ["0 9 * 12 *", 604800],
   ])("%s is %i seconds", (expr, gap) => {
     expect(shortestGap(parseCron(expr))).toBe(gap);
   });
