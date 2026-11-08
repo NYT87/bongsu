@@ -79,8 +79,8 @@ export function parseCron(expr: string): Cron {
   return { expr, minutes, hours, days, months, weekdays, anyDay: parts[2] === "*", anyWeekday: parts[4] === "*" };
 }
 
-export function matches(cron: Cron, at: Date): boolean {
-  if (!cron.minutes.has(at.getUTCMinutes()) || !cron.hours.has(at.getUTCHours())) return false;
+// The day rule alone (month, day of month, day of week), so callers can skip a whole day with one check.
+function dayMatches(cron: Cron, at: Date): boolean {
   if (!cron.months.has(at.getUTCMonth() + 1)) return false;
   const day = cron.days.has(at.getUTCDate());
   const weekday = cron.weekdays.has(at.getUTCDay());
@@ -89,24 +89,43 @@ export function matches(cron: Cron, at: Date): boolean {
   return day && weekday;
 }
 
+export function matches(cron: Cron, at: Date): boolean {
+  if (!cron.minutes.has(at.getUTCMinutes()) || !cron.hours.has(at.getUTCHours())) return false;
+  return dayMatches(cron, at);
+}
+
 const MINUTE = 60_000;
-const WEEK_MINUTES = 7 * 24 * 60;
+const DAY = 24 * 60 * MINUTE;
+const DAY_MINUTES = 24 * 60;
+const WEEK_MINUTES = 7 * DAY_MINUTES;
 // A Monday 00:00 UTC; the week it starts is walked to find a schedule's gaps.
 const WEEK_START = Date.UTC(2026, 10, 9);
 const gaps = new Map<string, number>();
+
+// The minutes of a matching day at which the schedule fires, in order. Built from the sets so that no Date is made per
+// minute: a Worker on the free plan gets 10 ms of CPU per invocation, and walking a week minute by minute took ~10 ms.
+function minutesOfDay(cron: Cron): number[] {
+  const hours = [...cron.hours].sort((a, b) => a - b);
+  const minutes = [...cron.minutes].sort((a, b) => a - b);
+  return hours.flatMap((h) => minutes.map((m) => h * 60 + m));
+}
 
 // The smallest number of seconds between two consecutive firings, measured over one week (wrapping around).
 export function shortestGap(cron: Cron): number {
   const cached = gaps.get(cron.expr);
   if (cached !== undefined) return cached;
+  const ofDay = minutesOfDay(cron);
   let first = -1;
   let prev = -1;
   let best = Number.POSITIVE_INFINITY;
-  for (let m = 0; m < WEEK_MINUTES; m++) {
-    if (!matches(cron, new Date(WEEK_START + m * MINUTE))) continue;
-    if (prev >= 0) best = Math.min(best, m - prev);
-    else first = m;
-    prev = m;
+  for (let d = 0; d < 7; d++) {
+    if (!dayMatches(cron, new Date(WEEK_START + d * DAY))) continue;
+    for (const minute of ofDay) {
+      const m = d * DAY_MINUTES + minute;
+      if (prev >= 0) best = Math.min(best, m - prev);
+      else first = m;
+      prev = m;
+    }
   }
   // No firing in the walked week does not mean never (e.g. the 1st of a month). Anything sparser than weekly reports
   // as a week, which the lock clamp makes equivalent; `nextFiring` is what detects a schedule that never fires.
@@ -115,12 +134,19 @@ export function shortestGap(cron: Cron): number {
   return best;
 }
 
-// The first matching minute strictly after `after`, looking at most a year ahead.
+// The first matching minute strictly after `after`, looking at most a year ahead: one day check per day, then the
+// day's firings from the sets.
 export function nextFiring(cron: Cron, after: Date): Date {
   const start = Math.floor(after.getTime() / MINUTE) * MINUTE + MINUTE;
-  for (let m = 0; m < 366 * 24 * 60; m++) {
-    const t = new Date(start + m * MINUTE);
-    if (matches(cron, t)) return t;
+  const end = start + 366 * DAY;
+  const ofDay = minutesOfDay(cron);
+  for (let dayStart = Math.floor(start / DAY) * DAY; dayStart < end; dayStart += DAY) {
+    if (!dayMatches(cron, new Date(dayStart))) continue;
+    for (const minute of ofDay) {
+      const t = dayStart + minute * MINUTE;
+      if (t >= end) break;
+      if (t >= start) return new Date(t);
+    }
   }
   throw new CronError(`cron "${cron.expr}" does not fire within a year`);
 }

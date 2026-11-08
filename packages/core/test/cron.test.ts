@@ -65,7 +65,38 @@ describe("nextFiring", () => {
     );
   });
 
+  it("reads lists out of order and crosses days and years", () => {
+    expect(nextFiring(parseCron("32,2 * * * *"), at("2026-11-09T23:40:00Z")).toISOString()).toBe(
+      "2026-11-10T00:02:00.000Z",
+    );
+    expect(nextFiring(parseCron("0 9 1 1 *"), at("2026-01-01T09:00:00Z")).toISOString()).toBe(
+      "2027-01-01T09:00:00.000Z",
+    );
+    expect(nextFiring(parseCron("0 9 1 * 1"), at("2026-11-30T09:00:00Z")).toISOString()).toBe(
+      "2026-12-01T09:00:00.000Z",
+    );
+  });
+
   it("throws when nothing matches within a year", () => {
     expect(() => nextFiring(parseCron("0 0 31 2 *"), at("2026-01-01T00:00:00Z"))).toThrow(CronError);
+  });
+});
+
+describe("cost", () => {
+  // A Worker on the free plan is stopped past 10 ms of CPU per invocation; the scheduler computes these on a cold
+  // start. Fresh `expr` keys bypass the gap cache; the bound is generous so a slow CI machine does not flake.
+  it("computes the defaults' gaps and next firings in well under the CPU limit, at best of three", () => {
+    const fresh = (expr: string, n: number) => ({ ...parseCron(expr), expr: `${expr} #${n}` });
+    let fastest = Number.POSITIVE_INFINITY;
+    for (let n = 0; n < 3; n++) {
+      const t0 = performance.now();
+      for (const expr of ["*/5 * * * *", "2,32 * * * *", "7,22,37,52 * * * *", "0 9 1 1 *"]) {
+        const cron = fresh(expr, n);
+        shortestGap(cron);
+        nextFiring(cron, at("2026-01-02T00:00:00Z"));
+      }
+      fastest = Math.min(fastest, performance.now() - t0);
+    }
+    expect(fastest).toBeLessThan(2);
   });
 });
