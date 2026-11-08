@@ -191,7 +191,7 @@ export async function runUpkeep(
       const keep = steps.slice(i + 1).reduce((n, [later]) => n + (UPKEEP_UNIT_CALLS[later] ?? 1), 0);
       const budget = calls.step(step, keep);
       try {
-        const out = await run(env, { fetch: budget.fetch, now: at, budget });
+        const out = await run(env, { fetch: budget.fetch, now: at, budget, noteFetch: calls.fetch });
         const stopped = calls.stopped().includes(step) ? " (stopped: out of calls for this run)" : "";
         console.log(`upkeep: ${step} ${typeof out === "string" ? out : JSON.stringify(out)}${stopped}`);
       } catch (e) {

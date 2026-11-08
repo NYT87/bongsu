@@ -51,7 +51,13 @@ export interface StepDeps {
   fetch: typeof fetch;
   now: Date;
   budget?: StepBudget;
+  /** The run's own fetch, for the notifications (and mail) a step sends about its work: paid from the run's reserve
+   *  (SUBREQUESTS_KEPT), not the step's share, so a step that spent its share still tells the owner what it did. */
+  noteFetch?: typeof fetch;
 }
+
+/** The fetch a step's notifier uses: the run's (its reserve) when it has one, else the step's. */
+export const noteFetch = (deps: Pick<StepDeps, "fetch" | "noteFetch">): typeof fetch => deps.noteFetch ?? deps.fetch;
 
 /** Whether the step can spend `n` more calls on its next unit of work (no budget: always). */
 export const canAfford = (deps: Pick<StepDeps, "budget">, n: number): boolean => deps.budget?.canAfford(n) ?? true;

@@ -2,7 +2,7 @@
 // <folder>/_posted/ (the folder of the item's workspace) in the store it's in. Move only: nothing is trashed or deleted here; the owner empties _posted/ by
 // hand. Some stores give a moved file a new id (S3), which is fine: nothing reads an id after this. If a store refuses
 // a move, that's recorded once, notified, never retried.
-import { BudgetSpent, canAfford, type StepDeps } from "./budget";
+import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "./budget";
 import { contentPaths, getItem, latestApprovals } from "./data";
 import type { Env } from "./env";
 import { mediaPath } from "./media/folders";
@@ -60,7 +60,7 @@ export async function cleanMedia(env: Env, deps: StepDeps): Promise<{ moved: num
     }
   }
 
-  const note = notifier(env, deps.fetch, nowS);
+  const note = notifier(env, noteFetch(deps), nowS);
   for (const [ws, refused] of refusedIn) await note.send(cleanupRefused(refused), ws);
   return out;
 

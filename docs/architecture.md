@@ -52,8 +52,10 @@ past the limit with `BudgetSpent` before sending it.
 - Upkeep: `calls.step(name, keepForLater)` gives each step, when it starts, what is left less the reserve less one
   unit of work for each later step (`UPKEEP_UNIT_CALLS`, each step's `*_UNIT_CALLS`). Unused calls carry forward; the
   per-step caps still bound each step. A step checks `canAfford(n)` before each unit and stops cleanly; a
-  `BudgetSpent` escaping it is logged like any step failure and the next step runs. Nothing follows the last step, so
-  upkeep spends at most the limit less the reserve (44 at 50).
+  `BudgetSpent` escaping it is logged like any step failure and the next step runs. The notifications (and mail) a
+  step sends about its work go through `deps.noteFetch`, the run's own fetch, so they are paid from the reserve: a
+  step that spent its share still tells the owner. The daily digest is the exception: its message is its work, paid
+  from its share (`DIGEST_UNIT_CALLS`).
 - The tick: a `BudgetSpent` leaves the job for the next run with no attempt counted; a Shorts comment refused this
   way is re-armed for the next Shorts run; the sweep waits for a run that didn't spend its calls.
 - D1 queries are capped per invocation too and aren't counted here: the steps keep their own query bounds

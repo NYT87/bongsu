@@ -4,7 +4,7 @@
 // while an approved item uses it), connect Google Drive with the owner's Google app, and check every store weekly in
 // the inbox's cron run.
 
-import { BudgetSpent, canAfford, type StepDeps } from "../budget";
+import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "../budget";
 import {
   authorizeUrl,
   type CallbackQuery,
@@ -382,7 +382,7 @@ export async function checkStores(env: Env, deps: StepDeps): Promise<{ checked: 
     }
   }
   if (instance.length) await notifyInstanceAdmins(env, deps.fetch, mediaStoreProblem(instance.join("\n")), nowS);
-  const notify = notifier(env, deps.fetch, nowS);
+  const notify = notifier(env, noteFetch(deps), nowS);
   for (const [workspaceId, lines] of byWorkspace)
     await notify.send(mediaStoreProblem(lines.join("\n"), true), workspaceId);
   return out;

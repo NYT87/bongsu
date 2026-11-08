@@ -116,7 +116,10 @@ Generalises the tick's counter (`RunBudget` in `tick.ts`):
   `step(name, keepForLater)` returns a `StepBudget` whose share is `left() − reserve − keepForLater`, where
   `keepForLater` is the sum of the later steps' one unit of work each (`UPKEEP_UNIT_CALLS`, each step's
   `<STEP>_UNIT_CALLS`). Whatever a step leaves unused stays in `left()` for the steps after it; per-step caps still
-  bound each step. Nothing runs after upkeep's last step, so upkeep never spends the reserve (at most 44 at 50).
+  bound each step. The notifications (and mail) a step sends about its work are paid from the reserve, through the
+  run's own fetch (`StepDeps.noteFetch`), so a step that spent its share still tells the owner (amended after the
+  final review: upkeep used to leave the reserve unspent while its steps' notes were refused); the digest's message is
+  its work, paid from its share.
 - **`StepBudget`:** `{ fetch, left(), canAfford(n) }`. Its `fetch` refuses a call past the step's share by throwing
   `BudgetSpent` before sending anything, so a step that forgets to check still can't overshoot.
 - `unlimited`: shares are `Infinity`; the existing per-step caps alone bound the work.

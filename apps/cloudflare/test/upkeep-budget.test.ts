@@ -167,6 +167,32 @@ describe("upkeep under RUN_SUBREQUESTS", () => {
     for (const name of NAMES.slice(1)) expect(shares.get(name)).toBeGreaterThanOrEqual(UPKEEP_UNIT_CALLS[name]);
   });
 
+  it("pays the steps' notifications from the run's reserve: an inbox that spent its share still announces its drafts", async () => {
+    // Whatever the limit, a run that drafted something says so: at some limits the drafts end the inbox's share
+    // exactly, and the note then comes out of the reserve.
+    const inboxOnly = UPKEEP_STEPS.filter(([name]) => name === "inbox");
+    let drafted = false;
+    for (let limit = 12; limit <= 30; limit++) {
+      await env.DB.batch(
+        ["DELETE FROM drafts", "DELETE FROM inbox_seen", "DELETE FROM settings WHERE key LIKE 'inbox_%'"].map((q) =>
+          env.DB.prepare(q),
+        ),
+      );
+      w.notifications.length = 0;
+      calls = 0;
+      await runUpkeep(await testEnv(env, { RUN_SUBREQUESTS: String(limit) }), counted, NOW, inboxOnly);
+      expect(calls, `at ${limit}`).toBeLessThanOrEqual(limit);
+      // the default workspace's topic is the world's ntfy (the others have none)
+      const mine = await env.DB.prepare("SELECT COUNT(*) AS n FROM drafts WHERE workspace_id = 'default'").first<{
+        n: number;
+      }>();
+      const told = w.notifications.filter((n) => /new drafts? from the inbox$/.test(n.title));
+      expect(told.length, `at ${limit}`).toBe(mine?.n ? 1 : 0);
+      if (mine?.n) drafted = true;
+    }
+    expect(drafted).toBe(true);
+  });
+
   it("stops a step that ignores its share, and the steps after it still run", async () => {
     const e = await testEnv(env, { RUN_SUBREQUESTS: "50" });
     const greedy = UPKEEP_STEPS.map(([name, run]) =>

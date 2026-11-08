@@ -6,7 +6,7 @@
 // (it reaches a different audience, so it stays out of the account's median).
 
 import { workingAccounts } from "./accounts";
-import { BudgetSpent, canAfford, type StepDeps } from "./budget";
+import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "./budget";
 import type { Env } from "./env";
 import { insightsOf, nearest24h, recordSample, type Sample, sampleOf } from "./metrics";
 import { notifier } from "./notify";
@@ -169,7 +169,7 @@ export async function postResults(env: Env, deps: StepDeps): Promise<{ fetched: 
     );
     fetched.push(d.item_key);
   }
-  const note = notifier(env, deps.fetch, nowS);
+  const note = notifier(env, noteFetch(deps), nowS);
   for (const [ws, { lines, keys }] of byWs)
     await note.send(resultsNote(lines, keys.length === 1 ? `results:${keys[0]}` : undefined), ws);
   return { fetched };

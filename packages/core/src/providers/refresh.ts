@@ -5,7 +5,7 @@
 // revoked grant, a token past its expiry), and notifies once: the usual channels, plus an email to the workspace's
 // owners and admins when a Mailer is set (core/mail.ts).
 import type { Connection } from "../accounts";
-import { BudgetSpent, canAfford, type StepDeps } from "../budget";
+import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "../budget";
 import { encryptSecret } from "../crypto";
 import type { Env } from "../env";
 import { mailer, workspaceAdmins } from "../mail";
@@ -101,12 +101,12 @@ export async function refreshConnections(env: Env, deps: StepDeps): Promise<{ re
     const say = (list: typeof problems) =>
       `${list.map((p) => p.text).join("\n")}\nPosting may stop for it: reconnect it in the dashboard (Connections).`;
     // each workspace hears of its own connections
-    const note = notifier(env, deps.fetch, nowS);
+    const note = notifier(env, noteFetch(deps), nowS);
     for (const ws of new Set(problems.map((p) => p.workspaceId)))
       await note.send(connectionProblem(say(problems.filter((p) => p.workspaceId === ws))), ws);
     // Email, per workspace, to its owners and admins. A mail failure is logged; the notice above already went out.
     try {
-      const mail = mailer(env, deps.fetch);
+      const mail = mailer(env, noteFetch(deps));
       if (mail.id !== "none")
         for (const ws of new Set(problems.map((p) => p.workspaceId)))
           await mail.send({

@@ -17,7 +17,7 @@
 // video still makes it in. Each item makes one draft only (inbox_seen), even if the draft is refused.
 
 import { instagramAccounts } from "./accounts";
-import { BudgetSpent, canAfford, type StepDeps } from "./budget";
+import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "./budget";
 import { INBOX_WORKSPACES_PER_RUN, INBOX_WORKSPACES_PER_RUN_MAX } from "./constants";
 import type { Db } from "./db";
 import type { Env } from "./env";
@@ -354,7 +354,7 @@ export async function scanInbox(env: Env, deps: StepDeps): Promise<InboxRun> {
       }
     }
   } finally {
-    const note = notifier(env, deps.fetch, nowS);
+    const note = notifier(env, noteFetch(deps), nowS);
     for (const ws of new Set(drafted.map((d) => d.workspaceId)))
       await note.send(newDrafts(drafted.filter((d) => d.workspaceId === ws).map((d) => d.title)), ws);
   }

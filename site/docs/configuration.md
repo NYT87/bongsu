@@ -214,8 +214,9 @@ was for waits for the next run:
   unit of work for each step after it (an inbox folder, a post's metrics, an account's followers…), so the inbox comes
   first and no later step is left with nothing. What a step doesn't use goes to the steps after it. The steps' own
   caps (`METRICS_PER_RUN`, `ACCOUNTS_PER_RUN`, `INBOX_WORKSPACES_PER_RUN`…) still apply, so a large number doesn't
-  take everything at once. Nothing runs after the last step, so upkeep never spends the reserve: at 50 it uses at
-  most 44.
+  take everything at once. The notifications a step sends about its work (new drafts, new comments, a connection
+  to renew…) come out of the reserve, so a step that used its share still tells you; the daily digest is paid from
+  its own share.
 - A step stopped by its share carries on at the next run, where it left off; the daily digest waits a run rather
   than go out half-sent.
 - A value outside the range falls back to the default and the dashboard flags it.
