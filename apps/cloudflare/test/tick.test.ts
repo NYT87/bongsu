@@ -135,10 +135,19 @@ describe("tick: timings follow the interval", () => {
     for (let m = 10; m <= 120; m += 10) await run(m); // 12 polls, 1 h 50 min since the first
     expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 12 });
     expect(JSON.parse((await jobs())[0].payload).pollingSince).toBe(Math.floor(later(10).getTime() / 1000));
-    await run(130); // exactly 2 h: not longer yet
-    expect((await jobs())[0].state).toBe("container_created");
-    await run(140);
+    await run(130); // the 13th poll, 2 h after the first
     expect((await jobs())[0]).toMatchObject({ state: "failed", last_error: "Instagram never finished processing" });
+  });
+
+  it("at the default 5 minutes, gives up on the 25th poll, as when the polls were counted", async () => {
+    await seedReel(w);
+    igHappyPath(w, Array(30).fill("IN_PROGRESS"));
+    const e = await testEnv(env);
+    await tick(e, { fetch: w.fetch, now: AT }); // the container
+    for (let m = 5; m <= 120; m += 5) await tick(e, { fetch: w.fetch, now: later(m) }); // 24 polls
+    expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 24 });
+    await tick(e, { fetch: w.fetch, now: later(125) });
+    expect((await jobs())[0]).toMatchObject({ state: "failed", attempts: 25 });
   });
 });
 

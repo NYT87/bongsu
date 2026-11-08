@@ -1230,7 +1230,7 @@ const platformName = (pr: Provider) => platform(pr.platform)?.name ?? pr.platfor
 async function pollWait(c: Ctx, job: JobRow, pr: Provider, polled: Payload) {
   const attempts = job.attempts + 1;
   const p = { ...polled, pollingSince: polled.pollingSince ?? c.nowS };
-  if (c.nowS - p.pollingSince > MAX_POLL_S) {
+  if (c.nowS - p.pollingSince >= MAX_POLL_S) {
     const name = platformName(pr);
     await c.setJob(job.id, { state: "failed", attempts, last_error: `${name} never finished processing`, payload: p });
     await c.note.send(N.processingTimeout(job.item_key, name), job.workspace_id);
