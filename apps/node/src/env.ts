@@ -26,7 +26,8 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
     MEDIA_SIGNING_KEY: vars.MEDIA_SIGNING_KEY ?? "",
     // no per-invocation subrequest limit here, unlike Cloudflare's free plan: more jobs a tick
     JOBS_PER_TICK: vars.JOBS_PER_TICK ?? String(NODE_JOBS_PER_TICK),
-    RUN_SUBREQUESTS: vars.RUN_SUBREQUESTS ?? "unlimited",
+    // no per-invocation call limit either; also what an invalid RUN_SUBREQUESTS falls back to
+    RUN_SUBREQUESTS_DEFAULT: "unlimited",
     INBOX_WORKSPACES_PER_RUN: vars.INBOX_WORKSPACES_PER_RUN ?? String(NODE_INBOX_WORKSPACES_PER_RUN),
   };
   // the optional ones, only when set
@@ -44,6 +45,7 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
     "SMTP_USER",
     "SMTP_PASS",
     "SCHEDULES",
+    "RUN_SUBREQUESTS",
     "CRON_INSTAGRAM",
     "CRON_SHORTS",
     "CRON_UPKEEP",

@@ -17,7 +17,7 @@ export const NODE_JOBS_PER_TICK = 20;
 export const SUBREQUESTS_KEPT = 6;
 /** Fetch calls one run (a tick, the upkeep run) may make, shared among its steps by budget.ts. The default fits
  *  Cloudflare's free plan; the RUN_SUBREQUESTS variable (a number in range, or "unlimited") overrides it, and Node
- *  defaults to "unlimited". Values outside the range fall back to the default. */
+ *  defaults to "unlimited" (RUN_SUBREQUESTS_DEFAULT). Other values fall back to the runtime's default. */
 export const RUN_SUBREQUESTS = 50;
 export const RUN_SUBREQUESTS_MIN = 10;
 export const RUN_SUBREQUESTS_MAX = 10_000_000;

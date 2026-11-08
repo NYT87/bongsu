@@ -53,4 +53,7 @@ export interface Env {
   CRON_UPKEEP?: string;
   /** Outside calls one run may make: a whole number, or "unlimited". */
   RUN_SUBREQUESTS?: string;
+  /** The runtime's own default for it, set by the runtime and not by hand: Node's "unlimited" (it has no per-invocation
+   *  limit), so an invalid RUN_SUBREQUESTS there falls back to that rather than to Cloudflare's 50. */
+  RUN_SUBREQUESTS_DEFAULT?: string;
 }

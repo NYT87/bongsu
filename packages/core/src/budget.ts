@@ -14,19 +14,27 @@ export class BudgetSpent extends Error {
   }
 }
 
-/** The run's limit from the RUN_SUBREQUESTS variable: a number in range or "unlimited" (Infinity). Anything else
- *  falls back to the default, with the bad value in `invalid` so the caller can say so. */
-export function runSubrequests(env: Pick<Env, "RUN_SUBREQUESTS">): {
+// A limit as written: a whole number in range or "unlimited" (Infinity); anything else null.
+function parseLimit(raw: string | undefined): number | null {
+  if (raw?.toLowerCase() === "unlimited") return Number.POSITIVE_INFINITY;
+  const n = raw && /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  return n >= RUN_SUBREQUESTS_MIN && n <= RUN_SUBREQUESTS_MAX ? n : null;
+}
+
+/** The run's limit from the RUN_SUBREQUESTS variable: a number in range or "unlimited" (Infinity). Unset or anything
+ *  else gives the runtime's default (RUN_SUBREQUESTS_DEFAULT: Node's "unlimited"; else Cloudflare's free-plan
+ *  RUN_SUBREQUESTS), with a bad value in `invalid` so the caller can say so. */
+export function runSubrequests(env: Pick<Env, "RUN_SUBREQUESTS" | "RUN_SUBREQUESTS_DEFAULT">): {
   value: number;
   source: "default" | "variable";
   invalid: string | null;
 } {
+  const fallback = parseLimit(env.RUN_SUBREQUESTS_DEFAULT?.trim()) ?? RUN_SUBREQUESTS;
   const raw = env.RUN_SUBREQUESTS?.trim();
-  if (!raw) return { value: RUN_SUBREQUESTS, source: "default", invalid: null };
-  if (raw.toLowerCase() === "unlimited") return { value: Number.POSITIVE_INFINITY, source: "variable", invalid: null };
-  const n = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
-  if (n >= RUN_SUBREQUESTS_MIN && n <= RUN_SUBREQUESTS_MAX) return { value: n, source: "variable", invalid: null };
-  return { value: RUN_SUBREQUESTS, source: "default", invalid: raw };
+  if (!raw) return { value: fallback, source: "default", invalid: null };
+  const n = parseLimit(raw);
+  if (n !== null) return { value: n, source: "variable", invalid: null };
+  return { value: fallback, source: "default", invalid: raw };
 }
 
 export interface StepBudget {

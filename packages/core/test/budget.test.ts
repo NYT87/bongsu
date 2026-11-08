@@ -18,6 +18,15 @@ describe("runSubrequests", () => {
   it.each(["5", "abc", "20000000"])("falls back to 50 for %s and reports it", (bad) => {
     expect(runSubrequests({ RUN_SUBREQUESTS: bad })).toEqual({ value: 50, source: "default", invalid: bad });
   });
+  it("falls back to the runtime's own default (Node: unlimited) when one is given", () => {
+    const node = { RUN_SUBREQUESTS_DEFAULT: "unlimited" };
+    expect(runSubrequests(node)).toEqual({ value: Number.POSITIVE_INFINITY, source: "default", invalid: null });
+    expect(runSubrequests({ ...node, RUN_SUBREQUESTS: "abc" })).toEqual({
+      value: Number.POSITIVE_INFINITY,
+      source: "default",
+      invalid: "abc",
+    });
+  });
 });
 
 describe("runBudget", () => {

@@ -5,6 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "@bongsu/api/app";
+import { runSubrequests } from "@bongsu/core/budget";
 import { NODE_JOBS_PER_TICK } from "@bongsu/core/constants";
 import { dbCases } from "@bongsu/core/db-conformance";
 import type { Env } from "@bongsu/core/env";
@@ -140,6 +141,18 @@ describe("the HTTP app and the schedules on Node", () => {
   it("advances more jobs a tick than Cloudflare by default, and takes JOBS_PER_TICK", () => {
     expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(NODE_JOBS_PER_TICK);
     expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test", JOBS_PER_TICK: "8" }, db))).toBe(8);
+  });
+
+  it("runs without a call limit by default, and falls back to that, not Cloudflare's 50, on a bad RUN_SUBREQUESTS", () => {
+    const limit = (vars: Record<string, string>) =>
+      runSubrequests(nodeEnv({ PUBLIC_URL: "https://x.test", ...vars }, db));
+    expect(limit({})).toEqual({ value: Number.POSITIVE_INFINITY, source: "default", invalid: null });
+    expect(limit({ RUN_SUBREQUESTS: "200" })).toEqual({ value: 200, source: "variable", invalid: null });
+    expect(limit({ RUN_SUBREQUESTS: "lots" })).toEqual({
+      value: Number.POSITIVE_INFINITY,
+      source: "default",
+      invalid: "lots",
+    });
   });
 
   it("turns the schedules off with SCHEDULES=off, which the dashboard's Scheduler shows", () => {
