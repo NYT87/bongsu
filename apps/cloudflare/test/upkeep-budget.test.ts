@@ -1,5 +1,6 @@
-// The upkeep run's call budget (#64): its nine steps share RUN_SUBREQUESTS by fair share, each checking its share
-// before a unit of work, and a step that overshoots is stopped (BudgetSpent) without stopping the steps after it.
+// The upkeep run's call budget (#64): its nine steps spend RUN_SUBREQUESTS in order, each keeping a unit of work for
+// every step after it and checking its share before a unit, and a step that overshoots is stopped (BudgetSpent)
+// without stopping the steps after it.
 import { env } from "cloudflare:workers";
 import { sampleAccounts } from "@bongsu/core/account-metrics";
 import { BudgetSpent, type StepBudget, type StepDeps } from "@bongsu/core/budget";

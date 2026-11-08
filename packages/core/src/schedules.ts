@@ -147,6 +147,9 @@ export const UPKEEP_STEPS: readonly (readonly [string, (env: Env, deps: StepDeps
  *  (a test's) keeps one call. */
 export const UPKEEP_UNIT_CALLS: Readonly<Record<string, number>> = {
   inbox: INBOX_UNIT_CALLS,
+  // one move, not a first move's cost (CLEANUP_TARGET_CALLS more, for finding _posted/): kept for every run, that
+  // would take the inbox's room; cleanup's own check still counts it, so a store's first move waits for a run with
+  // calls to spare and an item is never half moved
   cleanup: CLEANUP_UNIT_CALLS,
   digest: DIGEST_UNIT_CALLS,
   results: RESULTS_UNIT_CALLS,
@@ -159,8 +162,8 @@ export const UPKEEP_UNIT_CALLS: Readonly<Record<string, number>> = {
 
 /** The upkeep run: runs while paused too (none of it publishes). Its lock is `upkeep`: a leftover `inbox` lock from
  *  before the rename expires on its own. The steps share the run's calls (RUN_SUBREQUESTS) in order, each keeping a
- *  unit of work for every step after it (UPKEEP_UNIT_CALLS), and each runs in its own try: one failing (a Composio or YouTube hiccup, or a BudgetSpent past its share) doesn't stop the
- *  others. */
+ *  unit of work for every step after it (UPKEEP_UNIT_CALLS), and each runs in its own try: one failing (a Composio
+ *  or YouTube hiccup, or a BudgetSpent past its share) doesn't stop the others. */
 export async function runUpkeep(
   env: Env,
   fetcher: typeof fetch,

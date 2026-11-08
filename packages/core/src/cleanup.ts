@@ -16,9 +16,13 @@ import { workspaceSettings } from "./workspaces";
 export const MOVE_AFTER_S = 86400;
 /** Moves per run (each file costs a few subrequests; the free plan allows 50 per invocation). */
 const FILES_PER_RUN = 8;
-/** The most calls one move makes (Drive): the file's stat, then the move's read of it, its look up of _posted/ and the
- *  change of parent. */
-export const CLEANUP_UNIT_CALLS = 4;
+/** The most calls one move makes (Drive): the file's stat, then the move's read of it, its look up of _posted/ (a
+ *  Drive path is never served whole from the folder cache) and the change of parent, and a token when none is
+ *  cached. */
+export const CLEANUP_UNIT_CALLS = 5;
+/** What finding (or making) a store's _posted/ costs the first move to it in a run: the look up of _posted/ (two
+ *  levels), and when it's missing the workspace folder's and the folder's creation. */
+export const CLEANUP_TARGET_CALLS = 4;
 
 export async function cleanMedia(env: Env, deps: StepDeps): Promise<{ moved: number; refused: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
@@ -75,7 +79,7 @@ export async function cleanMedia(env: Env, deps: StepDeps): Promise<{ moved: num
         .run();
     for (const { item_key, workspace_id } of items) {
       // out of calls for this run: the items after it are still due next run
-      if (!canAfford(deps, CLEANUP_UNIT_CALLS)) break;
+      if (!canAfford(deps, CLEANUP_UNIT_CALLS + CLEANUP_TARGET_CALLS)) break;
       const { stores, folder } = await scopeOf(workspace_id);
       const posted = mediaPath(folder, "_posted");
       // the approved files, in their store (an item's files are all in one: a draft's or an upload's)
@@ -104,8 +108,11 @@ export async function cleanMedia(env: Env, deps: StepDeps): Promise<{ moved: num
         const parent = (await store.stat(ids[0]))?.parent;
         if (parent) ids = [parent];
       }
-      // an item's files move in the same run (a handled item isn't picked again)
-      if (budget < ids.length || !canAfford(deps, ids.length * CLEANUP_UNIT_CALLS)) break;
+      // an item's files move in the same run (a handled item isn't picked again): it starts only when all of them
+      // fit, the first move to this store's _posted/ finding it too
+      const tkey = `${store.id}/${posted}`;
+      const cost = ids.length * CLEANUP_UNIT_CALLS + (targets.has(tkey) ? 0 : CLEANUP_TARGET_CALLS);
+      if (budget < ids.length || !canAfford(deps, cost)) break;
       budget -= ids.length;
       for (const id of ids) {
         const e = await store.stat(id);
@@ -113,7 +120,6 @@ export async function cleanMedia(env: Env, deps: StepDeps): Promise<{ moved: num
           refused: string | null = null;
         if (!e) refused = "gone from the media store";
         else {
-          const tkey = `${store.id}/${posted}`;
           let target = targets.get(tkey);
           if (!target) {
             target = await store.ensureFolder(posted);

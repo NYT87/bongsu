@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { runBudget } from "@bongsu/core/budget";
 import { cleanMedia } from "@bongsu/core/cleanup";
 import { inboxTexts, nextWorkspaces, scanInbox } from "@bongsu/core/inbox";
 import { saveStore } from "@bongsu/core/media/manage";
@@ -495,6 +496,36 @@ describe("moving posted media aside", () => {
     expect(w.drive.get(img)!.parent).toBe(postDir);
     expect(w.calls.length).toBe(0);
     expect((await cleanMedia(await testEnv(env), { fetch: w.fetch, now: NOW })).moved).toBe(0);
+  });
+
+  it("starts an item only when the run's calls cover all its moves, _posted/'s look up included", async () => {
+    await env.DB.batch(["DELETE FROM media_cleanup", "DELETE FROM posted"].map((s) => env.DB.prepare(s)));
+    const dir = "UPLOADS/vlogs/CONTENT/20260823_LISBON/exports/shorts/instagram";
+    const video = w.drivePut(`${dir}/short3_b.mp4`, { md5: MD5, mimeType: "video/mp4" });
+    const subs = w.drivePut(`${dir}/en.srt`, { md5: "s", mimeType: "text/plain" });
+    const k = await planItem({ folder: "vlogs/CONTENT/20260823_LISBON", name: "short3_b" });
+    await approve(k, {
+      due: "2026-10-19 19:00",
+      caption: "c",
+      comment: null,
+      media: [
+        { driveId: video, md5: MD5 },
+        { driveId: subs, md5: "s" },
+      ],
+    });
+    await posted(k, "2026-10-18T00:00:00Z");
+    const run = async (share: number) => {
+      const e = await testEnv(env);
+      const budget = runBudget(50, w.fetch).step("cleanup", 50 - 6 - share);
+      return cleanMedia(e, { fetch: budget.fetch, now: NOW, budget });
+    };
+    // 12 calls cover two moves as once counted (8) and the item's start, not two moves and finding _posted/ (14)
+    expect(await run(12)).toEqual({ moved: 0, refused: [] });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM media_cleanup").first()).toEqual({ n: 0 });
+    expect(await run(14)).toEqual({ moved: 2, refused: [] });
+    const target = w.drive.get(video)!.parent!;
+    expect(w.drive.get(target)!.name).toBe("_posted");
+    expect(w.drive.get(subs)!.parent).toBe(target);
   });
 
   it("records a refused move once and notifies", async () => {

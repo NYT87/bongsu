@@ -9,6 +9,7 @@ import type { Env } from "./env";
 import { shiftDate, zoneDate, zoneHour } from "./formats/time";
 import { notifier } from "./notify";
 import { platform } from "./platforms/index";
+import { pushDevices } from "./push";
 import { digest as digestNote } from "./texts/notifications";
 import { type WorkspaceSettings, workspaceSettings } from "./workspaces";
 
@@ -17,7 +18,7 @@ const AHEAD_DAYS = 3;
  *  videos.list. */
 const CHANNEL_CALLS = 4;
 /** The calls a digest makes for a workspace with one channel: its uploads list and the ntfy message. Each further
- *  channel adds CHANNEL_CALLS. */
+ *  channel adds CHANNEL_CALLS, each device the message is pushed to one more. */
 export const DIGEST_UNIT_CALLS = CHANNEL_CALLS + 1;
 const NEEDS = new Set(["not approved", "re-approve"]);
 const line = (e: CalEvent) =>
@@ -87,8 +88,10 @@ export async function dailyDigest(env: Env, deps: StepDeps): Promise<"sent" | "n
         outcomes.push("already sent");
         continue;
       }
+      // counted only on the run that sends: a push refused for the budget is only logged, after the day is claimed
       const channels = (await youtubeAccounts(env.DB, workspace_id)).length;
-      if (!canAfford(deps, DIGEST_UNIT_CALLS + Math.max(0, channels - 1) * CHANNEL_CALLS)) {
+      const devices = await pushDevices(env, workspace_id, "digest");
+      if (!canAfford(deps, DIGEST_UNIT_CALLS + Math.max(0, channels - 1) * CHANNEL_CALLS + devices)) {
         outcomes.push("not yet");
         continue;
       }
