@@ -269,9 +269,19 @@ export async function scanInbox(env: Env, deps: StepDeps): Promise<InboxRun> {
     // out of calls for this run: this workspace and the ones after it come first next run
     if (spent || !canAfford(deps, INBOX_UNIT_CALLS)) break;
     reached.push(workspaceId);
-    const folder = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
+    let folder: string;
+    let all: MediaStore[];
+    try {
+      folder = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
+      all = (await mediaStores(env, deps.fetch, workspaceId)).all;
+    } catch (e) {
+      if (e instanceof BudgetSpent) break;
+      // a workspace that can't be read is skipped (the cursor moves past it), not tried first again every run
+      failed.push(`${workspaceId}: ${(e as Error).message.slice(0, 200)}`);
+      continue;
+    }
     // the instance's stores and the workspace's own, each looked at in the workspace's folder
-    for (const store of (await mediaStores(env, deps.fetch, workspaceId)).all) {
+    for (const store of all) {
       // one store failing (a revoked grant, a bucket key that stopped working) doesn't stop the others
       try {
         const root = await inboxId(env, store, folder);

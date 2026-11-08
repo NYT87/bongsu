@@ -6,7 +6,7 @@ import { inboxTexts, nextWorkspaces, scanInbox } from "@bongsu/core/inbox";
 import { saveStore } from "@bongsu/core/media/manage";
 import { createWorkspace } from "@bongsu/core/people";
 import { workspaceSettings } from "@bongsu/core/workspaces";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   approve,
   clearPlan,
@@ -301,6 +301,41 @@ describe("the Drive inbox", () => {
       workspace_id: string;
     }>();
     expect(notes.results.map((n) => n.workspace_id)).toEqual(["b", "default"]);
+  });
+
+  it("skips a workspace whose settings can't be read, counts it failed, and moves on to the next", async () => {
+    const e = await testEnv(env, { INBOX_WORKSPACES_PER_RUN: "1" });
+    await workspace("a1");
+    await workspace("b1");
+    w.drivePut("b1/inbox/trip/b.mp4", { md5: MD5, mimeType: "video/mp4", modified: OLD });
+    // a1's settings row can't be read (a broken row, a database hiccup)
+    const DB = new Proxy(env.DB, {
+      get: (db, k) =>
+        k === "prepare"
+          ? (sql: string) => {
+              const st = db.prepare(sql);
+              if (!sql.includes("FROM workspace_settings WHERE workspace_id")) return st;
+              return new Proxy(st, {
+                get: (t, j) =>
+                  j === "bind"
+                    ? (...args: unknown[]) => {
+                        if (args[0] !== "a1") return t.bind(...args);
+                        return { first: () => Promise.reject(new Error("settings unreadable")) };
+                      }
+                    : Reflect.get(t, j, t),
+              });
+            }
+          : Reflect.get(db, k, db),
+    });
+    const log = vi.spyOn(console, "log");
+    const first = await scanInbox({ ...e, DB }, { fetch: w.fetch, now: NOW });
+    expect(first.reached).toEqual(["a1"]);
+    expect(log.mock.calls.some(([m]) => String(m) === "inbox: a1: settings unreadable")).toBe(true);
+    // the next run goes on after it instead of trying it first again
+    const next = await scanInbox({ ...e, DB }, { fetch: w.fetch, now: NOW });
+    expect(next.reached).toEqual(["b1"]);
+    expect(next.drafted).toEqual(["trip/b"]);
+    log.mockRestore();
   });
 
   it("drafts nothing into an archived workspace, and keeps scanning the others", async () => {
