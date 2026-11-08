@@ -105,6 +105,8 @@ dashboard's mark.
 | `JOBS_PER_TICK` | optional, on the cron Worker: publishing jobs advanced per run (default `4`, at most `100`). See [How many go out at once](#how-many-go-out-at-once) |
 | `YOUTUBE_UPLOAD_MODE` | optional, on the cron Worker: `"chunk"` sends YouTube uploads in 8 MiB pieces instead of streaming the file in one request. Leave it unset unless YouTube answers the upload with 400 or 411, or an upload fails on the CPU limit: watch the first real upload (see [YouTube](youtube.md#uploads-on-cloudflare)) |
 | `INBOX_WORKSPACES_PER_RUN` | optional, on the cron Worker: workspaces whose inbox folder one run scans (default `3`, at most `100`); the next run carries on with the following ones. Set at deploy time, never in the dashboard |
+| `CRON_INSTAGRAM`, `CRON_SHORTS`, `CRON_UPKEEP` | optional, on the cron Worker: when each run happens, a five-field cron expression in UTC (defaults `*/5 * * * *`, `2,32 * * * *`, `7,22,37,52 * * * *`). See [When the runs happen](#when-the-runs-happen) |
+| `RUN_SUBREQUESTS` | optional, on the cron Worker: the outgoing calls one run may make (default `50`, the free plan's limit; a whole number from `10` to `10000000`, or `unlimited`). See [How much a run does](#how-much-a-run-does) |
 
 ## Secrets
 
@@ -145,21 +147,78 @@ The same names, from the environment (`.env` with docker-compose; [self-hosting.
 | `RP_ID` | `PUBLIC_URL`'s host | the passkeys' relying party |
 | `JOBS_PER_TICK` | `20` | publishing jobs advanced per run, at most `100` ([How many go out at once](#how-many-go-out-at-once)) |
 | `INBOX_WORKSPACES_PER_RUN` | `20` | workspaces whose inbox folder one run scans, at most `100` |
+| `CRON_INSTAGRAM`, `CRON_SHORTS`, `CRON_UPKEEP` | as on Cloudflare | when each run happens ([When the runs happen](#when-the-runs-happen)); an invalid one stops the server at startup, naming the variable |
+| `RUN_SUBREQUESTS` | `unlimited` | the outgoing calls one run may make; Node has no such limit, so only the per-step caps bound a run |
 
 ## How many go out at once
 
-Every 5 minutes the scheduler advances at most `JOBS_PER_TICK` publishing jobs, all accounts and workspaces together,
-the oldest due first. A video takes a few runs (Instagram processes it, then Bongsu publishes it) and holds its place
-until it's out, so items due at the same minute beyond that number go out over the next runs. Nothing is dropped,
-but a job more than 6 hours late waits for you instead (`CATCH_UP_S`).
+At each Instagram run (every 5 minutes by default, `CRON_INSTAGRAM`) the scheduler advances at most `JOBS_PER_TICK`
+publishing jobs, all accounts and workspaces together, the oldest due first. A video takes a few runs (Instagram
+processes it, then Bongsu publishes it) and holds its place until it's out, so items due at the same minute beyond
+that number go out over the next runs. Nothing is dropped, but a job more than 6 hours late waits for you instead
+(`CATCH_UP_S`).
 
 - **Cloudflare: 4.** Each job costs a few subrequests and the free plan allows 50 per invocation. On the paid plan
-  (1,000 subrequests) you can raise it: set `JOBS_PER_TICK` in `[vars]` of `wrangler.cron.toml`, the Worker that runs
-  the schedules.
+  you can raise it: set `JOBS_PER_TICK` and `RUN_SUBREQUESTS` in `[vars]` of `wrangler.cron.toml`, the Worker that runs
+  the schedules ([How much a run does](#how-much-a-run-does)).
 - **Node and Docker: 20.** No such limit there; set `JOBS_PER_TICK` in `.env` to change it.
 
 Bongsu has no limit of its own per account. Instagram allows 100 posts per account per 24 hours through the API
 ([Instagram](instagram-graph.md#limits)); YouTube releases scheduled videos itself, so any number go public together.
+
+## When the runs happen
+
+The scheduler has three runs. Each has a schedule: a five-field cron expression in UTC (minute, hour, day of month,
+month, day of week), from its variable or else the default.
+
+| Run | Variable | Default | Does |
+|---|---|---|---|
+| `instagram` | `CRON_INSTAGRAM` | `*/5 * * * *` | publishes what's due |
+| `shorts` | `CRON_SHORTS` | `2,32 * * * *` | posts the first comments on YouTube Shorts |
+| `upkeep` | `CRON_UPKEEP` | `7,22,37,52 * * * *` | the inbox scan, moving posted media aside, the daily digest, the 24 h results, metrics, followers, new comments, renewing connections, checking the media stores |
+
+- Each field takes `*`, numbers, ranges (`1-5`), lists (`7,22`) and steps (`*/10`, `0-30/10`); day of week is 0–6,
+  Sunday 0 (7 is accepted too). When both day of month and day of week are set, either one matching is enough. Names
+  (`MON`, `JAN`), macros (`@hourly`) and a seconds field are refused.
+- Every minute the scheduler starts the runs whose schedule matches that minute: one cron trigger on Cloudflare
+  (`* * * * *` in `wrangler.cron.toml`, whatever the schedules), one timer on Node. Changing a schedule is a variable
+  and a deploy, never a trigger.
+- Runs due in the same minute start side by side, each under its own lock, so two runs of the same name never
+  overlap. On the Workers free plan they then share one invocation's CPU (10 ms): the dashboard warns when your
+  schedules do. The defaults never share a minute.
+- Timings follow the interval: a publishing run's lock frees a minute before its next run (4 minutes for Instagram at
+  the default), and Bongsu waits for Instagram to process a video 2 hours from its first check, whatever the interval.
+- An invalid expression: on Node the server refuses to start and names the variable; on Cloudflare that run is
+  skipped (logged every minute, shown in red on the dashboard) and the others go on.
+- A very sparse schedule (yearly, say) is slower to check on Cloudflare: once a month or more often is best.
+- The upkeep run was called the inbox run before; its log lines now start with `upkeep:`.
+
+## How much a run does
+
+Cloudflare counts every outgoing call (a subrequest) of an invocation: 50 on the free plan, 10,000 by default on the
+paid plan, up to 10 million with the Worker's `limits` setting. `RUN_SUBREQUESTS` tells Bongsu that number. Set it on
+the cron Worker to match your plan; Node and Docker default to `unlimited`.
+
+A run counts its own calls and never makes more. A call past the limit is refused before it's sent, and the work it
+was for waits for the next run:
+
+- **Reserve:** uploads and the upkeep steps leave 6 calls for what a run does at its end (notifications, the sweep
+  of removed posts).
+- **Instagram and Shorts runs:** the jobs advance until the calls run out (an upload starts only with a few left);
+  the rest wait for the next run. A Shorts comment refused this way is tried again at the next Shorts run.
+- **Upkeep:** the steps run in the order of the table above. Each may use what is left, less the reserve, less one
+  unit of work for each step after it (an inbox folder, a post's metrics, an account's followers…), so the inbox comes
+  first and no later step is left with nothing. What a step doesn't use goes to the steps after it. The steps' own
+  caps (`METRICS_PER_RUN`, `ACCOUNTS_PER_RUN`, `INBOX_WORKSPACES_PER_RUN`…) still apply, so a large number doesn't
+  take everything at once. Nothing runs after the last step, so upkeep never spends the reserve: at 50 it uses at
+  most 44.
+- A step stopped by its share carries on at the next run, where it left off; the daily digest waits a run rather
+  than go out half-sent.
+- A value outside the range falls back to the default and the dashboard flags it.
+
+Workers also cap the database queries of one invocation, separately; `RUN_SUBREQUESTS` doesn't count them. That cap
+will be measured on the first real deployment (issue #58); until then the steps keep their own bounds on database
+work (`ACCOUNT_BACKFILL_PER_RUN`).
 
 ## The media stores' layout
 
@@ -191,11 +250,11 @@ before this release), editable by its admins in Settings → Media. Bongsu never
 | `METRICS_DAILY_UNTIL_S` | 30 days | …until this age |
 | `METRICS_WEEKLY_S` | 7 days | then a sample this often… |
 | `METRICS_STOP_S` | 90 days | …until this age; after it no more samples |
-| `METRICS_PER_RUN` | 4 | samples taken per inbox cron run, oldest due first |
+| `METRICS_PER_RUN` | 4 | samples taken per upkeep run, oldest due first |
 | `METRICS_ATTEMPTS_PER_RUN` | 8 | samples tried per run, failures included (a failed post waits one interval; an account's first failure ends its turn for the run) |
 | `METRICS_REFRESH_PER_RUN` | 2 | YouTube upload lists the sampler refreshes per run once an hour old, the oldest first |
 | `ACCOUNT_METRICS_S` | 24 h | how often each account's follower count is sampled |
-| `ACCOUNTS_PER_RUN` | 4 | accounts sampled per inbox run at most |
+| `ACCOUNTS_PER_RUN` | 4 | accounts sampled per upkeep run at most |
 | `ACCOUNTS_ATTEMPTS_PER_RUN` | 8 | accounts tried per run, failures included (a failing account waits 6 hours) |
 | `ACCOUNT_BACKFILL_PER_RUN` | 200 | snapshot samples the one-time backfill adds per run (a long history takes a few runs) |
 | `METRICS_MAX_POINTS` | 400 | points a metrics read answers at most (the newest) |

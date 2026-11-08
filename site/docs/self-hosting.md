@@ -27,6 +27,9 @@ Fill in `.env` ([configuration.md](configuration.md) explains each setting; the 
 - Optional: `BONGSU_APP_NAME` and `BONGSU_THEME_COLOR` give the app your own name and colour, applied when the image is
   built ([configuration.md](configuration.md#branding)).
 - `DRY_RUN=1` to start: every step runs and notifies, nothing is published.
+- Optional: `CRON_INSTAGRAM`, `CRON_SHORTS`, `CRON_UPKEEP` change when the runs happen
+  ([configuration.md](configuration.md#when-the-runs-happen)). An invalid one stops Bongsu at startup, with the
+  variable's name in the log. `RUN_SUBREQUESTS` is `unlimited` here: no host limits a run's calls.
 
 ## 2. Start
 

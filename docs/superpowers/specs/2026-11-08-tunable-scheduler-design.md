@@ -20,7 +20,7 @@ A deployment that sets no new variable behaves as today.
 |---|---|---|
 | D1 | All of #64 in one spec and one pull request; the plan builds part A (when) before part B (how much) | The dashboard section and the docs would otherwise change twice |
 | D2 | The cron Worker has **one** trigger, `* * * * *`; core decides each minute which runs are due | One source of truth for both runtimes; any expression works without touching triggers; 1 of the free plan's 5 cron triggers per account instead of 3 (LADN shares the account, #58) |
-| D3 | One per-run budget, `RUN_SUBREQUESTS`, counted on the real `fetch` calls, shared out by **fair share** with carry-over, with a hard stop | Counts what Cloudflare counts instead of estimating; no step can starve the rest or overshoot |
+| D3 | One per-run budget, `RUN_SUBREQUESTS`, counted on the real `fetch` calls, shared out **in order, keeping one unit of work for each later step**, with carry-over and a hard stop (amended during the build: was "fair share") | Counts what Cloudflare counts instead of estimating; the inbox keeps today's room, no step can starve the rest or overshoot |
 | D4 | Set at deploy time only; the dashboard displays, never edits | The values belong to the hosting plan, and a wrong one fails runs quietly (decided in Phase 13 part 3a) |
 
 ## Part A: when runs happen
@@ -108,10 +108,15 @@ run then works as today.
 
 Generalises the tick's counter (`RunBudget` in `tick.ts`):
 
-- `runBudget(env, fetch)` → `{ fetch, used(), left(), step(name, stepsLeft) }`. Its `fetch` counts every call.
+- `runBudget(limit, fetcher)` → `{ fetch, used(), left(), limit, step(name, keepForLater), stopped() }` (the limit
+  comes from `runSubrequests(env)`). Its `fetch` counts every call.
 - **Reserve:** `SUBREQUESTS_KEPT` (6) is held back for what a run does at its end (notifications, the sweep).
-- **Fair share:** `step(name, stepsLeft)` returns a `StepBudget` whose share is `floor((left() − reserve) / stepsLeft)`;
-  whatever a step leaves unused stays in `left()` for the steps after it.
+- **In order, a unit kept for each later step** (amended during the build; the first draft's fair share,
+  `floor((left() − reserve) / stepsLeft)`, gave the inbox 4 calls at 50 instead of today's ~30):
+  `step(name, keepForLater)` returns a `StepBudget` whose share is `left() − reserve − keepForLater`, where
+  `keepForLater` is the sum of the later steps' one unit of work each (`UPKEEP_UNIT_CALLS`, each step's
+  `<STEP>_UNIT_CALLS`). Whatever a step leaves unused stays in `left()` for the steps after it; per-step caps still
+  bound each step. Nothing runs after upkeep's last step, so upkeep never spends the reserve (at most 44 at 50).
 - **`StepBudget`:** `{ fetch, left(), canAfford(n) }`. Its `fetch` refuses a call past the step's share by throwing
   `BudgetSpent` before sending anything, so a step that forgets to check still can't overshoot.
 - `unlimited`: shares are `Infinity`; the existing per-step caps alone bound the work.
@@ -128,7 +133,7 @@ Generalises the tick's counter (`RunBudget` in `tick.ts`):
 ### Upkeep
 
 The steps run in today's order: inbox, cleanup, digest, results, metrics, accounts, comments, connections, media stores.
-Each gets `budget.step(name, stepsLeft)` and its `StepBudget.fetch` instead of the run's `fetch`.
+Each gets `calls.step(name, keepForLater)` and its `StepBudget.fetch` instead of the run's `fetch`.
 
 - Each step checks `canAfford(n)` before each unit of work (a workspace's inbox and its store reads, a post's metrics,
   an account's followers, a connection's refresh, a store's check) and stops cleanly when it can't; its next run picks
@@ -155,8 +160,10 @@ matcher):
 
 - **Runs:** name, expression, next firing in the viewer's zone, the variable that sets it and whether it is the
   default or set; an invalid one in red with its variable and the parser's message.
-- **Limits in effect:** `RUN_SUBREQUESTS` (or "unlimited"), `JOBS_PER_TICK`, `INBOX_WORKSPACES_PER_RUN`, each as
-  clamped, default or set; a fallen-back invalid value flagged.
+- **Limits in effect:** `RUN_SUBREQUESTS` (or "unlimited"), `JOBS_PER_TICK`, `INBOX_WORKSPACES_PER_RUN`: the value the
+  latest run used, with a refused `RUN_SUBREQUESTS` flagged (amended during the build: no "default/set", since the
+  cron side doesn't record where a limit came from and Node fills its default as a variable; the docs name each
+  variable and its default).
 - **Last run of each:** when, calls used of the budget, and the steps that stopped on their share. Each run overwrites
   one settings row (`run_last:<name>`, JSON); no history accumulates. Replaces today's "last inbox run".
 
@@ -175,11 +182,11 @@ Only instance admins reach it (as today); `apps/cloudflare/test/workspaces.test.
 ## Tests
 
 Unit (`packages/core/test`): the matcher (fields, ranges, lists, steps, day-of-month/day-of-week rule, invalid input,
-`shortestGap`); the budget (fair share, carry-over, reserve, `BudgetSpent` on overshoot, `unlimited`, clamping).
+`shortestGap`); the budget (shares in order with a unit kept for later steps, carry-over, reserve, `BudgetSpent` on overshoot, `unlimited`, clamping).
 
 Integration (`apps/cloudflare/test`, fake world):
 
-- `runDue` runs the right run for custom expressions, runs same-minute runs in order, and skips only an invalid one.
+- `runDue` runs the right run for custom expressions, starts same-minute runs side by side, and skips only an invalid one.
 - The tick's lock and the Instagram wait follow the interval.
 - Upkeep never exceeds `RUN_SUBREQUESTS` (counted on the world's fetch), shares carry over, and a step that ignores its
   share is stopped by `BudgetSpent` while the next steps still run.

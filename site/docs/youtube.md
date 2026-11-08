@@ -175,7 +175,7 @@ Bongsu streams the file from the media store into YouTube's resumable upload; a 
 after it started, for all its uploads together) resumes from the offset YouTube kept. Streaming's CPU cost on the Workers free plan **was not measured** (the check
 needs a deploy). If an upload fails on the CPU limit, set the variable `YOUTUBE_UPLOAD_MODE` to `chunk` on the cron
 Worker (a `[vars]` entry in `wrangler.cron.toml`, then deploy): the file then goes in 8 MiB pieces, as many as the
-run's 50 subrequests allow (about 20, so some 160 MiB a run); the next run goes on from there. Node doesn't need it.
+run's calls allow (`RUN_SUBREQUESTS`; at the free plan's 50, about 20, so some 160 MiB a run); the next run goes on from there. Node doesn't need it.
 
 **Watch the first real upload.** The streamed upload sends the file as a stream with its length set by hand, which hasn't
 been tried on Cloudflare yet. Schedule a first video you can watch going up
@@ -203,7 +203,7 @@ Each move is audited (`release_move`) and you get a "Release moved" notification
 
 ## Keeping it working
 
-Every week the inbox cron checks each channel's refresh token with Google. If Google refuses it (access removed in
+Every week the upkeep run checks each channel's refresh token with Google. If Google refuses it (access removed in
 the Google account, the password changed, or the app left in Testing), the channel turns `broken`, you get one
 notification, and no comment is posted for it until it's reconnected: **Reconnect** on the dashboard's Connections
 page. **Remove** there also revokes Bongsu's access at Google; the account stays (with its Shorts comments) until it's

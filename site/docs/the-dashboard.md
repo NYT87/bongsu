@@ -192,9 +192,14 @@ members can't open it, it gets no daily digest and its comments and metrics are 
 back as it was (posts that came due meanwhile go out only within the catch-up window). Archiving, restoring and adding
 an admin ask for your passkey again.
 
-**Scheduler** is a read-only section for instance admins: the three runs and their times, `JOBS_PER_TICK` and
-`INBOX_WORKSPACES_PER_RUN` as the cron last recorded them, when the inbox last ran, and a notice when the schedules
-are off (`SCHEDULES=off` on Node). They are set where the instance is deployed ([Configuration](configuration.md)); making the schedule tunable is tracked in issue #64.
+**Scheduler** is a read-only section for instance admins. For each run (Instagram, Shorts, upkeep): its cron
+expression, the variable that sets it or "default", its next time in your zone, and its last run (when, the calls it
+used of its limit, and the steps that stopped on their share). An invalid expression shows in red with the reason,
+and runs that share a minute get a warning (on the Workers free plan they share one invocation's CPU). Below, the
+limits the latest runs used: `RUN_SUBREQUESTS` (flagged when its value was refused and the default used),
+`JOBS_PER_TICK` and `INBOX_WORKSPACES_PER_RUN`, and a notice when the schedules are off (`SCHEDULES=off` on Node).
+They are set where the instance is deployed, never here: [When the runs happen](configuration.md#when-the-runs-happen),
+[How much a run does](configuration.md#how-much-a-run-does).
 
 ## Settings
 

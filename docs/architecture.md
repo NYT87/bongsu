@@ -5,7 +5,7 @@
   AI agents (REST /v1, /mcp) ┼─► bongsu ──┐    ├─ YouTube Data API (Shorts comments)
    Instagram fetching media ─┘  (Worker)  ├─ D1 ┤
                                           │    └─ Google Drive (media, inbox)
-                   cron triggers ─► bongsu-cron
+       cron trigger (every minute) ─► bongsu-cron
 ```
 
 ## Two Workers, one database
@@ -20,13 +20,43 @@ as Workers assets.
 
 ## Cron runs
 
-| Schedule | Run |
-|---|---|
-| `*/5 * * * *` | Instagram: create jobs for due approved items, advance up to `JOBS_PER_TICK` jobs: 4 on Cloudflare, 20 on Node (`packages/core/src/tick.ts`) |
-| `2,32 * * * *` | YouTube Shorts comments |
-| `7,22,37,52 * * * *` | Inbox scan, per workspace media folder (`<folder>/inbox` in its stores), `INBOX_WORKSPACES_PER_RUN` workspaces at a time: 3 on Cloudflare, 20 on Node (`packages/core/src/inbox.ts`); moving posted media aside, daily digest, 24 h results, new comments |
+The cron Worker has one trigger, `* * * * *`; Node has one node-cron task at the same rate. Each minute both call
+`runDue` (`packages/core/src/schedules.ts`), which starts the runs whose schedule matches that minute. A schedule is a
+`CRON_*` variable or its default, parsed by core's own matcher (`packages/core/src/cron.ts`, five fields, UTC), so the
+two runtimes can't drift.
 
-Each run takes a lock in the database, so two runs never overlap.
+| Run | Variable, default | Does |
+|---|---|---|
+| `instagram` | `CRON_INSTAGRAM`, `*/5 * * * *` | create jobs for due approved items, advance up to `JOBS_PER_TICK` jobs: 4 on Cloudflare, 20 on Node (`packages/core/src/tick.ts`) |
+| `shorts` | `CRON_SHORTS`, `2,32 * * * *` | YouTube Shorts comments |
+| `upkeep` | `CRON_UPKEEP`, `7,22,37,52 * * * *` | the steps of `UPKEEP_STEPS`, in order: inbox scan per workspace media folder (`INBOX_WORKSPACES_PER_RUN` workspaces at a time: 3 on Cloudflare, 20 on Node), moving posted media aside, daily digest, 24 h results, metrics, followers, new comments, connections, media stores |
+
+- Runs due the same minute start side by side; each takes its own lock in the database, so two runs of one name never
+  overlap. A minute with nothing due makes no database call (Workers cap D1 queries per invocation).
+- `runDue` writes the schedules it used to the `schedules` settings row, and each run writes `run_last:<name>` (when,
+  calls used, the limit, the steps stopped, a refused `RUN_SUBREQUESTS`): the `bongsu` Worker serves the dashboard and
+  can't read the cron Worker's variables.
+- The publishing runs' lock and upload deadline follow the run's shortest interval (`lockSeconds`); the wait for
+  Instagram's processing is a time (`MAX_POLL_S`, 2 h from the first poll), not a count of runs.
+- An invalid `CRON_*`: Node refuses to start; Cloudflare logs it each minute and skips only that run.
+
+### The run budget
+
+`RUN_SUBREQUESTS` (50 on Cloudflare, `unlimited` on Node) bounds the `fetch` calls of one run
+(`packages/core/src/budget.ts`, `runBudget(limit, fetcher)`). The run's `fetch` counts every call and refuses one
+past the limit with `BudgetSpent` before sending it.
+
+- `SUBREQUESTS_KEPT` (6) is the reserve for the end of a run (notes, the sweep): the tick's upload gate leaves it, and
+  the upkeep steps' shares leave it out.
+- Upkeep: `calls.step(name, keepForLater)` gives each step, when it starts, what is left less the reserve less one
+  unit of work for each later step (`UPKEEP_UNIT_CALLS`, each step's `*_UNIT_CALLS`). Unused calls carry forward; the
+  per-step caps still bound each step. A step checks `canAfford(n)` before each unit and stops cleanly; a
+  `BudgetSpent` escaping it is logged like any step failure and the next step runs. Nothing follows the last step, so
+  upkeep spends at most the limit less the reserve (44 at 50).
+- The tick: a `BudgetSpent` leaves the job for the next run with no attempt counted; a Shorts comment refused this
+  way is re-armed for the next Shorts run; the sweep waits for a run that didn't spend its calls.
+- D1 queries are capped per invocation too and aren't counted here: the steps keep their own query bounds
+  (`ACCOUNT_BACKFILL_PER_RUN`), and the cap is to be measured on the first real deployment (#58).
 
 ## How a Reel goes out
 

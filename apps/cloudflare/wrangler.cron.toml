@@ -14,10 +14,11 @@ VAPID_PUBLIC_KEY = "REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY"
 VAPID_SUBJECT = "mailto:owner@example.com"
 # INBOX_WORKSPACES_PER_RUN = "3"   # workspaces the inbox scan reaches per run (the rest on the next ones): 3 fits the free plan
 # JOBS_PER_TICK = "4"   # publishing jobs advanced per run: 4 fits the free plan's 50 subrequests; raise it on the paid plan
+# RUN_SUBREQUESTS = "50"   # outgoing calls one run may make: 50 on the free plan, "10000" on the paid plan
 # The runs' schedules (five-field cron, UTC), checked every minute by the trigger below; unset, these defaults:
 # CRON_INSTAGRAM = "*/5 * * * *"        # Instagram publishing
 # CRON_SHORTS = "2,32 * * * *"          # Shorts comments
-# CRON_UPKEEP = "7,22,37,52 * * * *"    # the inbox, cleanup, digest, results, metrics, comments
+# CRON_UPKEEP = "7,22,37,52 * * * *"    # upkeep: the inbox, cleanup, digest, results, metrics, comments, connections
 
 [[d1_databases]]
 binding = "DB"
