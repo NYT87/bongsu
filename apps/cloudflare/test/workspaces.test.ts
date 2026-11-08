@@ -821,7 +821,16 @@ describe("a workspace's media settings", () => {
       ),
     ).not.toContain("a-client");
     expect((await call("/admin-api/settings/oauth-apps/google/remove", {})).status).toBe(200);
-    expect((await call("/admin-api/scheduler")).status).toBe(403);
+    // the Scheduler is the instance's: a workspace admin gets none of what the runs recorded
+    await env.DB.prepare(
+      "INSERT INTO settings (key, value) VALUES ('run_last:instagram', ?1) ON CONFLICT (key) DO UPDATE SET value = ?1",
+    )
+      .bind(JSON.stringify({ at: nowS, used: 7, limit: 50, stopped: [], invalid: null }))
+      .run();
+    const scheduler = await call("/admin-api/scheduler");
+    expect(scheduler.status).toBe(403);
+    expect(JSON.stringify(scheduler.json)).not.toMatch(/used|limits|runs/);
+    await env.DB.prepare("DELETE FROM settings WHERE key = 'run_last:instagram'").run();
     expect(
       await env.DB.prepare("SELECT 1 FROM media_store WHERE id = 's3-default' AND is_default = 1").first(),
     ).toBeTruthy();

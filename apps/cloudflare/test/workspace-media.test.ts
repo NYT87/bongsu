@@ -4,12 +4,14 @@ import { env } from "cloudflare:workers";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { createSession, markVerified } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
-import { CRON_INSTAGRAM, CRON_SHORTS, CRON_UPKEEP } from "@bongsu/core/constants";
+import { CRON_INSTAGRAM, RUN_SUBREQUESTS } from "@bongsu/core/constants";
+import { nextFiring, parseCron } from "@bongsu/core/cron";
 import type { Env } from "@bongsu/core/env";
+import { utcIso } from "@bongsu/core/formats/time";
 import { scanInbox } from "@bongsu/core/inbox";
 import { saveStore } from "@bongsu/core/media/manage";
 import { createWorkspace } from "@bongsu/core/people";
-import { tick } from "@bongsu/core/tick";
+import { runDue } from "@bongsu/core/schedules";
 import { beforeEach, describe, expect, it } from "vitest";
 import { seedMediaStore, TEST_S3_KEYS, TEST_S3_SETTINGS, testEnv, World } from "./world";
 
@@ -76,7 +78,7 @@ beforeEach(async () => {
       "DELETE FROM workspace_oauth_apps",
       "DELETE FROM oauth_states",
       "DELETE FROM memberships WHERE user_id IN ('amy', 'ed', 'cy', 'ina')",
-      "DELETE FROM settings WHERE key LIKE 'tick_last:%' OR key IN ('inbox_last', 'inbox_cursor')",
+      "DELETE FROM settings WHERE key LIKE 'tick_last:%' OR key LIKE 'run_last:%' OR key IN ('inbox_last', 'inbox_cursor', 'schedules')",
       "UPDATE workspace_settings SET media_folder = 'UPLOADS' WHERE workspace_id = 'default'",
       "INSERT INTO users (id, name, created_at, instance_admin) VALUES ('amy', 'Amy', 0, 0) ON CONFLICT (id) DO UPDATE SET instance_admin = 0",
       "INSERT INTO users (id, name, created_at, instance_admin) VALUES ('ed', 'Ed', 0, 0) ON CONFLICT (id) DO UPDATE SET instance_admin = 0",
@@ -368,30 +370,85 @@ describe("a workspace's media settings", () => {
 });
 
 describe("the Scheduler page", () => {
-  it("an instance admin gets the runs, and what the last tick and inbox run recorded", async () => {
-    const ina = await as("ina");
-    expect((await ina("/admin-api/scheduler")).json).toEqual({
-      runs: [
-        { name: "instagram", cron: CRON_INSTAGRAM },
-        { name: "shorts", cron: CRON_SHORTS },
-        { name: "upkeep", cron: CRON_UPKEEP },
-      ],
-      jobsPerTick: null,
-      inboxWorkspacesPerRun: null,
-      inboxLast: null,
+  it("before the cron side has run, nothing is recorded", async () => {
+    expect((await (await as("ina"))("/admin-api/scheduler")).json).toEqual({
+      runs: null,
+      limits: { runSubrequests: null, jobsPerTick: null, inboxWorkspacesPerRun: null },
+      last: { instagram: null, shorts: null, upkeep: null },
       schedulesOff: false,
-      variables: { jobsPerTick: "JOBS_PER_TICK", inboxWorkspacesPerRun: "INBOX_WORKSPACES_PER_RUN" },
+      variables: {
+        runSubrequests: "RUN_SUBREQUESTS",
+        jobsPerTick: "JOBS_PER_TICK",
+        inboxWorkspacesPerRun: "INBOX_WORKSPACES_PER_RUN",
+      },
     });
-    const cron = await testEnv(env, { JOBS_PER_TICK: "3", INBOX_WORKSPACES_PER_RUN: "1" });
-    const now = new Date("2026-10-20T09:00:00Z");
-    await tick(cron, { fetch: w.fetch, now }, "instagram");
-    await scanInbox(cron, { fetch: w.fetch, now });
-    const at = "2026-10-20T09:00:00Z";
+  });
+
+  it("an instance admin gets the recorded runs, their next firing, the limits and each run's last use", async () => {
+    const ina = await as("ina");
+    const cron = await testEnv(env, {
+      JOBS_PER_TICK: "3",
+      CRON_SHORTS: "*/5 * * * *",
+      CRON_UPKEEP: "61 * * * *",
+      RUN_SUBREQUESTS: "unlimited",
+    });
+    expect(await runDue(cron, w.fetch, new Date("2026-10-20T09:00:00Z"))).toEqual(["instagram", "shorts"]);
+    const next = (expr: string) => utcIso(nextFiring(parseCron(expr), new Date()).getTime() / 1000);
+    const before = [next(CRON_INSTAGRAM), next("*/5 * * * *")];
     const j = (await ina("/admin-api/scheduler")).json;
-    expect(j.jobsPerTick).toEqual({ value: 3, at });
-    expect(j.inboxWorkspacesPerRun).toEqual({ value: 1, at });
-    expect(j.inboxLast).toMatchObject({ at, reached: 1, limit: 1 });
-    expect(j.inboxLast.total).toBeGreaterThanOrEqual(2);
+    const after = [next(CRON_INSTAGRAM), next("*/5 * * * *")];
+    const [ig, sh, up] = j.runs;
+    expect(ig).toMatchObject({
+      name: "instagram",
+      expr: CRON_INSTAGRAM,
+      variable: "CRON_INSTAGRAM",
+      source: "default",
+      error: null,
+      shared: ["shorts"], // the same minutes: one Worker invocation's CPU on the free plan
+    });
+    expect([before[0], after[0]]).toContain(ig.next);
+    expect(sh).toMatchObject({ name: "shorts", expr: "*/5 * * * *", source: "variable", error: null });
+    expect(sh.shared).toEqual(["instagram"]);
+    expect([before[1], after[1]]).toContain(sh.next);
+    expect(up).toMatchObject({ name: "upkeep", expr: "61 * * * *", source: "variable", next: null, shared: [] });
+    expect(up.error).toMatch(/61/);
+    const at = "2026-10-20T09:00:00Z";
+    expect(j.limits).toEqual({
+      runSubrequests: { value: "unlimited", invalid: null },
+      jobsPerTick: { value: 3, at },
+      inboxWorkspacesPerRun: null,
+    });
+    expect(j.last.instagram).toEqual({ at, used: expect.any(Number), limit: "unlimited", stopped: [] });
+    expect(j.last.shorts).toMatchObject({ at, limit: "unlimited" });
+    expect(j.last.upkeep).toBeNull();
+  });
+
+  it("the run budget is the latest run's: a refused RUN_SUBREQUESTS shows with the default used", async () => {
+    const ina = await as("ina");
+    await runDue(await testEnv(env, { RUN_SUBREQUESTS: "100" }), w.fetch, new Date("2026-10-20T09:00:00Z"));
+    await runDue(await testEnv(env, { RUN_SUBREQUESTS: "lots" }), w.fetch, new Date("2026-10-20T09:07:00Z"));
+    const j = (await ina("/admin-api/scheduler")).json;
+    expect(j.limits.runSubrequests).toEqual({ value: RUN_SUBREQUESTS, invalid: "lots" });
+    expect(j.last.instagram).toMatchObject({ at: "2026-10-20T09:00:00Z", limit: 100 });
+    expect(j.last.upkeep).toMatchObject({ at: "2026-10-20T09:07:00Z", limit: RUN_SUBREQUESTS });
+    expect(j.runs.map((r: { shared: string[] }) => r.shared)).toEqual([[], [], []]); // the defaults never share
+  });
+
+  it("runs at the same hour on different weekdays don't share a minute", async () => {
+    const cron = await testEnv(env, { CRON_INSTAGRAM: "0 3 * * 1", CRON_UPKEEP: "0 3 * * 2" });
+    expect(await runDue(cron, w.fetch, new Date("2026-10-19T03:00:00Z"))).toEqual(["instagram"]); // a Monday
+    const runs = (await (await as("ina"))("/admin-api/scheduler")).json.runs;
+    expect(runs.map((r: { shared: string[] }) => r.shared)).toEqual([[], [], []]);
+  });
+
+  it("the inbox's workspaces per run still come from its own record", async () => {
+    const ina = await as("ina");
+    const cron = await testEnv(env, { INBOX_WORKSPACES_PER_RUN: "1" });
+    await scanInbox(cron, { fetch: w.fetch, now: new Date("2026-10-20T09:00:00Z") });
+    expect((await ina("/admin-api/scheduler")).json.limits.inboxWorkspacesPerRun).toEqual({
+      value: 1,
+      at: "2026-10-20T09:00:00Z",
+    });
   });
 
   it("says when the schedules are off (Node's SCHEDULES=off): nothing runs on its own then", async () => {
