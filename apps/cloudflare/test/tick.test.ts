@@ -97,10 +97,17 @@ describe("tick: the run's call budget", () => {
     await tick(await testEnv(env), { fetch: counted, now: AT });
     expect(n).toBeGreaterThan(0);
     const at = Math.floor(AT.getTime() / 1000);
-    expect(await last("run_last:instagram")).toEqual({ at, used: n, limit: 50, stopped: [] });
+    expect(await last("run_last:instagram")).toEqual({ at, used: n, limit: 50, stopped: [], invalid: null });
     // unlimited is stored as a word: JSON has no Infinity
     await tick(await testEnv(env, { RUN_SUBREQUESTS: "unlimited" }), { fetch: w.fetch, now: AT }, "shorts");
-    expect(await last("run_last:shorts")).toEqual({ at, used: 0, limit: "unlimited", stopped: [] });
+    expect(await last("run_last:shorts")).toEqual({ at, used: 0, limit: "unlimited", stopped: [], invalid: null });
+  });
+
+  it("records a RUN_SUBREQUESTS it refused, and runs with the default", async () => {
+    await tick(await testEnv(env, { RUN_SUBREQUESTS: "abc" }), { fetch: w.fetch, now: AT });
+    expect(await last("run_last:instagram")).toMatchObject({ limit: 50, invalid: "abc" });
+    await tick(await testEnv(env, { RUN_SUBREQUESTS: "200" }), { fetch: w.fetch, now: AT });
+    expect(await last("run_last:instagram")).toMatchObject({ limit: 200, invalid: null });
   });
 
   it("a job whose step runs out of calls stays as it was, and the next job waits for the next run", async () => {
@@ -625,6 +632,29 @@ describe("tick: Shorts comments", () => {
         source: "scheduler",
       },
     ]);
+  });
+
+  it("a comment the run's calls ran out on waits for the next run: not failed, no note", async () => {
+    const e = await testEnv(env);
+    // the budget's own refusal on one kind of call, as runBudget's fetch gives it
+    const refusing =
+      (match: (req: Request) => boolean): typeof fetch =>
+      async (input, init) => {
+        if (match(new Request(input, init))) throw new BudgetSpent("the run");
+        return w.fetch(input, init);
+      };
+    const youtube = (req: Request, method: string, path: string) =>
+      req.method === method && new URL(req.url).pathname === `/youtube/v3/${path}`;
+    // on the privacy check, before any row
+    await tick(e, { fetch: refusing((r) => youtube(r, "GET", "videos")), now: AT }, "shorts");
+    // on the comment itself
+    await tick(e, { fetch: refusing((r) => youtube(r, "POST", "commentThreads")), now: later(30) }, "shorts");
+    expect(w.ytComments).toEqual([]);
+    expect(await jobs()).toEqual([]);
+    expect(w.notifications.filter((n) => /fail/i.test(`${n.title} ${n.body}`))).toEqual([]);
+    await tick(e, { fetch: w.fetch, now: later(60) }, "shorts");
+    expect(w.ytComments).toEqual([{ video: "vidPUBLIC01", text: "Full video: https://youtu.be/x" }]);
+    expect((await jobs()).map((j) => [j.item_key, j.state])).toEqual([["comment:vidPUBLIC01", "done"]]);
   });
 
   it("only says what it would do in dry run", async () => {

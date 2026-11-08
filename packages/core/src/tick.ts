@@ -294,7 +294,12 @@ export async function tick(
     // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
     c.held = await heldWorkspaces(env.DB);
     if (part === "shorts") {
-      await shortsComments(c);
+      try {
+        await shortsComments(c);
+      } catch (e) {
+        // the run's calls ran out: the comments left wait for the next Shorts run
+        if (!(e instanceof BudgetSpent)) throw e;
+      }
       await env.DB.prepare("DELETE FROM audit WHERE at < ?1")
         .bind(nowS - AUDIT_KEEP_S)
         .run();
@@ -329,7 +334,7 @@ export async function tick(
     };
   } finally {
     try {
-      await recordRun(env, part, nowS, run.calls);
+      await recordRun(env, part, nowS, run.calls, run.invalid);
     } finally {
       await release(env.DB, lock, holder);
     }
@@ -337,11 +342,13 @@ export async function tick(
 }
 
 /** What the run spent of its calls (`run_last:<part>`), for the dashboard: the variable lives on this Worker, not the
- *  API's. An unlimited run's limit is the word: JSON has no Infinity. The tick runs no budget steps, so none stopped. */
-async function recordRun(env: Env, part: Part, nowS: number, calls: RunCalls) {
+ *  API's, so a RUN_SUBREQUESTS it refused (`invalid`) is told there too. An unlimited run's limit is the word: JSON has
+ *  no Infinity. The tick runs no budget steps, so none stopped. */
+async function recordRun(env: Env, part: Part, nowS: number, calls: RunCalls, invalid: string | null) {
   const limit = Number.isFinite(calls.limit) ? calls.limit : "unlimited";
+  const value = { at: nowS, used: calls.used(), limit, stopped: calls.stopped(), invalid };
   await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
-    .bind(`run_last:${part}`, JSON.stringify({ at: nowS, used: calls.used(), limit, stopped: calls.stopped() }))
+    .bind(`run_last:${part}`, JSON.stringify(value))
     .run();
 }
 
@@ -389,11 +396,17 @@ const UPLOAD_REQUESTS = 4;
  *  uploads never outlast it), at least 30 s, and every fetch the run makes counted against its calls
  *  (RUN_SUBREQUESTS). Uploads see what is left less SUBREQUESTS_KEPT, which stays for the end of the run (notes, the
  *  sweep); a fetch past the limit itself is refused with BudgetSpent. */
-function tickBudget(env: Env, deps: Deps, lockS: number): RunBudget & { fetch: typeof fetch; calls: RunCalls } {
-  const calls = runBudget(runSubrequests(env).value, deps.fetch);
+function tickBudget(
+  env: Env,
+  deps: Deps,
+  lockS: number,
+): RunBudget & { fetch: typeof fetch; calls: RunCalls; invalid: string | null } {
+  const limit = runSubrequests(env);
+  const calls = runBudget(limit.value, deps.fetch);
   const deadlineS = Math.max(30, Math.min(UPLOAD_BUDGET_S, lockS - 60));
   return {
     calls,
+    invalid: limit.invalid,
     signal: deps.signal ?? AbortSignal.timeout(deadlineS * 1000),
     // Infinity less the reserve stays Infinity
     requestsLeft: () => calls.left() - SUBREQUESTS_KEPT,
@@ -1446,6 +1459,11 @@ async function shortsComments(c: Ctx) {
         await c.setJob(ins.id, { state: "done" });
         await c.note.send(N.commented(label || r.video_id, key), s.workspaceId);
       } catch (e) {
+        // refused before it was sent: the row goes, so the next run takes the comment up as new (no failure, no note)
+        if (e instanceof BudgetSpent) {
+          await c.env.DB.prepare("DELETE FROM jobs WHERE id = ?1").bind(ins.id).run();
+          throw e;
+        }
         await c.setJob(ins.id, { state: "failed", last_error: String((e as Error).message).slice(0, 500) });
         await c.note.send(N.jobFailed(key, String((e as Error).message).slice(0, 300)), s.workspaceId);
       }
