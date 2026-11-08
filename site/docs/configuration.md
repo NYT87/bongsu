@@ -181,7 +181,7 @@ before this release), editable by its admins in Settings → Media. Bongsu never
 | Constant | Default | Meaning |
 |---|---|---|
 | `CATCH_UP_S` | 6 h | a job later than this waits for the owner |
-| `MAX_POLLS` | 24 | ticks to wait for an Instagram container |
+| `MAX_POLL_S` | 2 h | how long to wait for an Instagram container, from the first poll, whatever the interval |
 | `LINK_TTL_S` | 6 h | lifetime of a signed media link |
 | `JOBS_PER_TICK` | 4 | the default jobs advanced per run on Cloudflare (free plan: 50 subrequests per invocation); Node's is `NODE_JOBS_PER_TICK` (20), and the `JOBS_PER_TICK` variable overrides both, up to `JOBS_PER_TICK_MAX` (100) |
 | `AUDIT_KEEP_S` | 180 days | audit log retention |

@@ -176,9 +176,12 @@ describe("YouTube uploads: the tick", () => {
     await run(at(-LEAD + 600));
     await run(at(-LEAD + 900)); // still processing: a poll
     expect(await job()).toMatchObject({ phase: "processing", attempts: 1 });
+    const since = async () => JSON.parse((await job())!.payload).pollingSince;
+    expect(await since()).toBe(Math.floor(at(-LEAD + 900).getTime() / 1000)); // the wait's start
     processed();
     await run(at(-LEAD + 1200));
     expect(await job()).toMatchObject({ state: "container_created", phase: "waiting", attempts: 0 });
+    expect(await since()).toBeUndefined(); // moved on: a later wait starts afresh
     for (const s of [-3600, -600, -1]) {
       await run(at(s));
       expect(await job()).toMatchObject({ state: "container_created", phase: "waiting", attempts: 0 });

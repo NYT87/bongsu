@@ -18,8 +18,8 @@ import type {
   Step,
 } from "./types";
 
-/** How long one run may spend sending files, all its uploads together (from the run's start): below the tick lock's
- *  240 s, the rest goes on the next run. */
+/** How long one run may spend sending files, all its uploads together (from the run's start), the rest going on the
+ *  next run. The tick shortens it to a minute below its lock when runs are closer together (lockSeconds in tick.ts). */
 export const UPLOAD_BUDGET_S = 180;
 /** A piece in chunk mode: a multiple of 256 KiB, as resumable uploads require. */
 export const CHUNK_BYTES = 8 * 1024 * 1024;

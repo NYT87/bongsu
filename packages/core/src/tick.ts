@@ -28,7 +28,7 @@ import {
   JOBS_PER_TICK,
   JOBS_PER_TICK_MAX,
   LINK_TTL_S,
-  MAX_POLLS,
+  MAX_POLL_S,
   SUBREQUESTS_KEPT,
   SUBREQUESTS_PER_RUN,
 } from "./constants";
@@ -75,8 +75,16 @@ import { workspaceSettings, workspaceZone } from "./workspaces";
 export interface Deps {
   fetch: typeof fetch;
   now: Date;
-  /** The run's deadline for long transfers (tests pass their own); default: UPLOAD_BUDGET_S from the run's start. */
+  /** The run's deadline for long transfers (tests pass their own); default: from the run's start, below its lock. */
   signal?: AbortSignal;
+  /** The run's shortest gap between firings (seconds), which sizes its lock; default: every 5 minutes. */
+  intervalS?: number;
+}
+
+/** How long a tick holds its lock: until a minute before the next run (5 minutes: 240 s), at least a minute, and below
+ *  an hour (a run that died holding it blocks the next ones no longer than that). */
+export function lockSeconds(intervalS: number): number {
+  return Math.min(Math.max(intervalS - 60, 60), 3540);
 }
 
 /** Which part of the work this invocation does (one per cron trigger). */
@@ -120,6 +128,8 @@ export interface Payload {
   commented2?: boolean;
   /** An Instagram Story: no caption, no comments. */
   story?: boolean;
+  /** When the current wait for the platform's processing began (unix s, the first poll without progress). */
+  pollingSince?: number;
   /** The item's format (null: decided by the media) and its platform options, as planned. Jobs queued before these
    *  existed carry story / location / coverMs instead. */
   format?: Format | null;
@@ -272,13 +282,14 @@ export async function tick(
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const holder = crypto.randomUUID();
   const lock = `tick:${part}`;
-  if (!(await acquire(env.DB, lock, holder, nowS, 240))) return { status: "locked" };
+  const lockS = lockSeconds(deps.intervalS ?? 300);
+  if (!(await acquire(env.DB, lock, holder, nowS, lockS))) return { status: "locked" };
   try {
     // what this run was limited by: the dashboard reads it, since the variables live on this Worker, not the API's
     await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
       .bind(`tick_last:${part}`, JSON.stringify({ at: nowS, jobsPerTick: jobsPerTick(env) }))
       .run();
-    const run = runBudget(deps);
+    const run = runBudget(deps, lockS);
     const c = new Ctx(env, { ...deps, fetch: run.fetch }, run);
     // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
     c.held = await heldWorkspaces(env.DB);
@@ -358,12 +369,13 @@ const waiting = (c: Ctx, job: JobRow, p: Payload) =>
 /** Subrequests an upload step needs at the least: a token, the offset query, the file's read and its PUT. */
 const UPLOAD_REQUESTS = 4;
 
-/** The run's budget: one deadline for all its uploads, from the run's start and below the 240 s lock (so two slow uploads
- *  never outlast it), and every fetch the run makes counted against the Worker's subrequests. */
-function runBudget(deps: Deps): RunBudget & { fetch: typeof fetch } {
+/** The run's budget: one deadline for all its uploads, from the run's start and a minute below the lock (so two slow
+ *  uploads never outlast it), at least 30 s, and every fetch the run makes counted against the Worker's subrequests. */
+function runBudget(deps: Deps, lockS: number): RunBudget & { fetch: typeof fetch } {
   let used = 0;
+  const deadlineS = Math.max(30, Math.min(UPLOAD_BUDGET_S, lockS - 60));
   return {
-    signal: deps.signal ?? AbortSignal.timeout(UPLOAD_BUDGET_S * 1000),
+    signal: deps.signal ?? AbortSignal.timeout(deadlineS * 1000),
     requestsLeft: () => SUBREQUESTS_PER_RUN - SUBREQUESTS_KEPT - used,
     fetch: (input, init) => {
       used++;
@@ -954,7 +966,7 @@ async function startPublishing(c: Ctx, job: JobRow, p: Payload, post: OutgoingPo
     if (e instanceof QuotaExceeded) return waitQuota(c, job, p);
     throw e;
   }
-  const { notBefore: _waited, ...rest } = p;
+  const { notBefore: _waited, ...rest } = unwaited(p);
   const next: Payload = {
     ...rest,
     step,
@@ -1056,7 +1068,7 @@ async function stepContainer(c: Ctx, job: JobRow, before: Payload) {
     const container = typeof next.data.container === "string" ? next.data.container : null;
     if (container !== job.container_id || progressed(step, next)) {
       // a new container to wait for (a carousel's parent), or a step forward: a fresh count of polls
-      await c.setJob(job.id, { container_id: container, attempts: 0, payload: { ...p, step: next } });
+      await c.setJob(job.id, { container_id: container, attempts: 0, payload: { ...unwaited(p), step: next } });
       return;
     }
     return pollWait(c, job, pr, { ...p, step: next });
@@ -1078,7 +1090,7 @@ async function stepAhead(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: St
   if (r) return settle(c, job, p, r);
   if (c.nowS < job.due_at) {
     // reaching the wait ends the polling: a fresh count for whatever comes after; a run that only waits writes nothing
-    if (moved) await c.setJob(job.id, { payload: p, attempts: 0 });
+    if (moved) await c.setJob(job.id, { payload: unwaited(p), attempts: 0 });
     return;
   }
   // a publishing call that went unanswered (retried here) may have made it public: the notes send the owner to check
@@ -1205,12 +1217,20 @@ async function legacyStep(c: Ctx, job: JobRow, p: Payload): Promise<Step> {
   };
 }
 
+/** The payload without a running wait: a step forward (or a new container) starts a fresh one. */
+function unwaited(p: Payload): Payload {
+  const { pollingSince: _since, ...rest } = p;
+  return rest;
+}
+
 const platformName = (pr: Provider) => platform(pr.platform)?.name ?? pr.platform;
 
-/** A run without progress: one poll more. The step is kept (it carries a provider's state between runs). */
-async function pollWait(c: Ctx, job: JobRow, pr: Provider, p: Payload) {
+/** A run without progress: one poll more. The step is kept (it carries a provider's state between runs). The wait is
+ *  timed from its first poll, so it lasts MAX_POLL_S whatever the runs' interval. */
+async function pollWait(c: Ctx, job: JobRow, pr: Provider, polled: Payload) {
   const attempts = job.attempts + 1;
-  if (attempts > MAX_POLLS) {
+  const p = { ...polled, pollingSince: polled.pollingSince ?? c.nowS };
+  if (c.nowS - p.pollingSince > MAX_POLL_S) {
     const name = platformName(pr);
     await c.setJob(job.id, { state: "failed", attempts, last_error: `${name} never finished processing`, payload: p });
     await c.note.send(N.processingTimeout(job.item_key, name), job.workspace_id);

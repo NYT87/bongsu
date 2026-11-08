@@ -113,14 +113,14 @@ async function recordSchedules(env: Env, all: Schedule[], at: Date): Promise<voi
     .run();
 }
 
-/** One run by name, for the minute `at`. `gapS` is its schedule's shortest gap between firings; the tick doesn't use
- *  it yet (Task 3 of #64 sizes its lock from it), so it keeps its fixed lock for now. */
+/** One run by name, for the minute `at`. `gapS` is its schedule's shortest gap between firings: the ticks size their
+ *  lock and upload deadline from it. */
 export async function runSchedule(
   env: Env,
   fetcher: typeof fetch,
   name: RunName,
   at: Date,
-  _gapS: number,
+  gapS: number,
 ): Promise<void> {
   const deps = { fetch: fetcher, now: at };
   if (name === "upkeep") {
@@ -154,5 +154,5 @@ export async function runSchedule(
     }
     return;
   }
-  console.log(`${name}: ${JSON.stringify(await tick(env, deps, name))}`);
+  console.log(`${name}: ${JSON.stringify(await tick(env, { ...deps, intervalS: gapS }, name))}`);
 }

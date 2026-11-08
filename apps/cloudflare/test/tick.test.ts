@@ -3,8 +3,8 @@ import { serveMedia, signedLink } from "@bongsu/core/media";
 import { mediaStoreCases } from "@bongsu/core/media/conformance";
 import { clearFolderCache, DriveStore } from "@bongsu/core/media/drive";
 import { MediaStores } from "@bongsu/core/media/index";
-import { tick } from "@bongsu/core/tick";
-import { beforeEach, describe, expect, it } from "vitest";
+import { lockSeconds, tick } from "@bongsu/core/tick";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   approve,
   approveShort,
@@ -77,6 +77,68 @@ describe("tick: guards", () => {
     await planItem({ folder: "vlogs/CONTENT/20260823_LISBON", name: "short3_nodate", date: null });
     await tick(await testEnv(env), { fetch: w.fetch, now: AT });
     expect(await jobs()).toEqual([]);
+  });
+});
+
+describe("tick: timings follow the interval", () => {
+  it("frees the lock a minute before the next run, between 1 minute and 59", () => {
+    expect([300, 60, 120, 3600, 86400].map(lockSeconds)).toEqual([240, 60, 60, 3540, 3540]);
+  });
+
+  it("a run every minute holds its lock 60 s, and its uploads get 30 s", async () => {
+    await seedReel(w);
+    igHappyPath(w);
+    const at = Math.floor(AT.getTime() / 1000);
+    let expires: unknown;
+    const fetcher: typeof fetch = async (input, init) => {
+      expires ??= await env.DB.prepare("SELECT expires_at FROM locks WHERE name = 'tick:instagram'").first(
+        "expires_at",
+      );
+      return w.fetch(input, init);
+    };
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await tick(await testEnv(env), { fetch: fetcher, now: AT, intervalS: 60 });
+      expect(timeout).toHaveBeenCalledWith(30_000);
+      expect(timeout).not.toHaveBeenCalledWith(180_000);
+    } finally {
+      timeout.mockRestore();
+    }
+    expect(expires).toBe(at + 60);
+    // a tick that died holding it: the next minute's run takes it over
+    await env.DB.prepare("INSERT INTO locks VALUES ('tick:instagram', 'crashed', ?1)")
+      .bind(at + 60)
+      .run();
+    const e = await testEnv(env);
+    expect((await tick(e, { fetch: w.fetch, now: new Date(AT.getTime() + 59_000), intervalS: 60 })).status).toBe(
+      "locked",
+    );
+    expect((await tick(e, { fetch: w.fetch, now: new Date(AT.getTime() + 61_000), intervalS: 60 })).status).toBe("ok");
+  });
+
+  it("without an interval, keeps the 5-minute timings", async () => {
+    const timeout = vi.spyOn(AbortSignal, "timeout");
+    try {
+      await tick(await testEnv(env), { fetch: w.fetch, now: AT });
+      expect(timeout).toHaveBeenCalledWith(180_000);
+    } finally {
+      timeout.mockRestore();
+    }
+  });
+
+  it("gives up on a container still processing 2 h after the first poll, whatever the interval", async () => {
+    await seedReel(w);
+    igHappyPath(w, Array(30).fill("IN_PROGRESS"));
+    const e = await testEnv(env);
+    const run = (min: number) => tick(e, { fetch: w.fetch, now: later(min), intervalS: 600 });
+    await run(0); // the container
+    for (let m = 10; m <= 120; m += 10) await run(m); // 12 polls, 1 h 50 min since the first
+    expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 12 });
+    expect(JSON.parse((await jobs())[0].payload).pollingSince).toBe(Math.floor(later(10).getTime() / 1000));
+    await run(130); // exactly 2 h: not longer yet
+    expect((await jobs())[0].state).toBe("container_created");
+    await run(140);
+    expect((await jobs())[0]).toMatchObject({ state: "failed", last_error: "Instagram never finished processing" });
   });
 });
 
@@ -318,7 +380,11 @@ describe("tick: a failed job and a new approval (#148)", () => {
     igHappyPath(w, Array(30).fill("IN_PROGRESS"));
     const e = await testEnv(env);
     await tick(e, { fetch: w.fetch, now: AT }); // the container
-    await env.DB.prepare("UPDATE jobs SET attempts = 24").run(); // 24 polls already (2 h), all IN_PROGRESS
+    // 24 polls already, all IN_PROGRESS, the first one more than 2 h ago
+    const [stale] = await jobs();
+    await env.DB.prepare("UPDATE jobs SET attempts = 24, payload = ?1")
+      .bind(JSON.stringify({ ...JSON.parse(stale.payload), pollingSince: Math.floor(later(-1).getTime() / 1000) }))
+      .run();
     await tick(e, { fetch: w.fetch, now: later(120) });
     expect((await jobs())[0]).toMatchObject({ state: "failed", container_id: "container-1", attempts: 25 });
 
@@ -561,7 +627,8 @@ describe("the global fetch", () => {
     try {
       await seedReel(w);
       await worker.scheduled(
-        { scheduledTime: AT.getTime(), cron: "*/5 * * * *", noRetry() {} } as ScheduledController,
+        // 09:35, an Instagram minute (09:32 is only the Shorts run's)
+        { scheduledTime: later(3).getTime(), cron: "* * * * *", noRetry() {} } as ScheduledController,
         await testEnv(env, { DRY_RUN: "1" }),
         {} as ExecutionContext,
       );

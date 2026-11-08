@@ -2,8 +2,8 @@
 
 /** A job missed by more than this waits for you instead of going out late (e.g. in the middle of the night). */
 export const CATCH_UP_S = 6 * 3600;
-/** Ticks to wait for Instagram to finish a container (5 min each) before giving up. */
-export const MAX_POLLS = 24;
+/** How long to wait for Instagram to finish a container, from the first poll, before giving up (whatever the interval). */
+export const MAX_POLL_S = 2 * 3600;
 /** Lifetime of the signed media links Instagram fetches. */
 export const LINK_TTL_S = 6 * 3600;
 /** Jobs advanced per tick, all accounts and workspaces together, the oldest due first; a video Instagram is still
@@ -16,7 +16,8 @@ export const NODE_JOBS_PER_TICK = 20;
  *  of it, keeping SUBREQUESTS_KEPT for what the run does after them (notes, the sweep). Every fetch of a tick counts. */
 export const SUBREQUESTS_PER_RUN = 50;
 export const SUBREQUESTS_KEPT = 6;
-/** The most one tick advances whatever the setting: a tick holds its lock for 4 minutes, and the next one is 5 away. */
+/** The most one tick advances whatever the setting: a tick holds its lock until a minute before the next run (4 minutes
+ *  at the default 5), so the jobs must fit in it. */
 export const JOBS_PER_TICK_MAX = 100;
 /** Workspaces the inbox run scans per run (inbox.ts): each costs a few subrequests per store, and the free plan allows
  *  50 per invocation, so a run reaches a few and the next picks up after them. Node defaults to
