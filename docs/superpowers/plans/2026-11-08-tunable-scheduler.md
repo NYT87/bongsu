@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Before exploring code, read the `.trail/learnings/` files about it (AGENTS.md); use `graft` (`graft ask "<task>" --source`, `graft grep`, `graft callers <sym> --depth all` before changing a symbol) rather than broad grep/read.
+- Before exploring code, read the `.trail/learnings/` files about it (AGENTS.md). Find code with trail rather than broad grep/read: `T=/home/motoko/.nvm/versions/node/v24.21.0/bin/trail` (it runs on Node 24 by its own path; keep Node 22 on PATH for pnpm), then `$T ask "<task>" --source`, `$T grep "<literal>"`, `$T skeleton <file>`, and `$T callers <symbol> --depth all` before changing a symbol.
 
 - Node 22: `export PATH=$HOME/.nvm/versions/node/v22.14.0/bin:$PATH` before every command.
 - `core` and `api` stay runtime-independent: no Cloudflare or Node imports there.
