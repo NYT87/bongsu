@@ -12,6 +12,8 @@
 
 ## Global Constraints
 
+- Before exploring code, read the `.trail/learnings/` files about it (AGENTS.md); use `graft` (`graft ask "<task>" --source`, `graft grep`, `graft callers <sym> --depth all` before changing a symbol) rather than broad grep/read.
+
 - Node 22: `export PATH=$HOME/.nvm/versions/node/v22.14.0/bin:$PATH` before every command.
 - `core` and `api` stay runtime-independent: no Cloudflare or Node imports there.
 - Portable SQL only (`ON CONFLICT … DO UPDATE`); `packages/core/test/portable-sql.test.ts` must stay green.
@@ -78,14 +80,14 @@
   - `runSchedule(env: Env, fetcher: typeof fetch, name: RunName, at: Date, gapS: number): Promise<void>`;
   - `runDue(env: Env, fetcher: typeof fetch, at: Date): Promise<RunName[]>` (the names it started);
   - `Env` fields `CRON_INSTAGRAM?`, `CRON_SHORTS?`, `CRON_UPKEEP?`, `RUN_SUBREQUESTS?: string`.
-  - settings row `schedules`: JSON `Schedule[]`, written by `runDue` only when it differs from the stored value.
+  - settings row `schedules`: JSON `Schedule[]`, written by `runDue` only in a minute where a run starts, and only when it differs from the stored value. A minute with nothing due makes no database call (Workers cap D1 queries per invocation; see the account-metrics learning).
 
 - [ ] **Step 1: Write the failing tests** (`schedules.test.ts`, fake world):
   - with no variables, `runDue` at 10:05 starts `["instagram"]`, at 10:32 `["shorts"]`, at 10:52 `["upkeep"]`, at 10:01 `[]`.
   - `CRON_SHORTS="*/5 * * * *"`: at 10:05 starts both `instagram` and `shorts`; both complete (the tick's `tick_last:shorts` row is written).
   - `CRON_UPKEEP="0 3 * * *"`: upkeep runs at 03:00 only.
   - invalid `CRON_SHORTS="61 * * * *"`: `schedules()` has its `error`; `runDue` at 10:05 still starts `instagram`; nothing throws.
-  - the `schedules` settings row is written on the first run and not rewritten when unchanged (count writes).
+  - the `schedules` settings row is written on the first run and not rewritten when unchanged (count writes); a minute with nothing due makes no database call at all (wrap `env.DB` to count).
   - an old lock row `name='inbox'` held by another holder doesn't stop `upkeep` (Review Focus 5); the run's log prefix is `upkeep:`.
   - Node (`node.test.ts`): `main` with `CRON_SHORTS="bad"` exits with a message naming `CRON_SHORTS`; with defaults it registers exactly one task.
 - [ ] **Step 2: Run** each test file alone — expect FAIL.

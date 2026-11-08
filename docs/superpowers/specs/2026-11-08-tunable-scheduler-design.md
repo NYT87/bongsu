@@ -60,7 +60,7 @@ enough. No names (`MON`, `JAN`), no `@hourly` macros, no seconds field: refused 
 - `runDue(env, fetch, at)`: for the minute `at` (rounded down), starts every valid schedule that matches it **side by
   side** (each still guarded by its own database lock, as the separate triggers are today), so a 4-minute tick never
   holds up upkeep. A run's failure is logged and doesn't stop the others. It also records the schedules it used in the
-  settings row `schedules` (written only when changed): the `bongsu` Worker, which serves the dashboard, can't read
+  settings row `schedules` (only in a minute where a run starts, and only when changed): the `bongsu` Worker, which serves the dashboard, can't read
   the cron Worker's variables. Runs that share a minute share one Cloudflare invocation's 10 ms CPU on the free plan;
   the defaults never do, and the dashboard warns when configured runs do.
   An invalid variable is logged each minute (`schedule CRON_SHORTS: <reason>`) and only that run is skipped.
@@ -141,8 +141,11 @@ Each gets `budget.step(name, stepsLeft)` and its `StepBudget.fetch` instead of t
 
 ### Open item
 
-Whether Cloudflare counts D1 queries toward the subrequest limit is unverified. The budget counts `fetch` calls only, as
-the code does today; the first real deployment (#58) checks it, and if D1 counts, the default reserve grows.
+Workers also cap **D1 queries per invocation**, separately from subrequests: a learning
+(`.trail/learnings/2026-11-02-phase-9-part-2b-the-account-nyt87.md`) records a long backfill exhausting it and
+starving the later upkeep steps. The budget here counts `fetch` calls only, as the code does today; steps keep their
+own query bounds (e.g. `ACCOUNT_BACKFILL_PER_RUN`). The first real deployment (#58) measures the query cap; a query
+budget would be a follow-up. Because of it, `runDue` makes **no database call in a minute where no run is due**.
 
 ## Dashboard (instance admins, read-only)
 
