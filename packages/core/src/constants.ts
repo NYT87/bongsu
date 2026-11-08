@@ -12,9 +12,8 @@ export const LINK_TTL_S = 6 * 3600;
  *  defaults to NODE_JOBS_PER_TICK. The JOBS_PER_TICK variable overrides either, up to JOBS_PER_TICK_MAX. */
 export const JOBS_PER_TICK = 4;
 export const NODE_JOBS_PER_TICK = 20;
-/** Subrequests one run may make (Cloudflare's free plan allows 50 per invocation): chunked YouTube uploads stop short
- *  of it, keeping SUBREQUESTS_KEPT for what the run does after them (notes, the sweep). Every fetch of a tick counts. */
-export const SUBREQUESTS_PER_RUN = 50;
+/** Calls a run keeps out of its steps' shares (budget.ts) and out of the tick's uploads, for what it does after them
+ *  (notes, the sweep). */
 export const SUBREQUESTS_KEPT = 6;
 /** Fetch calls one run (a tick, the upkeep run) may make, shared among its steps by budget.ts. The default fits
  *  Cloudflare's free plan; the RUN_SUBREQUESTS variable (a number in range, or "unlimited") overrides it, and Node

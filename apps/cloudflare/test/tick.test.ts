@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { BudgetSpent } from "@bongsu/core/budget";
 import { serveMedia, signedLink } from "@bongsu/core/media";
 import { mediaStoreCases } from "@bongsu/core/media/conformance";
 import { clearFolderCache, DriveStore } from "@bongsu/core/media/drive";
@@ -77,6 +78,51 @@ describe("tick: guards", () => {
     await planItem({ folder: "vlogs/CONTENT/20260823_LISBON", name: "short3_nodate", date: null });
     await tick(await testEnv(env), { fetch: w.fetch, now: AT });
     expect(await jobs()).toEqual([]);
+  });
+});
+
+describe("tick: the run's call budget", () => {
+  const last = async (k: string) =>
+    JSON.parse((await env.DB.prepare("SELECT value FROM settings WHERE key = ?1").bind(k).first("value")) as string);
+
+  it("records the calls a run used of its limit, per part", async () => {
+    await env.DB.prepare("DELETE FROM settings WHERE key LIKE 'run_last:%'").run();
+    await seedReel(w);
+    igHappyPath(w);
+    let n = 0;
+    const counted: typeof fetch = (input, init) => {
+      n++;
+      return w.fetch(input, init);
+    };
+    await tick(await testEnv(env), { fetch: counted, now: AT });
+    expect(n).toBeGreaterThan(0);
+    const at = Math.floor(AT.getTime() / 1000);
+    expect(await last("run_last:instagram")).toEqual({ at, used: n, limit: 50, stopped: [] });
+    // unlimited is stored as a word: JSON has no Infinity
+    await tick(await testEnv(env, { RUN_SUBREQUESTS: "unlimited" }), { fetch: w.fetch, now: AT }, "shorts");
+    expect(await last("run_last:shorts")).toEqual({ at, used: 0, limit: "unlimited", stopped: [] });
+  });
+
+  it("a job whose step runs out of calls stays as it was, and the next job waits for the next run", async () => {
+    await seedReel(w);
+    await seedReel(w, { base: "short2_y" });
+    igHappyPath(w);
+    let creates = 0;
+    // the budget's own refusal, on the first container's call
+    const spending: typeof fetch = async (input, init) => {
+      const body = await new Request(input, init).text();
+      if (body.includes('"INSTAGRAM_POST_IG_USER_MEDIA"') && ++creates === 1) throw new BudgetSpent("the run");
+      return w.fetch(input, init);
+    };
+    await tick(await testEnv(env), { fetch: spending, now: AT });
+    expect(creates).toBe(1);
+    const left = await jobs();
+    expect(left).toHaveLength(2);
+    for (const j of left)
+      expect(j).toMatchObject({ state: "pending", attempts: 0, last_error: null, container_id: null });
+    // the next run takes both up
+    await tick(await testEnv(env), { fetch: w.fetch, now: later(5) });
+    expect((await jobs()).map((j) => j.state)).toEqual(["container_created", "container_created"]);
   });
 });
 

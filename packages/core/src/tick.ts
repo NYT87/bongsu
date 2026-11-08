@@ -21,6 +21,7 @@
 // dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
 
 import { type Account, findAccount, listAccounts } from "./accounts";
+import { BudgetSpent, type RunCalls, runBudget, runSubrequests } from "./budget";
 import { QuotaExceeded, SessionGone } from "./clients/youtube";
 import {
   AUDIT_KEEP_S,
@@ -30,7 +31,6 @@ import {
   LINK_TTL_S,
   MAX_POLL_S,
   SUBREQUESTS_KEPT,
-  SUBREQUESTS_PER_RUN,
 } from "./constants";
 import {
   contentPaths,
@@ -284,12 +284,12 @@ export async function tick(
   const lock = `tick:${part}`;
   const lockS = lockSeconds(deps.intervalS ?? 300);
   if (!(await acquire(env.DB, lock, holder, nowS, lockS))) return { status: "locked" };
+  const run = tickBudget(env, deps, lockS);
   try {
     // what this run was limited by: the dashboard reads it, since the variables live on this Worker, not the API's
     await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
       .bind(`tick_last:${part}`, JSON.stringify({ at: nowS, jobsPerTick: jobsPerTick(env) }))
       .run();
-    const run = runBudget(deps, lockS);
     const c = new Ctx(env, { ...deps, fetch: run.fetch }, run);
     // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
     c.held = await heldWorkspaces(env.DB);
@@ -309,6 +309,7 @@ export async function tick(
     const active = await activeJobs(c, accounts);
     let calling = 0;
     let advanced = 0;
+    let spent = false;
     for (const job of active) {
       const p = JSON.parse(job.payload) as Payload;
       // an upload starts only with time and subrequests left in the run; else it waits for the next, no attempt counted
@@ -316,17 +317,32 @@ export async function tick(
       // a video only waiting for its time reaches nothing on the platform
       if (!waiting(c, job, p)) calling++;
       advanced++;
-      await advance(c, job);
+      // the run's calls ran out: the jobs after this one wait for the next run, as the upload gate's do
+      spent = !(await advance(c, job));
+      if (spent) break;
     }
     // a full run has spent its subrequests on the jobs: the sweep waits for a quieter one
-    if (calling < jobsPerTick(env)) await sweepRemoved(c);
+    if (!spent && calling < jobsPerTick(env)) await sweepRemoved(c);
     return {
       status: "ok",
       detail: { part, advanced, held: [...c.held.keys()], dry_run: c.dry },
     };
   } finally {
-    await release(env.DB, lock, holder);
+    try {
+      await recordRun(env, part, nowS, run.calls);
+    } finally {
+      await release(env.DB, lock, holder);
+    }
   }
+}
+
+/** What the run spent of its calls (`run_last:<part>`), for the dashboard: the variable lives on this Worker, not the
+ *  API's. An unlimited run's limit is the word: JSON has no Infinity. The tick runs no budget steps, so none stopped. */
+async function recordRun(env: Env, part: Part, nowS: number, calls: RunCalls) {
+  const limit = Number.isFinite(calls.limit) ? calls.limit : "unlimited";
+  await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
+    .bind(`run_last:${part}`, JSON.stringify({ at: nowS, used: calls.used(), limit, stopped: calls.stopped() }))
+    .run();
 }
 
 /** The jobs this run advances: those due within their platform's lead, in three groups, each in due order: the
@@ -370,17 +386,18 @@ const waiting = (c: Ctx, job: JobRow, p: Payload) =>
 const UPLOAD_REQUESTS = 4;
 
 /** The run's budget: one deadline for all its uploads, from the run's start and a minute below the lock (so two slow
- *  uploads never outlast it), at least 30 s, and every fetch the run makes counted against the Worker's subrequests. */
-function runBudget(deps: Deps, lockS: number): RunBudget & { fetch: typeof fetch } {
-  let used = 0;
+ *  uploads never outlast it), at least 30 s, and every fetch the run makes counted against its calls
+ *  (RUN_SUBREQUESTS). Uploads see what is left less SUBREQUESTS_KEPT, which stays for the end of the run (notes, the
+ *  sweep); a fetch past the limit itself is refused with BudgetSpent. */
+function tickBudget(env: Env, deps: Deps, lockS: number): RunBudget & { fetch: typeof fetch; calls: RunCalls } {
+  const calls = runBudget(runSubrequests(env).value, deps.fetch);
   const deadlineS = Math.max(30, Math.min(UPLOAD_BUDGET_S, lockS - 60));
   return {
+    calls,
     signal: deps.signal ?? AbortSignal.timeout(deadlineS * 1000),
-    requestsLeft: () => SUBREQUESTS_PER_RUN - SUBREQUESTS_KEPT - used,
-    fetch: (input, init) => {
-      used++;
-      return deps.fetch(input, init);
-    },
+    // Infinity less the reserve stays Infinity
+    requestsLeft: () => calls.left() - SUBREQUESTS_KEPT,
+    fetch: calls.fetch,
   };
 }
 
@@ -572,13 +589,16 @@ async function reopen(c: Ctx, id: number, cand: Candidate, a: Approval, old: Pay
 
 // ---------------------------------------------------------------- one step per job
 
-async function advance(c: Ctx, job: JobRow) {
+/** One step of a job; false when the run's calls ran out on it (BudgetSpent, refused before anything was sent): the
+ *  job is left for the next run with no attempt counted, and the run advances no more. */
+async function advance(c: Ctx, job: JobRow): Promise<boolean> {
   const p = JSON.parse(job.payload) as Payload;
   try {
     if (job.state === "pending") await stepPending(c, job, p);
     else if (job.state === "container_created") await stepContainer(c, job, p);
     else if (job.state === "published") await stepPublished(c, job, p);
   } catch (e) {
+    if (e instanceof BudgetSpent) return false;
     const attempts = job.attempts + 1;
     const msg = String((e as Error).message ?? e).slice(0, 500);
     if (attempts >= 3) {
@@ -588,6 +608,7 @@ async function advance(c: Ctx, job: JobRow) {
       await c.setJob(job.id, { attempts, last_error: msg });
     }
   }
+  return true;
 }
 
 /** A job that failed for good: a private video it uploaded is kept (never deleted on a failure), and the note says
@@ -1257,6 +1278,8 @@ async function postComment(
     await (await c.provider(p, job.workspace_id)).comment?.(p.mediaId!, text!);
     return "";
   } catch (e) {
+    // refused before it was sent: the next run posts it (the comments before it are marked done)
+    if (e instanceof BudgetSpent) throw e;
     return ` (${what} failed: ${(e as Error).message}; post it by hand)`;
   }
 }
