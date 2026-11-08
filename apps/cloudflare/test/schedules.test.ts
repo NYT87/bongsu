@@ -5,7 +5,7 @@ import type { Db } from "@bongsu/core/db";
 import type { Env } from "@bongsu/core/env";
 import { runDue, schedules } from "@bongsu/core/schedules";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { testEnv, World } from "./world";
+import { MD5, testEnv, World } from "./world";
 
 const at = (hhmm: string) => new Date(`2026-10-20T${hhmm}:00Z`);
 
@@ -41,7 +41,9 @@ beforeEach(async () => {
     [
       "DELETE FROM jobs",
       "DELETE FROM locks",
-      "DELETE FROM settings WHERE key = 'schedules' OR key LIKE 'tick_last:%'",
+      "DELETE FROM drafts",
+      "DELETE FROM inbox_seen",
+      "DELETE FROM settings WHERE key = 'schedules' OR key LIKE 'tick_last:%' OR key LIKE 'run_last:%' OR key LIKE 'inbox_%'",
     ].map((s) => env.DB.prepare(s)),
   );
   w = new World();
@@ -84,6 +86,36 @@ describe("runDue: the CRON_* variables", () => {
     expect(await runDue(e, w.fetch, at("10:05"))).toEqual(["instagram", "shorts"]);
     expect(JSON.parse((await setting("tick_last:shorts"))?.value ?? "{}").at).toBe(at("10:05").getTime() / 1000);
     expect(JSON.parse((await setting("tick_last:instagram"))?.value ?? "{}").at).toBe(at("10:05").getTime() / 1000);
+  });
+
+  it("splits one invocation's calls among the runs sharing a minute", async () => {
+    // more inbox work than one share holds
+    for (let i = 0; i < 12; i++)
+      w.drivePut(`UPLOADS/inbox/20261001_P/clip${i}.mp4`, {
+        md5: MD5,
+        mimeType: "video/mp4",
+        modified: "2026-10-01T00:00:00Z",
+      });
+    let calls = 0;
+    const counted: typeof fetch = (input, init) => {
+      calls++;
+      return w.fetch(input, init);
+    };
+    e = await make({ CRON_SHORTS: "*/5 * * * *", CRON_UPKEEP: "*/5 * * * *", RUN_SUBREQUESTS: "50" });
+    expect(await runDue(e, counted, at("10:05"))).toEqual(["instagram", "shorts", "upkeep"]);
+    const last = await Promise.all(
+      ["instagram", "shorts", "upkeep"].map(async (n) => JSON.parse((await setting(`run_last:${n}`))?.value ?? "{}")),
+    );
+    for (const l of last) expect(l.limit).toBe(16); // floor(50 / 3)
+    expect(last.reduce((n, l) => n + l.used, 0)).toBe(calls);
+    expect(calls).toBeGreaterThan(0);
+    expect(calls).toBeLessThanOrEqual(50);
+  });
+
+  it("gives a run due alone the whole limit", async () => {
+    e = await make({ RUN_SUBREQUESTS: "50" });
+    await runDue(e, w.fetch, at("10:52"));
+    expect(JSON.parse((await setting("run_last:upkeep"))?.value ?? "{}").limit).toBe(50);
   });
 
   it("runs upkeep only when its own expression says", async () => {

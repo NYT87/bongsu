@@ -32,7 +32,7 @@ two runtimes can't drift.
 | `upkeep` | `CRON_UPKEEP`, `7,22,37,52 * * * *` | the steps of `UPKEEP_STEPS`, in order: inbox scan per workspace media folder (`INBOX_WORKSPACES_PER_RUN` workspaces at a time: 3 on Cloudflare, 20 on Node), moving posted media aside, daily digest, 24 h results, metrics, followers, new comments, connections, media stores |
 
 - Runs due the same minute start side by side; each takes its own lock in the database, so two runs of one name never
-  overlap. A minute with nothing due makes no database call (Workers cap D1 queries per invocation).
+  overlap. They share one invocation, so each gets `floor(limit / runs)` of a finite `RUN_SUBREQUESTS` (`runDue`). A minute with nothing due makes no database call (Workers cap D1 queries per invocation).
 - `runDue` writes the schedules it used to the `schedules` settings row, and each run writes `run_last:<name>` (when,
   calls used, the limit, the steps stopped, a refused `RUN_SUBREQUESTS`): the `bongsu` Worker serves the dashboard and
   can't read the cron Worker's variables.

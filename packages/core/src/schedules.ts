@@ -97,7 +97,12 @@ export async function runDue(env: Env, fetcher: typeof fetch, at: Date): Promise
   } catch (e) {
     console.log(`schedules not recorded: ${(e as Error).message}`);
   }
-  const results = await Promise.allSettled(due.map((s) => runSchedule(env, fetcher, s.name, minute, s.gapS as number)));
+  // Workers count calls per invocation, not per run: runs sharing a minute share one invocation's limit, equally.
+  const limit = runSubrequests(env).value;
+  const share = due.length > 1 && Number.isFinite(limit) ? Math.floor(limit / due.length) : undefined;
+  const results = await Promise.allSettled(
+    due.map((s) => runSchedule(env, fetcher, s.name, minute, s.gapS as number, share)),
+  );
   results.forEach((r, i) => {
     if (r.status === "rejected") console.log(`${due[i].name} failed: ${(r.reason as Error)?.stack ?? r.reason}`);
   });
@@ -115,16 +120,19 @@ async function recordSchedules(env: Env, all: Schedule[], at: Date): Promise<voi
 }
 
 /** One run by name, for the minute `at`. `gapS` is its schedule's shortest gap between firings: the ticks size their
- *  lock and upload deadline from it. */
+ *  lock and upload deadline from it. `subrequests` is the run's part of RUN_SUBREQUESTS when it shares the minute
+ *  (and so the invocation) with other runs; unset, the whole limit. */
 export async function runSchedule(
   env: Env,
   fetcher: typeof fetch,
   name: RunName,
   at: Date,
   gapS: number,
+  subrequests?: number,
 ): Promise<void> {
-  if (name === "upkeep") return runUpkeep(env, fetcher, at);
-  console.log(`${name}: ${JSON.stringify(await tick(env, { fetch: fetcher, now: at, intervalS: gapS }, name))}`);
+  if (name === "upkeep") return runUpkeep(env, fetcher, at, UPKEEP_STEPS, subrequests);
+  const deps = { fetch: fetcher, now: at, intervalS: gapS, subrequests };
+  console.log(`${name}: ${JSON.stringify(await tick(env, deps, name))}`);
 }
 
 /** The upkeep steps, in order: the inbox in each workspace's media folder, a few workspaces a run (drafts only:
@@ -163,18 +171,20 @@ export const UPKEEP_UNIT_CALLS: Readonly<Record<string, number>> = {
 /** The upkeep run: runs while paused too (none of it publishes). Its lock is `upkeep`: a leftover `inbox` lock from
  *  before the rename expires on its own. The steps share the run's calls (RUN_SUBREQUESTS) in order, each keeping a
  *  unit of work for every step after it (UPKEEP_UNIT_CALLS), and each runs in its own try: one failing (a Composio
- *  or YouTube hiccup, or a BudgetSpent past its share) doesn't stop the others. */
+ *  or YouTube hiccup, or a BudgetSpent past its share) doesn't stop the others. `subrequests`: its part of the limit
+ *  when it shares the minute with other runs (runDue). */
 export async function runUpkeep(
   env: Env,
   fetcher: typeof fetch,
   at: Date,
   steps: typeof UPKEEP_STEPS = UPKEEP_STEPS,
+  subrequests?: number,
 ): Promise<void> {
   const nowS = Math.floor(at.getTime() / 1000),
     holder = crypto.randomUUID();
   if (!(await acquire(env.DB, "upkeep", holder, nowS, 600))) return console.log("upkeep: locked");
   const limit = runSubrequests(env);
-  const calls = runBudget(limit.value, fetcher);
+  const calls = runBudget(subrequests ?? limit.value, fetcher);
   try {
     for (const [i, [step, run]] of steps.entries()) {
       // made only when the step starts, so its share counts what the steps before it left

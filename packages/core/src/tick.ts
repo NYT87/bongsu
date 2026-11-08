@@ -79,6 +79,8 @@ export interface Deps {
   signal?: AbortSignal;
   /** The run's shortest gap between firings (seconds), which sizes its lock; default: every 5 minutes. */
   intervalS?: number;
+  /** The run's part of RUN_SUBREQUESTS when other runs share its minute (one invocation's calls); default: all of it. */
+  subrequests?: number;
 }
 
 /** How long a tick holds its lock: until a minute before the next run (5 minutes: 240 s), at least a minute, and below
@@ -391,7 +393,7 @@ function tickBudget(
   lockS: number,
 ): RunBudget & { fetch: typeof fetch; calls: RunCalls; invalid: string | null } {
   const limit = runSubrequests(env);
-  const calls = runBudget(limit.value, deps.fetch);
+  const calls = runBudget(deps.subrequests ?? limit.value, deps.fetch);
   const deadlineS = Math.max(30, Math.min(UPLOAD_BUDGET_S, lockS - 60));
   return {
     calls,

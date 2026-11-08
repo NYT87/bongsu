@@ -3841,7 +3841,7 @@ function SchedulerCard() {
                       {r.shared.length > 0 && (
                         <div>
                           <span className="pill warn">
-                            Shares a minute with {runList(r.shared)}: on Workers free they share one invocation's CPU
+                            Shares a minute with {runList(r.shared)}: they share one invocation's CPU and its calls
                           </span>
                         </div>
                       )}

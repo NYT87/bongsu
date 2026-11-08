@@ -184,8 +184,9 @@ month, day of week), from its variable or else the default.
   (`* * * * *` in `wrangler.cron.toml`, whatever the schedules), one timer on Node. Changing a schedule is a variable
   and a deploy, never a trigger.
 - Runs due in the same minute start side by side, each under its own lock, so two runs of the same name never
-  overlap. On the Workers free plan they then share one invocation's CPU (10 ms): the dashboard warns when your
-  schedules do. The defaults never share a minute.
+  overlap. They then share one invocation's CPU (10 ms on the Workers free plan) and its calls: each gets an equal
+  part of `RUN_SUBREQUESTS` (at 50, three runs get 16 each). The dashboard warns when your schedules do. The defaults
+  never share a minute.
 - Timings follow the interval: a publishing run's lock frees a minute before its next run (4 minutes for Instagram at
   the default), and Bongsu waits for Instagram to process a video 2 hours from its first check, whatever the interval.
 - An invalid expression: on Node the server refuses to start and names the variable; on Cloudflare that run is
