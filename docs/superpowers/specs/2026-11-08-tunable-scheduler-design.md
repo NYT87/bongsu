@@ -57,8 +57,12 @@ enough. No names (`MON`, `JAN`), no `@hourly` macros, no seconds field: refused 
 
 - `schedules(env): { name, expr, cron, gapS, source: "default" | "variable" }[]`, or each entry with an `error` when
   its variable doesn't parse.
-- `runDue(env, fetch, at)`: for the minute `at` (rounded down), runs every valid schedule that matches it, one after
-  another in the fixed order `instagram`, `shorts`, `upkeep`. A run's failure is logged and doesn't stop the next.
+- `runDue(env, fetch, at)`: for the minute `at` (rounded down), starts every valid schedule that matches it **side by
+  side** (each still guarded by its own database lock, as the separate triggers are today), so a 4-minute tick never
+  holds up upkeep. A run's failure is logged and doesn't stop the others. It also records the schedules it used in the
+  settings row `schedules` (written only when changed): the `bongsu` Worker, which serves the dashboard, can't read
+  the cron Worker's variables. Runs that share a minute share one Cloudflare invocation's 10 ms CPU on the free plan;
+  the defaults never do, and the dashboard warns when configured runs do.
   An invalid variable is logged each minute (`schedule CRON_SHORTS: <reason>`) and only that run is skipped.
 - `runSchedule(env, fetch, name, at)` stays as the per-run entry (by **name**, not expression), used by `runDue` and
   by tests.
@@ -68,7 +72,8 @@ Runtimes:
 - **Cloudflare:** `wrangler.cron.toml` `[triggers] crons = ["* * * * *"]`; `cron.ts` `scheduled()` calls
   `runDue(env, realFetch, new Date(event.scheduledTime))` and ignores `event.cron`.
 - **Node:** `main.ts` validates every schedule at startup and **refuses to start** on an invalid one (the message names
-  the variable); then one node-cron task `* * * * *` (UTC, `noOverlap: true`) calls `runDue`. `SCHEDULES=off` still
+  the variable); then one node-cron task `* * * * *` (UTC, without `noOverlap`: the runs' own locks prevent overlap)
+  calls `runDue`. `SCHEDULES=off` still
   schedules nothing. Graceful shutdown is unchanged.
 
 Cost on Cloudflare: about 1,440 invocations a day, most of which only match three expressions and return. Each matching
@@ -141,7 +146,9 @@ the code does today; the first real deployment (#58) checks it, and if D1 counts
 
 ## Dashboard (instance admins, read-only)
 
-The existing **Scheduler** card (`packages/dashboard/src/pages.tsx`, `SchedulerCard`, `/admin-api/scheduler`) shows:
+The existing **Scheduler** card (`packages/dashboard/src/pages.tsx`, `SchedulerCard`, `/admin-api/scheduler`) shows,
+from what the cron side recorded (the `schedules` and `run_last:<name>` rows; "next firing" computed with core's
+matcher):
 
 - **Runs:** name, expression, next firing in the viewer's zone, the variable that sets it and whether it is the
   default or set; an invalid one in red with its variable and the parser's message.
@@ -159,7 +166,7 @@ Only instance admins reach it (as today); `apps/cloudflare/test/workspaces.test.
 | Invalid `CRON_*` | Node: refuses to start, naming the variable. Cloudflare: logged each minute, that run skipped, the others run; dashboard shows it |
 | Invalid `RUN_SUBREQUESTS` / `JOBS_PER_TICK` / `INBOX_WORKSPACES_PER_RUN` | Runtime default (or clamp), flagged on the dashboard |
 | A step over its share | `BudgetSpent`, logged, the run continues; the step resumes next run |
-| Two runs due the same minute | In order, `instagram`, `shorts`, `upkeep`, in one invocation |
+| Two runs due the same minute | Started side by side in one invocation, each under its own lock; the dashboard warns (shared CPU on Workers free) |
 | The old `inbox` lock | Ignored; expires within 600 s |
 
 ## Tests
