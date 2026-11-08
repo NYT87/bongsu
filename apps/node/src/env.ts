@@ -43,6 +43,9 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
     "SMTP_USER",
     "SMTP_PASS",
     "SCHEDULES",
+    "CRON_INSTAGRAM",
+    "CRON_SHORTS",
+    "CRON_UPKEEP",
   ] as const)
     if (vars[k]) (env as unknown as Vars)[k] = vars[k];
   // Connections set up by hand name their secret (connections.secret_name): any other variable can be one.

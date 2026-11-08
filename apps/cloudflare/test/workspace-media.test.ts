@@ -4,7 +4,7 @@ import { env } from "cloudflare:workers";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { createSession, markVerified } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
-import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS } from "@bongsu/core/constants";
+import { CRON_INSTAGRAM, CRON_SHORTS, CRON_UPKEEP } from "@bongsu/core/constants";
 import type { Env } from "@bongsu/core/env";
 import { scanInbox } from "@bongsu/core/inbox";
 import { saveStore } from "@bongsu/core/media/manage";
@@ -374,7 +374,7 @@ describe("the Scheduler page", () => {
       runs: [
         { name: "instagram", cron: CRON_INSTAGRAM },
         { name: "shorts", cron: CRON_SHORTS },
-        { name: "inbox", cron: CRON_INBOX },
+        { name: "upkeep", cron: CRON_UPKEEP },
       ],
       jobsPerTick: null,
       inboxWorkspacesPerRun: null,

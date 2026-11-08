@@ -24,12 +24,12 @@ export const JOBS_PER_TICK_MAX = 100;
 export const INBOX_WORKSPACES_PER_RUN = 3;
 export const NODE_INBOX_WORKSPACES_PER_RUN = 20;
 export const INBOX_WORKSPACES_PER_RUN_MAX = 100;
-/** The cron triggers (wrangler.toml): Instagram every 5 minutes; Shorts comments twice an hour, in their own
- *  invocation, so neither run gets near the free plan's 10 ms CPU limit. */
+/** The runs' default schedules (schedules.ts; the CRON_* variables override them): Instagram every 5 minutes; Shorts
+ *  comments twice an hour, on minutes of their own, so no two runs share an invocation's 10 ms CPU on the free plan. */
 export const CRON_INSTAGRAM = "*/5 * * * *";
 export const CRON_SHORTS = "2,32 * * * *";
-/** The Drive inbox scan: every 15 minutes, off the other runs' minutes. */
-export const CRON_INBOX = "7,22,37,52 * * * *";
+/** Upkeep (the inbox scan, cleanup, digest, results, metrics…): every 15 minutes, off the other runs' minutes. */
+export const CRON_UPKEEP = "7,22,37,52 * * * *";
 /** The least an agent key may leave between now and a YouTube release it sets: YouTube can take a while to pick up a
  *  new time, and an agent shouldn't be able to publish something at once. The owner has no such limit. */
 export const RELEASE_LEAD_S = 3600;

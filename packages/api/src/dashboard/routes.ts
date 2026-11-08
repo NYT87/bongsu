@@ -32,7 +32,7 @@ import {
   startConnect,
   workspaceOAuthApps,
 } from "@bongsu/core/connections";
-import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS } from "@bongsu/core/constants";
+import { CRON_INSTAGRAM, CRON_SHORTS, CRON_UPKEEP } from "@bongsu/core/constants";
 import { CryptoError } from "@bongsu/core/crypto";
 import { dueFrom, WhenError, waitingApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -1870,7 +1870,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         runs: [
           { name: "instagram", cron: CRON_INSTAGRAM },
           { name: "shorts", cron: CRON_SHORTS },
-          { name: "inbox", cron: CRON_INBOX },
+          { name: "upkeep", cron: CRON_UPKEEP },
         ],
         jobsPerTick: tick ? { value: tick.jobsPerTick, at: utcIso(tick.at) } : null,
         inboxWorkspacesPerRun: inbox ? { value: inbox.limit, at: utcIso(inbox.at) } : null,

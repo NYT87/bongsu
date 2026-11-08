@@ -47,4 +47,10 @@ export interface Env {
   YOUTUBE_UPLOAD_MODE?: string;
   /** "off" on Node: the server only serves, nothing runs on a schedule (a replica, a demo). Never set on Cloudflare. */
   SCHEDULES?: string;
+  /** The runs' schedules, five-field cron expressions in UTC (schedules.ts); unset, constants.ts CRON_*. */
+  CRON_INSTAGRAM?: string;
+  CRON_SHORTS?: string;
+  CRON_UPKEEP?: string;
+  /** Outside calls one run may make: a whole number, or "unlimited". */
+  RUN_SUBREQUESTS?: string;
 }
