@@ -110,6 +110,37 @@ describe("tick: the run's call budget", () => {
     expect(await last("run_last:instagram")).toMatchObject({ limit: 200, invalid: null });
   });
 
+  it("a run with no calls left at publish doesn't mark the job as publishing, and the next run publishes it", async () => {
+    // where the publishing call falls in the run that makes it, measured on a first pass
+    const toPublish = async (limit?: number) => {
+      await env.DB.batch(["DELETE FROM jobs", "DELETE FROM locks"].map((q) => env.DB.prepare(q)));
+      await clearPlan();
+      w = new World();
+      await seedReel(w);
+      igHappyPath(w);
+      const e = await testEnv(env);
+      await tick(e, { fetch: w.fetch, now: AT }); // the container
+      let n = 0;
+      let at = 0;
+      const counted: typeof fetch = async (input, init) => {
+        n++;
+        if ((await new Request(input, init).text()).includes('"INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH"')) at ||= n;
+        return w.fetch(input, init);
+      };
+      await tick(e, { fetch: counted, now: later(5), subrequests: limit });
+      return { e, at };
+    };
+    const { at } = await toPublish();
+    expect(at).toBeGreaterThan(1);
+    const { e } = await toPublish(at - 1); // every call but the publishing one
+    const [j] = await jobs();
+    expect(j).toMatchObject({ state: "container_created", attempts: 0, last_error: null });
+    expect(JSON.parse(j.payload).publishing).toBeUndefined();
+    expect(w.calls.some((c) => c.slug === "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH")).toBe(false);
+    await tick(e, { fetch: w.fetch, now: later(10) });
+    expect((await jobs())[0].state).toBe("published");
+  });
+
   it("a job whose step runs out of calls stays as it was, and the next job waits for the next run", async () => {
     await seedReel(w);
     await seedReel(w, { base: "short2_y" });

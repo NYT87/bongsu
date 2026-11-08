@@ -193,8 +193,8 @@ class Ctx {
   constructor(
     public env: Env,
     public deps: Deps,
-    /** The run's budget for long transfers, shared by its jobs. */
-    public run: RunBudget,
+    /** The run's budget for long transfers, shared by its jobs, and its calls. */
+    public run: RunBudget & { calls: RunCalls },
   ) {
     this.nowS = Math.floor(deps.now.getTime() / 1000);
     this.dry = env.DRY_RUN !== "0";
@@ -1205,6 +1205,9 @@ async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step
   // (YouTubeTakenOver: nothing was written; a new approval's start() then keeps the video). `retry`: an earlier run
   // made the call and lost its answer.
   const retry = !!p.publishing;
+  // no call left for the publishing call: the run's limit would refuse it after the flag, leaving a job "may be live"
+  // that never went out. It waits for the next run as it is (advance: no attempt counted).
+  if (c.run.calls.left() < 1) throw new BudgetSpent("the run");
   await c.setJob(job.id, { payload: { ...p, step, publishing: true } });
   let got: Awaited<ReturnType<Provider["finish"]>>;
   try {
