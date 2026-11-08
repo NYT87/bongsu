@@ -187,8 +187,11 @@ month, day of week), from its variable or else the default.
   overlap. They then share one invocation's CPU (10 ms on the Workers free plan) and its calls: each gets an equal
   part of `RUN_SUBREQUESTS` (at 50, three runs get 16 each). The dashboard warns when your schedules do. The defaults
   never share a minute.
-- Timings follow the interval: a publishing run's lock frees a minute before its next run (4 minutes for Instagram at
-  the default), and Bongsu waits for Instagram to process a video 2 hours from its first check, whatever the interval.
+- Timings follow the interval: a publishing run's lock frees a minute before its next run (between 1 and 59 minutes:
+  4 for Instagram at the default), and Bongsu waits for Instagram to process a video 2 hours from its first check,
+  whatever the interval.
+- A publishing run must finish within its lock: once its deadline passes (a minute before the lock frees, at least
+  30 s into the run), it starts no more jobs and leaves them for the next run. An every-minute Instagram run holds its lock for 60 s, so it suits a small `JOBS_PER_TICK`.
 - An invalid expression: on Node the server refuses to start and names the variable; on Cloudflare that run is
   skipped (logged every minute, shown in red on the dashboard) and the others go on.
 - A very sparse schedule (yearly, say) is slower to check on Cloudflare: once a month or more often is best.

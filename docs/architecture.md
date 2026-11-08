@@ -36,8 +36,9 @@ two runtimes can't drift.
 - `runDue` writes the schedules it used to the `schedules` settings row, and each run writes `run_last:<name>` (when,
   calls used, the limit, the steps stopped, a refused `RUN_SUBREQUESTS`): the `bongsu` Worker serves the dashboard and
   can't read the cron Worker's variables.
-- The publishing runs' lock and upload deadline follow the run's shortest interval (`lockSeconds`); the wait for
-  Instagram's processing is a time (`MAX_POLL_S`, 2 h from the first poll), not a count of runs.
+- The publishing runs' lock and deadline follow the run's shortest interval (`lockSeconds`); past the deadline a run
+  starts no more jobs (uploads or others), so its work ends within the lock; the wait for Instagram's processing is a
+  time (`MAX_POLL_S`, 2 h from the first poll), not a count of runs.
 - An invalid `CRON_*`: Node refuses to start; Cloudflare logs it each minute and skips only that run.
 
 ### The run budget

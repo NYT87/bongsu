@@ -169,6 +169,23 @@ describe("tick: timings follow the interval", () => {
     expect((await tick(e, { fetch: w.fetch, now: new Date(AT.getTime() + 61_000), intervalS: 60 })).status).toBe("ok");
   });
 
+  it("starts no job once the run's deadline has passed: the next run, under the lock, takes it", async () => {
+    await seedReel(w);
+    await seedReel(w, { base: "short2_y" });
+    igHappyPath(w);
+    const deadline = new AbortController();
+    let creates = 0;
+    // the first job's call outlasts the run's deadline
+    const slow: typeof fetch = async (input, init) => {
+      const body = await new Request(input, init).text();
+      if (body.includes('"INSTAGRAM_POST_IG_USER_MEDIA"') && ++creates === 1) deadline.abort();
+      return w.fetch(input, init);
+    };
+    await tick(await testEnv(env), { fetch: slow, now: AT, intervalS: 60, signal: deadline.signal });
+    expect(creates).toBe(1);
+    expect((await jobs()).map((j) => j.state)).toEqual(["container_created", "pending"]);
+  });
+
   it("without an interval, keeps the 5-minute timings", async () => {
     const timeout = vi.spyOn(AbortSignal, "timeout");
     try {

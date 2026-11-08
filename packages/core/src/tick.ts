@@ -1,4 +1,5 @@
-// The scheduler's tick, run by the cron every 5 minutes.
+// The scheduler's publishing tick, run on its schedule (CRON_INSTAGRAM, CRON_SHORTS: every 5 minutes and at :02 and
+// :32 by default; schedules.ts).
 //
 //   lock → held workspaces (paused, archived) → discover due items → advance active jobs one step each → Shorts comments
 //   → prune audit
@@ -318,6 +319,12 @@ export async function tick(
     let advanced = 0;
     let spent = false;
     for (const job of active) {
+      // past the run's deadline (a minute below its lock) no job starts: the lock may lapse before it ends, and the next
+      // run would take the same job up again
+      if (run.signal.aborted) {
+        spent = true;
+        break;
+      }
       const p = JSON.parse(job.payload) as Payload;
       // an upload starts only with time and subrequests left in the run; else it waits for the next, no attempt counted
       if (isUploadStep(job, p) && !canUpload(run)) continue;
@@ -328,7 +335,7 @@ export async function tick(
       spent = !(await advance(c, job));
       if (spent) break;
     }
-    // a full run has spent its subrequests on the jobs: the sweep waits for a quieter one
+    // a full run has spent its subrequests (or its time) on the jobs: the sweep waits for a quieter one
     if (!spent && calling < jobsPerTick(env)) await sweepRemoved(c);
     return {
       status: "ok",
