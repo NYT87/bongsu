@@ -18,7 +18,7 @@ VAPID_SUBJECT = "mailto:owner@example.com"
 # The runs' schedules (five-field cron, UTC), checked every minute by the trigger below; unset, these defaults:
 # CRON_INSTAGRAM = "*/5 * * * *"        # Instagram publishing
 # CRON_SHORTS = "2,32 * * * *"          # Shorts comments
-# CRON_UPKEEP = "7,22,37,52 * * * *"    # upkeep: the inbox, cleanup, digest, results, metrics, comments, connections
+# CRON_UPKEEP = "7,22,37,52 * * * *"    # upkeep: inbox, cleanup, digest, results, metrics, followers, comments, connections, media stores
 
 [[d1_databases]]
 binding = "DB"

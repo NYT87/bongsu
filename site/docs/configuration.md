@@ -147,7 +147,7 @@ The same names, from the environment (`.env` with docker-compose; [self-hosting.
 | `RP_ID` | `PUBLIC_URL`'s host | the passkeys' relying party |
 | `JOBS_PER_TICK` | `20` | publishing jobs advanced per run, at most `100` ([How many go out at once](#how-many-go-out-at-once)) |
 | `INBOX_WORKSPACES_PER_RUN` | `20` | workspaces whose inbox folder one run scans, at most `100` |
-| `CRON_INSTAGRAM`, `CRON_SHORTS`, `CRON_UPKEEP` | as on Cloudflare | when each run happens ([When the runs happen](#when-the-runs-happen)); an invalid one stops the server at startup, naming the variable |
+| `CRON_INSTAGRAM`, `CRON_SHORTS`, `CRON_UPKEEP` | as on Cloudflare | when each run happens ([When the runs happen](#when-the-runs-happen)); an invalid one stops the server at startup (unless `SCHEDULES=off`), naming the variable |
 | `RUN_SUBREQUESTS` | `unlimited` | the outgoing calls one run may make; Node has no such limit, so only the per-step caps bound a run |
 
 ## How many go out at once
@@ -191,9 +191,10 @@ month, day of week), from its variable or else the default.
   4 for Instagram at the default), and Bongsu waits for Instagram to process a video 2 hours from its first check,
   whatever the interval.
 - A publishing run must finish within its lock: once its deadline passes (a minute before the lock frees, at least
-  30 s into the run), it starts no more jobs and leaves them for the next run. An every-minute Instagram run holds its lock for 60 s, so it suits a small `JOBS_PER_TICK`.
-- An invalid expression: on Node the server refuses to start and names the variable; on Cloudflare that run is
-  skipped (logged every minute, shown in red on the dashboard) and the others go on.
+  30 s into the run), it starts no more jobs and leaves them for the next run. An every-minute Instagram run holds
+  its lock for 60 s, so it suits a small `JOBS_PER_TICK`.
+- An invalid expression: on Node the server refuses to start (unless `SCHEDULES=off`) and names the variable; on
+  Cloudflare that run is skipped (logged every minute, shown in red on the dashboard) and the others go on.
 - A very sparse schedule (yearly, say) is slower to check on Cloudflare: once a month or more often is best.
 - The upkeep run was called the inbox run before; its log lines now start with `upkeep:`.
 
@@ -219,7 +220,8 @@ was for waits for the next run:
   its own share.
 - A step stopped by its share carries on at the next run, where it left off; the daily digest waits a run rather
   than go out half-sent.
-- A value outside the range falls back to the default and the dashboard flags it.
+- A value outside the range or not a number falls back to the default (`50` on Cloudflare, `unlimited` on Node) and
+  the dashboard flags it.
 
 Workers also cap the database queries of one invocation, separately; `RUN_SUBREQUESTS` doesn't count them. That cap
 will be measured on the first real deployment (issue #58); until then the steps keep their own bounds on database

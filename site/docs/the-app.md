@@ -248,7 +248,7 @@ what needs approval in the next 3 days and what failed since yesterday. See [How
 ## Comments and replies
 
 The Comments icon in the top bar lists comments on the last two weeks' Instagram posts and YouTube Shorts, per post,
-checked every 15 minutes; new ones are highlighted. **Reply** opens a field and **Send reply** posts it straight away.
+checked at each upkeep run (every 15 minutes by default); new ones are highlighted. **Reply** opens a field and **Send reply** posts it straight away.
 There is no approval for replies: you write them, so they go out as you wrote them.
 
 ![Comments](assets/app/comments-light.png)

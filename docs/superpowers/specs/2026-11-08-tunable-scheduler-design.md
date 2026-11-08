@@ -61,10 +61,13 @@ enough. No names (`MON`, `JAN`), no `@hourly` macros, no seconds field: refused 
   side** (each still guarded by its own database lock, as the separate triggers are today), so a 4-minute tick never
   holds up upkeep. A run's failure is logged and doesn't stop the others. It also records the schedules it used in the
   settings row `schedules` (only in a minute where a run starts, and only when changed): the `bongsu` Worker, which serves the dashboard, can't read
-  the cron Worker's variables. Runs that share a minute share one Cloudflare invocation's 10 ms CPU on the free plan;
-  the defaults never do, and the dashboard warns when configured runs do.
+  the cron Worker's variables. Runs that share a minute share one Cloudflare invocation's 10 ms CPU on the free plan
+  and its calls: with more than one run due and a finite limit, each gets `floor(RUN_SUBREQUESTS / runs due)`, passed
+  through `runSchedule` to the tick's budget and to `runUpkeep`, and records that limit (amended after the final
+  review: each used to get the whole limit). The defaults never share a minute, and the dashboard warns when
+  configured runs do ("they share one invocation's CPU and its calls").
   An invalid variable is logged each minute (`schedule CRON_SHORTS: <reason>`) and only that run is skipped.
-- `runSchedule(env, fetch, name, at)` stays as the per-run entry (by **name**, not expression), used by `runDue` and
+- `runSchedule(env, fetch, name, at, gapS, subrequests?)` stays as the per-run entry (by **name**, not expression), used by `runDue` and
   by tests.
 
 Runtimes:
@@ -102,7 +105,9 @@ run then works as today.
   10 million with the Worker's `limits` setting).
 - Accepted: a whole number from 10 to 10,000,000, or `unlimited`. Anything else falls back to the runtime default and
   is reported (log + dashboard).
-- Node's default (`apps/node/src/env.ts`) is `unlimited`.
+- Node's default (`apps/node/src/env.ts`) is `unlimited`, given as `RUN_SUBREQUESTS_DEFAULT`, so an invalid value
+  there falls back to `unlimited` (still recorded as `invalid`), not to Cloudflare's 50 (amended after the final
+  review).
 
 ### The run budget (`packages/core/src/budget.ts`, new)
 
@@ -177,9 +182,10 @@ Only instance admins reach it (as today); `apps/cloudflare/test/workspaces.test.
 | Case | Behaviour |
 |---|---|
 | Invalid `CRON_*` | Node: refuses to start, naming the variable. Cloudflare: logged each minute, that run skipped, the others run; dashboard shows it |
-| Invalid `RUN_SUBREQUESTS` / `JOBS_PER_TICK` / `INBOX_WORKSPACES_PER_RUN` | Runtime default (or clamp), flagged on the dashboard |
+| Invalid `RUN_SUBREQUESTS` | The runtime's default (50 on Cloudflare, `unlimited` on Node), flagged on the dashboard |
+| Invalid `JOBS_PER_TICK` / `INBOX_WORKSPACES_PER_RUN` | Not a whole number from 1: the core default (4 / 3, on Node too); above the max: clamped. Not flagged: the dashboard shows the value used |
 | A step over its share | `BudgetSpent`, logged, the run continues; the step resumes next run |
-| Two runs due the same minute | Started side by side in one invocation, each under its own lock; the dashboard warns (shared CPU on Workers free) |
+| Two runs due the same minute | Started side by side in one invocation, each under its own lock and with an equal part of a finite `RUN_SUBREQUESTS`; the dashboard warns (shared CPU and calls) |
 | The old `inbox` lock | Ignored; expires within 600 s |
 
 ## Tests
