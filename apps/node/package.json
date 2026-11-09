@@ -23,8 +23,8 @@
     "postgres": "3.4.9"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.13",
-    "@electric-sql/pglite-socket": "0.2.16",
+    "@electric-sql/pglite": "0.5.15",
+    "@electric-sql/pglite-socket": "0.2.18",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "22.20.5",
     "@types/nodemailer": "8.0.2",
