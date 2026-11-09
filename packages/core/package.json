@@ -17,7 +17,7 @@
     "aws4fetch": "^1.0.20"
   },
   "devDependencies": {
-    "@electric-sql/pglite": "0.5.13",
+    "@electric-sql/pglite": "0.5.15",
     "@types/node": "22.20.5",
     "typescript": "7.0.2",
     "vitest": "4.1.12"
