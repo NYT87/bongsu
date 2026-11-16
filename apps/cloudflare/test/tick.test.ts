@@ -362,7 +362,7 @@ describe("tick: a carousel", () => {
     const caption = "Bridges",
       alt = "01\tFirst bridge\n02\tSecond bridge";
     await copyText(`channels/${folder}/${dir}/caption.txt`, caption);
-    await copyText(`channels/${folder}/${dir}/alt.txt`, alt + "\n");
+    await copyText(`channels/${folder}/${dir}/alt.txt`, `${alt}\n`);
     w.drive.set("img_aaaaaaaaaa", { md5: MD5, mimeType: "image/jpeg" });
     w.drive.set("vid_bbbbbbbbbb", { md5: MD5, mimeType: "video/mp4" });
     w.drive.set("img_cccccccccc", { md5: MD5, mimeType: "image/jpeg" });
