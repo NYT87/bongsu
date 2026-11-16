@@ -1,5 +1,15 @@
 # @bongsu/node
 
+## 0.4.1
+
+### Patch Changes
+
+- Updated dependencies [0c8b191]
+- Updated dependencies [d0ea1b3]
+  - @bongsu/core@0.6.0
+  - @bongsu/api@0.6.0
+  - @bongsu/schema@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
