@@ -397,6 +397,45 @@ describe("tick: a carousel", () => {
   });
 });
 
+describe("tick: a carousel whose location Instagram refuses", () => {
+  it("creates the parent without the location, publishes, and says so", async () => {
+    const folder = "main/CONTENT/20261105_NAMSAN",
+      dir = "posts/cello1_col_de_namsan";
+    const key = await planItem({ kind: "post", folder, name: dir, time: "18:30", location: "남산" });
+    await copyText(`channels/${folder}/${dir}/caption.txt`, "Namsan");
+    w.drive.set("img_aaaaaaaaaa", { md5: MD5, mimeType: "image/jpeg" });
+    w.drive.set("img_cccccccccc", { md5: MD5, mimeType: "image/jpeg" });
+    await approve(key, {
+      due: "2026-10-20 18:30",
+      caption: "Namsan",
+      comment: null,
+      media: ["img_aaaaaaaaaa", "img_cccccccccc"].map((driveId) => ({ driveId, md5: MD5 })),
+    });
+    igHappyPath(w);
+    let n = 0;
+    w.composio.INSTAGRAM_POST_IG_USER_MEDIA = (a) => {
+      if (a.location_id) throw new Error("Param location_id is not a valid location page ID");
+      return { id: `container-${++n}` };
+    };
+    const e = await testEnv(env);
+    await tick(e, { fetch: w.fetch, now: AT });
+    await tick(e, { fetch: w.fetch, now: later(5) });
+    const parents = w.calls.filter(
+      (c) => c.slug === "INSTAGRAM_POST_IG_USER_MEDIA" && c.args.media_type === "CAROUSEL",
+    );
+    expect(parents.map((c) => "location_id" in c.args)).toEqual([true, false]);
+    // kept on the job, so the published note can say so
+    expect(JSON.parse((await jobs())[0].payload)).toMatchObject({
+      locationDropped: true,
+      step: { data: { locationDropped: true } },
+    });
+    await tick(e, { fetch: w.fetch, now: later(10) });
+    await tick(e, { fetch: w.fetch, now: later(15) });
+    expect((await postedRows()).map((r) => r.item_key)).toEqual([key]);
+    expect(w.notifications.at(-1)?.body).toContain("(without its location: Instagram refused it)");
+  });
+});
+
 describe("tick: a single-media post", () => {
   const folder = "vlogs/CONTENT/20260823_LISBON";
   const one = async (dir: string, driveId: string, mimeType: string) => {

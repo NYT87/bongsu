@@ -18,15 +18,18 @@ export class InstagramProvider implements Provider {
     this.trialNote = ig.trialNote;
   }
 
-  /** A container with the post's location; without it when Instagram won't take that place (as ig.py does). */
-  private async withLocation(p: ContainerParams, location: unknown, data: Record<string, unknown>) {
-    if (typeof location !== "string" || !location) return this.ig.createContainer(p);
+  /** A container with the post's location; without it when Instagram won't take that place (as ig.py does), and
+   *  then `locationDropped` to keep in the step's data. */
+  private async withLocation(
+    p: ContainerParams,
+    location: unknown,
+  ): Promise<{ container: string; locationDropped?: true }> {
+    if (typeof location !== "string" || !location) return { container: await this.ig.createContainer(p) };
     try {
-      return await this.ig.createContainer({ ...p, location_id: location });
+      return { container: await this.ig.createContainer({ ...p, location_id: location }) };
     } catch (e) {
       if (!(e instanceof InstagramError)) throw e;
-      data.locationDropped = true;
-      return this.ig.createContainer(p);
+      return { container: await this.ig.createContainer(p), locationDropped: true };
     }
   }
 
@@ -49,14 +52,14 @@ export class InstagramProvider implements Provider {
         thumb_offset: typeof o.coverMs === "number" ? o.coverMs : 500,
         ...(o.trial === true ? { trial_params: { graduation_strategy: "SS_PERFORMANCE" as const } } : {}),
       };
-      data.container = await this.withLocation(reel, o.location, data);
+      Object.assign(data, await this.withLocation(reel, o.location));
     } else if (post.format === "image") {
       const photo: ContainerParams = {
         image_url: first.url,
         caption: post.caption,
         ...(post.alts[0] ? { alt_text: post.alts[0] } : {}),
       };
-      data.container = await this.withLocation(photo, o.location, data);
+      Object.assign(data, await this.withLocation(photo, o.location));
     } else if (post.format === "carousel") {
       // the items now; the parent once every item is processed (check). Alt texts go, in order, to the images.
       const children: string[] = [];
@@ -87,7 +90,7 @@ export class InstagramProvider implements Provider {
         caption: String(d.caption ?? ""),
       };
       const loc = d.locationDropped ? null : d.location;
-      return { state: "processing", data: { ...d, container: await this.withLocation(parent, loc, d) } };
+      return { state: "processing", data: { ...d, ...(await this.withLocation(parent, loc)) } };
     }
     const s = await this.ig.status(String(d.container));
     if (failed(s)) return { ...step, state: "failed", error: `container ${s}` };

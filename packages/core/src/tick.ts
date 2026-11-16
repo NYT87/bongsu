@@ -1035,17 +1035,20 @@ async function queueTrial(c: Ctx, job: JobRow, p: Payload) {
     .run();
 }
 
-async function stepContainer(c: Ctx, job: JobRow, p: Payload) {
-  const pr = await c.provider(p, job.workspace_id);
-  const step = await withLinks(c, job, p, p.step ?? (await legacyStep(c, job, p)));
+async function stepContainer(c: Ctx, job: JobRow, before: Payload) {
+  const pr = await c.provider(before, job.workspace_id);
+  const step = await withLinks(c, job, before, before.step ?? (await legacyStep(c, job, before)));
   let next: Step;
   try {
     next = await pr.check(step, c.run);
   } catch (e) {
-    if (e instanceof QuotaExceeded) return waitQuota(c, job, p);
-    if (e instanceof SessionGone) return restart(c, job, p);
+    if (e instanceof QuotaExceeded) return waitQuota(c, job, before);
+    if (e instanceof SessionGone) return restart(c, job, before);
     throw e;
   }
+  // a location dropped in a later step (a carousel's parent) is kept on the job, as one dropped at the start is
+  const p: Payload =
+    next.data.locationDropped && !before.locationDropped ? { ...before, locationDropped: true } : before;
   if (next.data.thumbnailRefused && !step.data.thumbnailRefused)
     await c.note.send(N.youtubeThumbnailRefused(job.item_key), job.workspace_id);
   if (next.state === "failed") return failStep(c, job, p, pr, next);
