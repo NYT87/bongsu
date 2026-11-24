@@ -856,6 +856,33 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
     expect(w.ytVideos.has("vid-1")).toBe(false);
   });
 
+  it("a run past its deadline leaves the sweep for a later one, though no job was left over", async () => {
+    await uploadAhead();
+    await env.DB.prepare("UPDATE plan_items SET due_at = ?1 WHERE item_key = ?2")
+      .bind(await localToUnix("2026-10-20", "19:00"), KEY)
+      .run();
+    await run(at(-3600));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    await removeItem();
+    await setup();
+    const { key: reel } = await seedReel(w, { time: "18:05" });
+    igHappyPath(w);
+    const deletes = countDeletes();
+    // the run's one job is the Reel, and its deadline passes while it is advanced: the loop ends on its own
+    const deadline = new AbortController();
+    const real = w.fetch;
+    w.fetch = async (input, init) => {
+      if (/instagram|composio/.test(new URL(new Request(input, init).url).hostname)) deadline.abort();
+      return real(input, init);
+    };
+    now = at(360);
+    await tick(e, { fetch: w.fetch, now, signal: deadline.signal });
+    w.fetch = real;
+    expect(deadline.signal.aborted).toBe(true);
+    expect((await job(reel))?.state).toBe("container_created");
+    expect(deletes.n).toBe(0);
+  });
+
   it("a failed job's video is deleted once its item is removed", async () => {
     await uploadAhead();
     w.ytKeepPrivate = true;

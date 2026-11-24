@@ -335,15 +335,17 @@ export async function tick(
       spent = !(await advance(c, job));
       if (spent) break;
     }
-    // a full run has spent its subrequests (or its time) on the jobs: the sweep waits for a quieter one
-    if (!spent && calling < jobsPerTick(env)) await sweepRemoved(c);
+    // a full run has spent its subrequests (or its time) on the jobs: the sweep waits for a quieter one. The deadline
+    // may also pass during the last job, with nothing left over: the sweep's deletes would run past it all the same
+    if (!spent && !run.signal.aborted && calling < jobsPerTick(env)) await sweepRemoved(c);
     return {
       status: "ok",
       detail: { part, advanced, held: [...c.held.keys()], dry_run: c.dry },
     };
   } finally {
     try {
-      await recordRun(env.DB, part, nowS, run.calls, run.invalid); // the tick runs no budget steps: none stopped
+      // the tick runs no budget steps: none stopped. A part of the limit (deps.subrequests) means a shared minute
+      await recordRun(env.DB, part, nowS, run.calls, run.invalid, deps.subrequests !== undefined);
     } finally {
       await release(env.DB, lock, holder);
     }
