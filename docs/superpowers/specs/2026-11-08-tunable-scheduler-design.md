@@ -64,8 +64,12 @@ enough. No names (`MON`, `JAN`), no `@hourly` macros, no seconds field: refused 
   the cron Worker's variables. Runs that share a minute share one Cloudflare invocation's 10 ms CPU on the free plan
   and its calls: with more than one run due and a finite limit, each gets `floor(RUN_SUBREQUESTS / runs due)`, passed
   through `runSchedule` to the tick's budget and to `runUpkeep`, and records that limit (amended after the final
-  review: each used to get the whole limit). The defaults never share a minute, and the dashboard warns when
-  configured runs do ("they share one invocation's CPU and its calls").
+  review: each used to get the whole limit), with `shared: true` in its `run_last` row. Upkeep yields the minute
+  (amended in the second final fix wave): it is due at M when it matches M and no tick is due at M, or when it
+  matched M−1, a tick was due at M−1 and none is at M; when a tick is due in both its minute and the next, it runs in
+  its own minute and shares it. Decided from the expressions only, so idle minutes still make no database call. The
+  defaults never share a minute, and the dashboard warns when configured runs do ("they share one invocation's CPU
+  and its calls"): ticks sharing any minute, upkeep only when it can't move.
   An invalid variable is logged each minute (`schedule CRON_SHORTS: <reason>`) and only that run is skipped.
 - `runSchedule(env, fetch, name, at, gapS, subrequests?)` stays as the per-run entry (by **name**, not expression), used by `runDue` and
   by tests.
@@ -169,7 +173,8 @@ matcher):
 - **Runs:** name, expression, next firing in the viewer's zone, the variable that sets it and whether it is the
   default or set; an invalid one in red with its variable and the parser's message.
 - **Limits in effect:** `RUN_SUBREQUESTS` (or "unlimited"), `JOBS_PER_TICK`, `INBOX_WORKSPACES_PER_RUN`: the value the
-  latest run used, with a refused `RUN_SUBREQUESTS` flagged (amended during the build: no "default/set", since the
+  latest run used (for `RUN_SUBREQUESTS`, the latest run whose limit wasn't split; if every recorded run shared,
+  the latest, marked shared), with a refused `RUN_SUBREQUESTS` flagged (amended during the build: no "default/set", since the
   cron side doesn't record where a limit came from and Node fills its default as a variable; the docs name each
   variable and its default).
 - **Last run of each:** when, calls used of the budget, and the steps that stopped on their share. Each run overwrites
@@ -185,7 +190,7 @@ Only instance admins reach it (as today); `apps/cloudflare/test/workspaces.test.
 | Invalid `RUN_SUBREQUESTS` | The runtime's default (50 on Cloudflare, `unlimited` on Node), flagged on the dashboard |
 | Invalid `JOBS_PER_TICK` / `INBOX_WORKSPACES_PER_RUN` | Not a whole number from 1: the core default (4 / 3, on Node too); above the max: clamped. Not flagged: the dashboard shows the value used |
 | A step over its share | `BudgetSpent`, logged, the run continues; the step resumes next run |
-| Two runs due the same minute | Started side by side in one invocation, each under its own lock and with an equal part of a finite `RUN_SUBREQUESTS`; the dashboard warns (shared CPU and calls) |
+| Two runs due the same minute | Ticks: started side by side in one invocation, each under its own lock and with an equal part of a finite `RUN_SUBREQUESTS`; the dashboard warns (shared CPU and calls). Upkeep: moves to the next minute when that one is free of ticks, else shares its own |
 | The old `inbox` lock | Ignored; expires within 600 s |
 
 ## Tests

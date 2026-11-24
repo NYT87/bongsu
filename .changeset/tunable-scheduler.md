@@ -2,6 +2,7 @@
 "@bongsu/core": minor
 "@bongsu/api": minor
 "@bongsu/dashboard": minor
+"@bongsu/web": minor
 "@bongsu/cloudflare": minor
 "@bongsu/node": minor
 ---

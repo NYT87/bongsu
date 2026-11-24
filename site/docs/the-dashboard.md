@@ -195,8 +195,10 @@ an admin ask for your passkey again.
 **Scheduler** is a read-only section for instance admins. For each run (Instagram, Shorts, upkeep): its cron
 expression, the variable that sets it or "default", its next time in your zone, and its last run (when, the calls it
 used of its limit, and the steps that stopped on their share). An invalid expression shows in red with the reason,
-and runs that share a minute get a warning (they share one invocation's CPU and its calls). Below, the
-limits the latest runs used: `RUN_SUBREQUESTS` (flagged when its value was refused and the default used),
+and runs that share a minute get a warning (they share one invocation's CPU and its calls): two publishing runs, or
+upkeep when the minute after its own is taken too (otherwise it simply runs a minute later). Below, the limits the
+latest runs used: `RUN_SUBREQUESTS` (from the latest run that had it whole, not a part of a shared minute; flagged
+when its value was refused and the default used),
 `JOBS_PER_TICK` and `INBOX_WORKSPACES_PER_RUN`, and a notice when the schedules are off (`SCHEDULES=off` on Node).
 They are set where the instance is deployed, never here: [When the runs happen](configuration.md#when-the-runs-happen),
 [How much a run does](configuration.md#how-much-a-run-does).

@@ -145,8 +145,8 @@ The same names, from the environment (`.env` with docker-compose; [self-hosting.
 | `PORT`, `HOST` | `8787`, `0.0.0.0` | where it listens |
 | `MIGRATIONS_DIR`, `WEB_DIR` | set in the image | the folder holding `sqlite/` and `postgres/` migrations, and the built app |
 | `RP_ID` | `PUBLIC_URL`'s host | the passkeys' relying party |
-| `JOBS_PER_TICK` | `20` | publishing jobs advanced per run, at most `100` ([How many go out at once](#how-many-go-out-at-once)) |
-| `INBOX_WORKSPACES_PER_RUN` | `20` | workspaces whose inbox folder one run scans, at most `100` |
+| `JOBS_PER_TICK` | `20` | publishing jobs advanced per run, at most `100` ([How many go out at once](#how-many-go-out-at-once)); an invalid value (not a whole number from 1) falls back to `4`, the core default, not `20` |
+| `INBOX_WORKSPACES_PER_RUN` | `20` | workspaces whose inbox folder one run scans, at most `100`; an invalid value falls back to `3`, the core default, not `20` |
 | `CRON_INSTAGRAM`, `CRON_SHORTS`, `CRON_UPKEEP` | as on Cloudflare | when each run happens ([When the runs happen](#when-the-runs-happen)); an invalid one stops the server at startup (unless `SCHEDULES=off`), naming the variable |
 | `RUN_SUBREQUESTS` | `unlimited` | the outgoing calls one run may make; Node has no such limit, so only the per-step caps bound a run |
 
@@ -185,8 +185,11 @@ month, day of week), from its variable or else the default.
   and a deploy, never a trigger.
 - Runs due in the same minute start side by side, each under its own lock, so two runs of the same name never
   overlap. They then share one invocation's CPU (10 ms on the Workers free plan) and its calls: each gets an equal
-  part of `RUN_SUBREQUESTS` (at 50, three runs get 16 each). The dashboard warns when your schedules do. The defaults
-  never share a minute.
+  part of `RUN_SUBREQUESTS` (at 50, two runs get 25 each).
+- Upkeep makes way for the publishing runs: when Instagram or Shorts is due in upkeep's minute, upkeep runs the
+  minute after, alone and with the whole `RUN_SUBREQUESTS`. Only when that next minute is taken too (an every-minute
+  Instagram run, say) does it run in its own minute, sharing it. The dashboard warns when your schedules share a
+  minute: two publishing runs, or upkeep with no free minute after its own. The defaults never share a minute.
 - Timings follow the interval: a publishing run's lock frees a minute before its next run (between 1 and 59 minutes:
   4 for Instagram at the default), and Bongsu waits for Instagram to process a video 2 hours from its first check,
   whatever the interval.
@@ -213,7 +216,8 @@ was for waits for the next run:
   the rest wait for the next run. A Shorts comment refused this way is tried again at the next Shorts run.
 - **Upkeep:** the steps run in the order of the table above. Each may use what is left, less the reserve, less one
   unit of work for each step after it (an inbox folder, a post's metrics, an account's followers…), so the inbox comes
-  first and no later step is left with nothing. What a step doesn't use goes to the steps after it. The steps' own
+  first and each later step keeps room for some work. (Notifications paid from the reserve can still leave a later
+  step a call short of its unit; it carries on at the next run.) What a step doesn't use goes to the steps after it. The steps' own
   caps (`METRICS_PER_RUN`, `ACCOUNTS_PER_RUN`, `INBOX_WORKSPACES_PER_RUN`…) still apply, so a large number doesn't
   take everything at once. The notifications a step sends about its work (new drafts, new comments, a connection
   to renew…) come out of the reserve, so a step that used its share still tells you; the daily digest is paid from
