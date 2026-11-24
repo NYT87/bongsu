@@ -134,8 +134,6 @@ export function shortestGap(cron: Cron): number {
   return best;
 }
 
-// The first matching minute strictly after `after`, looking at most a year ahead: one day check per day, then the
-// day's firings from the sets.
 /** The firings in (`from`, `to`] (unix ms), in order, as unix ms on the minute: built from the sets, one day check per
  *  day and no Date per minute, for callers walking a week within a Worker's 10 ms of CPU. */
 export function* firings(cron: Cron, from: number, to: number): Generator<number> {
@@ -166,6 +164,8 @@ export function matcher(cron: Cron): (t: number) => boolean {
   };
 }
 
+// The first matching minute strictly after `after`, looking at most a year ahead: one day check per day, then the
+// day's firings from the sets.
 export function nextFiring(cron: Cron, after: Date): Date {
   const start = Math.floor(after.getTime() / MINUTE) * MINUTE + MINUTE;
   const end = start + 366 * DAY;

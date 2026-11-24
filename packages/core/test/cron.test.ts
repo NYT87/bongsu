@@ -160,7 +160,7 @@ describe("upkeepSharesWith", () => {
   });
 
   // The dashboard's Worker has 10 ms of CPU on the free plan and computes this on every Scheduler page load.
-  it("stays well under the CPU limit, cold, at best of three", () => {
+  it("stays well under the CPU limit (best of three runs)", () => {
     let fastest = Number.POSITIVE_INFINITY;
     for (let n = 0; n < 3; n++) {
       const t0 = performance.now();
