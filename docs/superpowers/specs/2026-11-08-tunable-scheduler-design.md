@@ -175,8 +175,8 @@ matcher):
 - **Limits in effect:** `RUN_SUBREQUESTS` (or "unlimited"), `JOBS_PER_TICK`, `INBOX_WORKSPACES_PER_RUN`: the value the
   latest run used (for `RUN_SUBREQUESTS`, the latest run whose limit wasn't split; if every recorded run shared,
   the latest, marked shared), with a refused `RUN_SUBREQUESTS` flagged (amended during the build: no "default/set", since the
-  cron side doesn't record where a limit came from and Node fills its default as a variable; the docs name each
-  variable and its default).
+  cron side doesn't record where a limit came from: Node's default comes from `RUN_SUBREQUESTS_DEFAULT`, not from
+  `RUN_SUBREQUESTS`, but `run_last` keeps only the value used; the docs name each variable and its default).
 - **Last run of each:** when, calls used of the budget, and the steps that stopped on their share. Each run overwrites
   one settings row (`run_last:<name>`, JSON); no history accumulates. Replaces today's "last inbox run".
 

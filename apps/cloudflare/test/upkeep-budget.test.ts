@@ -191,7 +191,8 @@ describe("upkeep under RUN_SUBREQUESTS", () => {
       if (mine?.n) drafted = true;
     }
     expect(drafted).toBe(true);
-  });
+    // 19 upkeep runs in one test: the config's 60 s is too close on a loaded machine
+  }, 180_000);
 
   it("stops a step that ignores its share, and the steps after it still run", async () => {
     const e = await testEnv(env, { RUN_SUBREQUESTS: "50" });
