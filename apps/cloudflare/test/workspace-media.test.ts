@@ -456,7 +456,11 @@ describe("the Scheduler page", () => {
   it("upkeep doesn't warn when it can take the next minute; it does when the next is a tick's too", async () => {
     const ina = await as("ina");
     await runDue(await testEnv(env, { CRON_UPKEEP: "*/15 * * * *" }), w.fetch, new Date("2026-10-20T09:00:00Z"));
+    // every quarter hour is an Instagram minute: upkeep's next run is the minute after its firing
+    const moved = () => utcIso(nextFiring(parseCron("*/15 * * * *"), new Date()).getTime() / 1000 + 60);
+    const before = moved();
     let runs = (await ina("/admin-api/scheduler")).json.runs;
+    expect([before, moved()]).toContain(runs[2].next);
     expect(runs.map((r: { shared: string[] }) => r.shared)).toEqual([[], [], []]);
     await runDue(await testEnv(env, { CRON_INSTAGRAM: "* * * * *" }), w.fetch, new Date("2026-10-20T09:00:00Z"));
     runs = (await ina("/admin-api/scheduler")).json.runs;

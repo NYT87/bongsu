@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { CronError, matches, nextFiring, parseCron, shortestGap } from "../src/cron";
+import { CronError, firings, matcher, matches, nextFiring, parseCron, shortestGap } from "../src/cron";
+import { upkeepDue, upkeepSharesWith } from "../src/schedules";
 
 const at = (iso: string) => new Date(iso);
 
@@ -96,6 +97,76 @@ describe("cost", () => {
         shortestGap(cron);
         nextFiring(cron, at("2026-01-02T00:00:00Z"));
       }
+      fastest = Math.min(fastest, performance.now() - t0);
+    }
+    expect(fastest).toBeLessThan(10);
+  });
+});
+
+describe("firings and matcher", () => {
+  it("agree with matches, minute by minute, across a month's end", () => {
+    const from = Date.UTC(2026, 10, 29, 22, 0);
+    const to = from + 3 * 86_400_000;
+    for (const expr of ["*/15 * * * *", "2,32 * * * *", "0 3 1 * *", "* 23 * * 1", "59 23 30 11 *"]) {
+      const cron = parseCron(expr);
+      const fires = matcher(cron);
+      const walked: number[] = [];
+      for (let t = from + 60_000; t <= to; t += 60_000) {
+        expect(fires(t), `${expr} at ${new Date(t).toISOString()}`).toBe(matches(cron, new Date(t)));
+        if (matches(cron, new Date(t))) walked.push(t);
+      }
+      expect([...firings(cron, from, to)], expr).toEqual(walked);
+    }
+  });
+});
+
+describe("upkeepSharesWith", () => {
+  const ticks = (instagram: string, shorts = "2,32 * * * *") => [
+    { name: "instagram" as const, cron: parseCron(instagram) },
+    { name: "shorts" as const, cron: parseCron(shorts) },
+  ];
+  const FROM = at("2026-11-09T00:00:30Z");
+
+  it("names the ticks of the minutes where upkeepDue has it run beside one, as a minute-by-minute walk does", () => {
+    const pairs: [string, string, string][] = [
+      ["*/15 * * * *", "*/5 * * * *", "2,32 * * * *"],
+      ["7,22,37,52 * * * *", "* * * * *", "2,32 * * * *"],
+      ["*/2 * * * *", "*/3 * * * *", "*/4 * * * *"],
+      ["0 3 * * *", "0,1 3 * * 1", "2,32 * * * *"],
+    ];
+    for (const [u, ig, sh] of pairs) {
+      const t = ticks(ig, sh);
+      const walked = new Set<string>();
+      const start = Math.floor(FROM.getTime() / 60_000) * 60_000;
+      for (let m = 1; m <= 7 * 1440; m++) {
+        const d = new Date(start + m * 60_000);
+        if (
+          !upkeepDue(
+            parseCron(u),
+            t.map((x) => x.cron),
+            d,
+          )
+        )
+          continue;
+        for (const x of t) if (matches(x.cron, d)) walked.add(x.name);
+      }
+      expect([...upkeepSharesWith(parseCron(u), t, FROM)].sort(), `${u} / ${ig} / ${sh}`).toEqual([...walked].sort());
+    }
+  });
+
+  it("finds nothing when upkeep can always move, and the ticks it can't move from", () => {
+    expect([...upkeepSharesWith(parseCron("*/15 * * * *"), ticks("*/5 * * * *"), FROM)]).toEqual([]);
+    expect([...upkeepSharesWith(parseCron("7,22,37,52 * * * *"), ticks("* * * * *"), FROM)]).toEqual(["instagram"]);
+  });
+
+  // The dashboard's Worker has 10 ms of CPU on the free plan and computes this on every Scheduler page load.
+  it("stays well under the CPU limit, cold, at best of three", () => {
+    let fastest = Number.POSITIVE_INFINITY;
+    for (let n = 0; n < 3; n++) {
+      const t0 = performance.now();
+      upkeepSharesWith(parseCron("*/15 * * * *"), ticks("*/5 * * * *"), FROM);
+      upkeepSharesWith(parseCron("* * * * *"), ticks("* * * * *"), FROM);
+      upkeepSharesWith(parseCron("7,22,37,52 * * * *"), ticks("* * * * *"), FROM);
       fastest = Math.min(fastest, performance.now() - t0);
     }
     expect(fastest).toBeLessThan(10);

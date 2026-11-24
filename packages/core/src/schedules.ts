@@ -7,7 +7,7 @@ import { recordRun, runBudget, runSubrequests, type StepDeps } from "./budget";
 import { CLEANUP_UNIT_CALLS, cleanMedia } from "./cleanup";
 import { COMMENTS_UNIT_CALLS, pollComments } from "./comments";
 import { CRON_INSTAGRAM, CRON_SHORTS, CRON_UPKEEP } from "./constants";
-import { type Cron, matches, nextFiring, parseCron, shortestGap } from "./cron";
+import { type Cron, firings, matcher, matches, nextFiring, parseCron, shortestGap } from "./cron";
 import { DIGEST_UNIT_CALLS, dailyDigest } from "./digest";
 import type { Env } from "./env";
 import { INBOX_UNIT_CALLS, scanInbox } from "./inbox";
@@ -90,6 +90,27 @@ export function upkeepDue(upkeep: Cron, ticks: readonly Cron[], minute: Date): b
   const after = new Date(minute.getTime() + 60_000);
   if (matches(upkeep, minute)) return !tickAt(minute) || tickAt(after);
   return matches(upkeep, before) && tickAt(before) && !tickAt(minute);
+}
+
+/** The ticks upkeep shares a minute with in the week after `from`, by `upkeepDue`'s rule: only at its own firings
+ *  where a tick is due in that minute and the next (where it can't move), so a schedule it merely moves a minute for
+ *  shares nothing. For the dashboard, whose Worker has 10 ms of CPU too: it walks upkeep's firings only, from the sets,
+ *  and stops once every tick is found. */
+export function upkeepSharesWith(
+  upkeep: Cron,
+  ticks: readonly { name: RunName; cron: Cron }[],
+  from: Date,
+): Set<RunName> {
+  const out = new Set<RunName>();
+  if (!ticks.length) return out;
+  const at = ticks.map((t) => ({ name: t.name, fires: matcher(t.cron) }));
+  const start = Math.floor(from.getTime() / 60_000) * 60_000;
+  for (const m of firings(upkeep, start, start + 7 * 86_400_000)) {
+    if (!at.some((t) => t.fires(m + 60_000))) continue; // the next minute is free: it moves there, alone
+    for (const t of at) if (t.fires(m)) out.add(t.name);
+    if (out.size === at.length) break;
+  }
+  return out;
 }
 
 /** Starts every run due in the minute `at` falls in, side by side (each guarded by its own lock, so a long tick never

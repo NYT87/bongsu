@@ -136,6 +136,36 @@ export function shortestGap(cron: Cron): number {
 
 // The first matching minute strictly after `after`, looking at most a year ahead: one day check per day, then the
 // day's firings from the sets.
+/** The firings in (`from`, `to`] (unix ms), in order, as unix ms on the minute: built from the sets, one day check per
+ *  day and no Date per minute, for callers walking a week within a Worker's 10 ms of CPU. */
+export function* firings(cron: Cron, from: number, to: number): Generator<number> {
+  const ofDay = minutesOfDay(cron);
+  for (let dayStart = Math.floor(from / DAY) * DAY; dayStart <= to; dayStart += DAY) {
+    if (!dayMatches(cron, new Date(dayStart))) continue;
+    for (const minute of ofDay) {
+      const t = dayStart + minute * MINUTE;
+      if (t > to) return;
+      if (t > from) yield t;
+    }
+  }
+}
+
+/** `matches` for unix ms, with the day rule remembered per day: cheap enough to ask for every minute of a week. */
+export function matcher(cron: Cron): (t: number) => boolean {
+  const days = new Map<number, boolean>();
+  return (t) => {
+    const minuteOfDay = Math.floor((t % DAY) / MINUTE);
+    if (!cron.minutes.has(minuteOfDay % 60) || !cron.hours.has(Math.floor(minuteOfDay / 60))) return false;
+    const day = Math.floor(t / DAY);
+    let ok = days.get(day);
+    if (ok === undefined) {
+      ok = dayMatches(cron, new Date(day * DAY));
+      days.set(day, ok);
+    }
+    return ok;
+  };
+}
+
 export function nextFiring(cron: Cron, after: Date): Date {
   const start = Math.floor(after.getTime() / MINUTE) * MINUTE + MINUTE;
   const end = start + 366 * DAY;

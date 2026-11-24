@@ -32,7 +32,7 @@ import {
   startConnect,
   workspaceOAuthApps,
 } from "@bongsu/core/connections";
-import { type Cron, CronError, matches, nextFiring, parseCron } from "@bongsu/core/cron";
+import { type Cron, CronError, firings, matcher, nextFiring, parseCron } from "@bongsu/core/cron";
 import { CryptoError } from "@bongsu/core/crypto";
 import { dueFrom, WhenError, waitingApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -76,7 +76,7 @@ import { describePlatform, NO_LINT, OptionsError, validateOptions } from "@bongs
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
-import { type RunName, type Schedule, schedulesOff, upkeepDue } from "@bongsu/core/schedules";
+import { type RunName, type Schedule, schedulesOff, upkeepDue, upkeepSharesWith } from "@bongsu/core/schedules";
 import {
   callerZone,
   checkName,
@@ -220,30 +220,14 @@ const WEEK_MINUTES = 7 * 24 * 60;
 const overlap = (a: Set<number>, b: Set<number>) => [...a].some((v) => b.has(v));
 
 /** Whether two schedules fire on the same minute within the week after `now`. Most pairs (the defaults) differ in
- *  their minutes, so the week is walked only when they could meet: this Worker's CPU is short too. */
+ *  their minutes, so the week is walked only when they could meet, and then only `a`'s firings, from the sets: this
+ *  Worker's CPU is short too. */
 function sharesAMinute(a: Cron, b: Cron, now: Date): boolean {
   if (!overlap(a.minutes, b.minutes) || !overlap(a.hours, b.hours)) return false;
   const start = Math.floor(now.getTime() / 60_000) * 60_000;
-  for (let m = 1; m <= WEEK_MINUTES; m++) {
-    const t = new Date(start + m * 60_000);
-    if (matches(a, t) && matches(b, t)) return true;
-  }
+  const fires = matcher(b);
+  for (const t of firings(a, start, start + WEEK_MINUTES * 60_000)) if (fires(t)) return true;
   return false;
-}
-
-/** The ticks upkeep shares a minute with in the week after `now`: only where it can't make way for them (core's
- *  `upkeepDue`: a tick due in its minute and the next), so a schedule it merely moves a minute for doesn't warn. */
-function upkeepSharesWith(upkeep: Cron, ticks: { name: RunName; cron: Cron }[], now: Date): Set<RunName> {
-  const out = new Set<RunName>();
-  const crons = ticks.map((t) => t.cron);
-  if (!crons.some((t) => overlap(upkeep.minutes, t.minutes) && overlap(upkeep.hours, t.hours))) return out;
-  const start = Math.floor(now.getTime() / 60_000) * 60_000;
-  for (let m = 1; m <= WEEK_MINUTES; m++) {
-    const t = new Date(start + m * 60_000);
-    if (!upkeepDue(upkeep, crons, t)) continue;
-    for (const tick of ticks) if (matches(tick.cron, t)) out.add(tick.name);
-  }
-  return out;
 }
 
 /** The recorded schedules with each one's next firing and the runs it shares a minute with in the next week: those
@@ -269,8 +253,9 @@ function schedulerRuns(recorded: Schedule[], now: Date) {
   // upkeep with the ticks: only the minutes it can't move away from
   const u = recorded.findIndex((s) => s.name === "upkeep");
   const upkeep = u >= 0 ? crons[u] : null;
+  const ticks = crons.flatMap((cron, i) => (cron && isTick(i) ? [{ name: recorded[i].name, cron }] : []));
+  const tickCrons = ticks.map((t) => t.cron);
   if (upkeep) {
-    const ticks = crons.flatMap((cron, i) => (cron && isTick(i) ? [{ name: recorded[i].name, cron }] : []));
     for (const name of upkeepSharesWith(upkeep, ticks, now)) {
       shared[u].add(name);
       shared[recorded.findIndex((s) => s.name === name)].add("upkeep");
@@ -280,7 +265,12 @@ function schedulerRuns(recorded: Schedule[], now: Date) {
     const cron = crons[i];
     let next: string | null = null;
     try {
-      if (cron) next = utcIso(nextFiring(cron, now).getTime() / 1000);
+      if (cron) {
+        let t = nextFiring(cron, now);
+        // upkeep makes way for a tick in its minute: it then runs the minute after (core's upkeepDue)
+        if (i === u && !upkeepDue(cron, tickCrons, t)) t = new Date(t.getTime() + 60_000);
+        next = utcIso(t.getTime() / 1000);
+      }
     } catch (e) {
       if (!(e instanceof CronError)) throw e;
     }
