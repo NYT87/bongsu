@@ -687,6 +687,26 @@ describe("several stores side by side", () => {
     ]);
   });
 
+  it("pays the instance admins' mail from the run's reserve, as the other notes", async () => {
+    const m = await testEnv(env, {
+      MAILER: "resend",
+      MAIL_FROM: "Bongsu <bongsu@example.com>",
+      RESEND_API_KEY: "re_test",
+    } as Partial<Env>);
+    w.googleRefuse = true;
+    clearTokenCache();
+    // the step's own fetch has nothing left for a mail; the reserve (noteFetch) does
+    const share: typeof fetch = (input, init) =>
+      new Request(input as RequestInfo).url.startsWith("https://api.resend.com/")
+        ? Promise.reject(new Error("the step's share is spent"))
+        : w.fetch(input, init);
+    expect(await checkStores(m, { fetch: share, noteFetch: w.fetch, now: AT })).toEqual({
+      checked: [],
+      broken: ["drive"],
+    });
+    expect(w.mails).toEqual([expect.objectContaining({ subject: "Bongsu: a media store needs attention" })]);
+  });
+
   it("writes no mail when no instance admin has an email, and still logs the notice", async () => {
     // a mailer that sees every send (Resend's skips an empty list itself; another mailer may not)
     const sent: Mail[] = [];
