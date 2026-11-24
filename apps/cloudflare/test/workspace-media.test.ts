@@ -414,7 +414,7 @@ describe("the Scheduler page", () => {
     expect(up.error).toMatch(/61/);
     const at = "2026-10-20T09:00:00Z";
     expect(j.limits).toEqual({
-      runSubrequests: { value: "unlimited", invalid: null },
+      runSubrequests: { value: "unlimited", invalid: null, shared: false }, // unlimited: nothing to split
       jobsPerTick: { value: 3, at },
       inboxWorkspacesPerRun: null,
     });
@@ -428,10 +428,44 @@ describe("the Scheduler page", () => {
     await runDue(await testEnv(env, { RUN_SUBREQUESTS: "100" }), w.fetch, new Date("2026-10-20T09:00:00Z"));
     await runDue(await testEnv(env, { RUN_SUBREQUESTS: "lots" }), w.fetch, new Date("2026-10-20T09:07:00Z"));
     const j = (await ina("/admin-api/scheduler")).json;
-    expect(j.limits.runSubrequests).toEqual({ value: RUN_SUBREQUESTS, invalid: "lots" });
+    expect(j.limits.runSubrequests).toEqual({ value: RUN_SUBREQUESTS, invalid: "lots", shared: false });
     expect(j.last.instagram).toMatchObject({ at: "2026-10-20T09:00:00Z", limit: 100 });
     expect(j.last.upkeep).toMatchObject({ at: "2026-10-20T09:07:00Z", limit: RUN_SUBREQUESTS });
     expect(j.runs.map((r: { shared: string[] }) => r.shared)).toEqual([[], [], []]); // the defaults never share
+  });
+
+  it("the run budget is the latest run that had the whole limit, not a split one", async () => {
+    const ina = await as("ina");
+    const sharing = await testEnv(env, { RUN_SUBREQUESTS: "100", CRON_SHORTS: "*/5 * * * *" });
+    expect(await runDue(sharing, w.fetch, new Date("2026-10-20T09:07:00Z"))).toEqual(["upkeep"]); // alone
+    expect(await runDue(sharing, w.fetch, new Date("2026-10-20T09:10:00Z"))).toEqual(["instagram", "shorts"]);
+    expect((await ina("/admin-api/scheduler")).json.limits.runSubrequests).toEqual({
+      value: 100,
+      invalid: null,
+      shared: false,
+    });
+    // only split runs recorded: the latest, marked shared
+    await env.DB.prepare("DELETE FROM settings WHERE key = 'run_last:upkeep'").run();
+    expect((await ina("/admin-api/scheduler")).json.limits.runSubrequests).toEqual({
+      value: 50,
+      invalid: null,
+      shared: true,
+    });
+  });
+
+  it("upkeep doesn't warn when it can take the next minute; it does when the next is a tick's too", async () => {
+    const ina = await as("ina");
+    await runDue(await testEnv(env, { CRON_UPKEEP: "*/15 * * * *" }), w.fetch, new Date("2026-10-20T09:00:00Z"));
+    let runs = (await ina("/admin-api/scheduler")).json.runs;
+    expect(runs.map((r: { shared: string[] }) => r.shared)).toEqual([[], [], []]);
+    await runDue(await testEnv(env, { CRON_INSTAGRAM: "* * * * *" }), w.fetch, new Date("2026-10-20T09:00:00Z"));
+    runs = (await ina("/admin-api/scheduler")).json.runs;
+    // upkeep's minutes and the next are all Instagram's: it shares; Shorts shares with Instagram, a tick with a tick
+    expect(runs.map((r: { shared: string[] }) => r.shared)).toEqual([
+      ["shorts", "upkeep"],
+      ["instagram"],
+      ["instagram"],
+    ]);
   });
 
   it("runs at the same hour on different weekdays don't share a minute", async () => {

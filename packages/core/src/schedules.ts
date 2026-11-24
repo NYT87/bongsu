@@ -79,16 +79,31 @@ export function schedules(env: Pick<Env, Variable>): Schedule[] {
 /** Whether this instance runs no schedules (Node's SCHEDULES=off); Cloudflare's cron Worker always runs them. */
 export const schedulesOff = (env: Pick<Env, "SCHEDULES">) => env.SCHEDULES === "off";
 
+/** Whether upkeep runs in `minute`, given the ticks' (instagram, shorts) schedules. It makes way for them: a tick
+ *  needs most of a shared limit and the inbox the rest, so a split starves both, while a minute later costs nothing.
+ *  Due when its expression matches the minute and no tick is due in it; or when it matched the minute before, a tick
+ *  took that one and none takes this one. When a tick is due both in its minute and the next, it can't move: it runs
+ *  in its own minute, sharing it. From the expressions only, so a minute with nothing due still reads nothing. */
+export function upkeepDue(upkeep: Cron, ticks: readonly Cron[], minute: Date): boolean {
+  const tickAt = (t: Date) => ticks.some((c) => matches(c, t));
+  const before = new Date(minute.getTime() - 60_000);
+  const after = new Date(minute.getTime() + 60_000);
+  if (matches(upkeep, minute)) return !tickAt(minute) || tickAt(after);
+  return matches(upkeep, before) && tickAt(before) && !tickAt(minute);
+}
+
 /** Starts every run due in the minute `at` falls in, side by side (each guarded by its own lock, so a long tick never
  *  holds up upkeep), and returns their names. A failing run is logged and doesn't stop the others. */
 export async function runDue(env: Env, fetcher: typeof fetch, at: Date): Promise<RunName[]> {
   const minute = new Date(Math.floor(at.getTime() / 60_000) * 60_000);
   const all = schedules(env);
-  const due: Schedule[] = [];
-  for (const s of all) {
-    if (s.error) console.log(`schedule ${s.variable}: ${s.error}`);
-    else if (matches(parse(s.expr).cron as Cron, minute)) due.push(s);
-  }
+  for (const s of all) if (s.error) console.log(`schedule ${s.variable}: ${s.error}`);
+  const valid = all.filter((s) => !s.error);
+  const ticks = valid.filter((s) => s.name !== "upkeep").map((s) => parse(s.expr).cron as Cron);
+  const due = valid.filter((s) => {
+    const cron = parse(s.expr).cron as Cron;
+    return s.name === "upkeep" ? upkeepDue(cron, ticks, minute) : matches(cron, minute);
+  });
   // Most minutes stop here, without touching the database: Workers cap D1 queries per invocation, and this runs
   // 1,440 times a day.
   if (!due.length) return [];
@@ -97,7 +112,8 @@ export async function runDue(env: Env, fetcher: typeof fetch, at: Date): Promise
   } catch (e) {
     console.log(`schedules not recorded: ${(e as Error).message}`);
   }
-  // Workers count calls per invocation, not per run: runs sharing a minute share one invocation's limit, equally.
+  // Workers count calls per invocation, not per run: runs sharing a minute share one invocation's limit, equally (two
+  // ticks, or upkeep when it couldn't move to a free minute).
   const limit = runSubrequests(env).value;
   const share = due.length > 1 && Number.isFinite(limit) ? Math.floor(limit / due.length) : undefined;
   const results = await Promise.allSettled(
@@ -200,7 +216,7 @@ export async function runUpkeep(
     }
   } finally {
     try {
-      await recordRun(env.DB, "upkeep", nowS, calls, limit.invalid);
+      await recordRun(env.DB, "upkeep", nowS, calls, limit.invalid, subrequests !== undefined);
     } finally {
       await release(env.DB, "upkeep", holder);
     }

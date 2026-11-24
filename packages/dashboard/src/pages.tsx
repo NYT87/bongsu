@@ -3758,7 +3758,8 @@ interface SchedulerInfo {
       }[]
     | null;
   limits: {
-    runSubrequests: { value: number | "unlimited"; invalid: string | null } | null;
+    /** `shared`: every recorded run shared its minute, so this is a part of the limit, not the limit itself. */
+    runSubrequests: { value: number | "unlimited"; invalid: string | null; shared: boolean } | null;
     jobsPerTick: Recorded | null;
     inboxWorkspacesPerRun: Recorded | null;
   };
@@ -3870,7 +3871,10 @@ function SchedulerCard() {
               {calls ? (
                 <>
                   {/* whether it is the default or set can't be told from what the runs record */}
-                  <strong>{calls.value}</strong> <span className="muted small">in the latest run · set with </span>
+                  <strong>{calls.value}</strong>{" "}
+                  <span className="muted small">
+                    {calls.shared ? "in the latest run, its part of a shared minute" : "in the latest run"} · set with{" "}
+                  </span>
                   <code>{data.variables.runSubrequests}</code>
                   {calls.invalid !== null && (
                     <p className="error" role="alert">

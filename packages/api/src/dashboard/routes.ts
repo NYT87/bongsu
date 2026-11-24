@@ -76,7 +76,7 @@ import { describePlatform, NO_LINT, OptionsError, validateOptions } from "@bongs
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
-import { type RunName, type Schedule, schedulesOff } from "@bongsu/core/schedules";
+import { type RunName, type Schedule, schedulesOff, upkeepDue } from "@bongsu/core/schedules";
 import {
   callerZone,
   checkName,
@@ -212,6 +212,8 @@ interface RunLast {
   limit: number | "unlimited";
   stopped: string[];
   invalid: string | null;
+  /** Its limit was a part of RUN_SUBREQUESTS, split with the runs sharing its minute (absent in rows from before). */
+  shared?: boolean;
 }
 const WEEK_MINUTES = 7 * 24 * 60;
 
@@ -229,8 +231,23 @@ function sharesAMinute(a: Cron, b: Cron, now: Date): boolean {
   return false;
 }
 
+/** The ticks upkeep shares a minute with in the week after `now`: only where it can't make way for them (core's
+ *  `upkeepDue`: a tick due in its minute and the next), so a schedule it merely moves a minute for doesn't warn. */
+function upkeepSharesWith(upkeep: Cron, ticks: { name: RunName; cron: Cron }[], now: Date): Set<RunName> {
+  const out = new Set<RunName>();
+  const crons = ticks.map((t) => t.cron);
+  if (!crons.some((t) => overlap(upkeep.minutes, t.minutes) && overlap(upkeep.hours, t.hours))) return out;
+  const start = Math.floor(now.getTime() / 60_000) * 60_000;
+  for (let m = 1; m <= WEEK_MINUTES; m++) {
+    const t = new Date(start + m * 60_000);
+    if (!upkeepDue(upkeep, crons, t)) continue;
+    for (const tick of ticks) if (matches(tick.cron, t)) out.add(tick.name);
+  }
+  return out;
+}
+
 /** The recorded schedules with each one's next firing and the runs it shares a minute with in the next week: those
- *  start in one invocation, which on Workers free shares its CPU. An invalid one has neither. */
+ *  start in one invocation, which on Workers free shares its CPU and its calls. An invalid one has neither. */
 function schedulerRuns(recorded: Schedule[], now: Date) {
   const crons = recorded.map((s) => {
     if (s.error) return null;
@@ -241,12 +258,24 @@ function schedulerRuns(recorded: Schedule[], now: Date) {
     }
   });
   const shared = recorded.map(() => new Set<RunName>());
+  const isTick = (i: number) => recorded[i].name !== "upkeep";
+  // ticks with ticks: any common minute
   for (const [i, a] of crons.entries())
     for (const [j, b] of crons.entries())
-      if (i < j && a && b && sharesAMinute(a, b, now)) {
+      if (i < j && a && b && isTick(i) && isTick(j) && sharesAMinute(a, b, now)) {
         shared[i].add(recorded[j].name);
         shared[j].add(recorded[i].name);
       }
+  // upkeep with the ticks: only the minutes it can't move away from
+  const u = recorded.findIndex((s) => s.name === "upkeep");
+  const upkeep = u >= 0 ? crons[u] : null;
+  if (upkeep) {
+    const ticks = crons.flatMap((cron, i) => (cron && isTick(i) ? [{ name: recorded[i].name, cron }] : []));
+    for (const name of upkeepSharesWith(upkeep, ticks, now)) {
+      shared[u].add(name);
+      shared[recorded.findIndex((s) => s.name === name)].add("upkeep");
+    }
+  }
   return recorded.map((s, i) => {
     const cron = crons[i];
     let next: string | null = null;
@@ -1925,7 +1954,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const now = new Date();
       const recordedRuns = await recorded<Schedule[]>(c, "schedules");
       const lasts = await Promise.all(RUN_NAMES.map((n) => recorded<RunLast>(c, `run_last:${n}`)));
-      const latest = lasts.filter((r) => r !== null).sort((a, b) => b.at - a.at)[0];
+      // the limit set is what a run alone gets: a shared minute's runs each had a part of it
+      const byLatest = lasts.filter((r) => r !== null).sort((a, b) => b.at - a.at);
+      const latest = byLatest.find((r) => !r.shared) ?? byLatest[0];
       const ticks = (
         await Promise.all(
           ["instagram", "shorts"].map((p) => recorded<{ at: number; jobsPerTick: number }>(c, `tick_last:${p}`)),
@@ -1936,9 +1967,12 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return {
         runs: Array.isArray(recordedRuns) ? schedulerRuns(recordedRuns, now) : null,
         limits: {
-          // the latest run's: whether a valid limit was the default or set can't be told from here (Node's default
-          // comes in as a variable), so only a refused value is flagged
-          runSubrequests: latest ? { value: latest.limit, invalid: latest.invalid ?? null } : null,
+          // the latest run's that had it whole (else the latest, marked shared): whether a valid limit was the default
+          // or set can't be told from here (the runs don't record where it came from), so only a refused value is
+          // flagged
+          runSubrequests: latest
+            ? { value: latest.limit, invalid: latest.invalid ?? null, shared: latest.shared === true }
+            : null,
           jobsPerTick: tick ? { value: tick.jobsPerTick, at: utcIso(tick.at) } : null,
           inboxWorkspacesPerRun: inbox ? { value: inbox.limit, at: utcIso(inbox.at) } : null,
         },

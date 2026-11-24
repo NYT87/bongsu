@@ -97,10 +97,24 @@ describe("tick: the run's call budget", () => {
     await tick(await testEnv(env), { fetch: counted, now: AT });
     expect(n).toBeGreaterThan(0);
     const at = Math.floor(AT.getTime() / 1000);
-    expect(await last("run_last:instagram")).toEqual({ at, used: n, limit: 50, stopped: [], invalid: null });
+    expect(await last("run_last:instagram")).toEqual({
+      at,
+      used: n,
+      limit: 50,
+      stopped: [],
+      invalid: null,
+      shared: false,
+    });
     // unlimited is stored as a word: JSON has no Infinity
     await tick(await testEnv(env, { RUN_SUBREQUESTS: "unlimited" }), { fetch: w.fetch, now: AT }, "shorts");
-    expect(await last("run_last:shorts")).toEqual({ at, used: 0, limit: "unlimited", stopped: [], invalid: null });
+    expect(await last("run_last:shorts")).toEqual({
+      at,
+      used: 0,
+      limit: "unlimited",
+      stopped: [],
+      invalid: null,
+      shared: false,
+    });
   });
 
   it("records a RUN_SUBREQUESTS it refused, and runs with the default", async () => {

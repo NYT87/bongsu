@@ -88,41 +88,63 @@ describe("runDue: the CRON_* variables", () => {
     expect(JSON.parse((await setting("tick_last:instagram"))?.value ?? "{}").at).toBe(at("10:05").getTime() / 1000);
   });
 
-  it("splits one invocation's calls among the runs sharing a minute", async () => {
-    // more inbox work than one share holds
+  it("splits one invocation's calls among the ticks sharing a minute, each recording it shared", async () => {
+    let calls = 0;
+    const counted: typeof fetch = (input, init) => {
+      calls++;
+      return w.fetch(input, init);
+    };
+    e = await make({ CRON_SHORTS: "*/5 * * * *", RUN_SUBREQUESTS: "50" });
+    expect(await runDue(e, counted, at("10:05"))).toEqual(["instagram", "shorts"]);
+    const last = await Promise.all(
+      ["instagram", "shorts"].map(async (n) => JSON.parse((await setting(`run_last:${n}`))?.value ?? "{}")),
+    );
+    for (const l of last) expect(l).toMatchObject({ limit: 25, shared: true }); // floor(50 / 2)
+    expect(last.reduce((n, l) => n + l.used, 0)).toBe(calls);
+    expect(calls).toBeLessThanOrEqual(50);
+  });
+
+  it("moves upkeep to the next minute when a tick takes its own, with the whole limit there", async () => {
+    // more inbox work than a share would hold
     for (let i = 0; i < 12; i++)
       w.drivePut(`UPLOADS/inbox/20261001_P/clip${i}.mp4`, {
         md5: MD5,
         mimeType: "video/mp4",
         modified: "2026-10-01T00:00:00Z",
       });
-    let calls = 0;
-    const counted: typeof fetch = (input, init) => {
-      calls++;
-      return w.fetch(input, init);
-    };
-    e = await make({ CRON_SHORTS: "*/5 * * * *", CRON_UPKEEP: "*/5 * * * *", RUN_SUBREQUESTS: "50" });
-    expect(await runDue(e, counted, at("10:05"))).toEqual(["instagram", "shorts", "upkeep"]);
-    const last = await Promise.all(
-      ["instagram", "shorts", "upkeep"].map(async (n) => JSON.parse((await setting(`run_last:${n}`))?.value ?? "{}")),
-    );
-    for (const l of last) expect(l.limit).toBe(16); // floor(50 / 3)
-    expect(last.reduce((n, l) => n + l.used, 0)).toBe(calls);
-    expect(calls).toBeGreaterThan(0);
-    expect(calls).toBeLessThanOrEqual(50);
+    e = await make({ CRON_UPKEEP: "*/15 * * * *", RUN_SUBREQUESTS: "50" });
+    expect(await runDue(e, w.fetch, at("10:15"))).toEqual(["instagram"]);
+    expect(await setting("run_last:upkeep")).toBeNull();
+    const log = vi.spyOn(console, "log");
+    expect(await runDue(e, w.fetch, at("10:16"))).toEqual(["upkeep"]);
+    expect(JSON.parse((await setting("run_last:upkeep"))?.value ?? "{}")).toMatchObject({ limit: 50, shared: false });
+    // its inbox step scanned the folder: it drafted from it
+    expect(log.mock.calls.some(([m]) => /^upkeep: inbox /.test(String(m)))).toBe(true);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM drafts").first<{ n: number }>())?.n).toBeGreaterThan(0);
+    // a minute after a free one, it doesn't run again
+    expect(await runDue(e, w.fetch, at("10:17"))).toEqual([]);
+  });
+
+  it("shares upkeep's own minute, split, when a tick takes the next one too", async () => {
+    e = await make({ CRON_INSTAGRAM: "* * * * *", RUN_SUBREQUESTS: "50" });
+    expect(await runDue(e, w.fetch, at("10:52"))).toEqual(["instagram", "upkeep"]);
+    expect(JSON.parse((await setting("run_last:upkeep"))?.value ?? "{}")).toMatchObject({ limit: 25, shared: true });
+    expect(await runDue(e, w.fetch, at("10:53"))).toEqual(["instagram"]);
   });
 
   it("gives a run due alone the whole limit", async () => {
     e = await make({ RUN_SUBREQUESTS: "50" });
     await runDue(e, w.fetch, at("10:52"));
-    expect(JSON.parse((await setting("run_last:upkeep"))?.value ?? "{}").limit).toBe(50);
+    expect(JSON.parse((await setting("run_last:upkeep"))?.value ?? "{}")).toMatchObject({ limit: 50, shared: false });
   });
 
   it("runs upkeep only when its own expression says", async () => {
     e = await make({ CRON_UPKEEP: "0 3 * * *" });
     expect(await runDue(e, w.fetch, at("10:52"))).toEqual([]); // a default upkeep minute
     expect(await runDue(e, w.fetch, at("03:07"))).toEqual([]);
-    expect(await runDue(e, w.fetch, at("03:00"))).toEqual(["instagram", "upkeep"]);
+    // 03:00 is an Instagram minute: upkeep takes the next, free one
+    expect(await runDue(e, w.fetch, at("03:00"))).toEqual(["instagram"]);
+    expect(await runDue(e, w.fetch, at("03:01"))).toEqual(["upkeep"]);
     expect(schedules(e)[2]).toMatchObject({ gapS: 86400, source: "variable" });
   });
 

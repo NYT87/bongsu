@@ -128,9 +128,16 @@ export function runBudget(limit: number, fetcher: typeof fetch): RunCalls {
 /** What a run spent of its calls (`run_last:<name>`), for the dashboard: the variable lives on the cron side, not the
  *  API's, so a RUN_SUBREQUESTS it refused (`invalid`) is told there too. An unlimited run's limit is the word: JSON has
  *  no Infinity. */
-export async function recordRun(db: Db, name: string, nowS: number, calls: RunCalls, invalid: string | null) {
+export async function recordRun(
+  db: Db,
+  name: string,
+  nowS: number,
+  calls: RunCalls,
+  invalid: string | null,
+  shared: boolean,
+) {
   const limit = Number.isFinite(calls.limit) ? calls.limit : "unlimited";
-  const value = { at: nowS, used: calls.used(), limit, stopped: calls.stopped(), invalid };
+  const value = { at: nowS, used: calls.used(), limit, stopped: calls.stopped(), invalid, shared };
   await db
     .prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
     .bind(`run_last:${name}`, JSON.stringify(value))
