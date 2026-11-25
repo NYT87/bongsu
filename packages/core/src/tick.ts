@@ -1072,9 +1072,24 @@ async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
   });
 }
 
-/** After a Reel whose trial switch is on (its own, or its account's default): its trial copy, as its own job, due now. */
+/** After a Reel whose trial switch is on (its own, or its account's default): its trial copy, as its own job, due now.
+ *  It carries what describes the post (the approval, the paths, the options, a location Instagram refused) and none
+ *  of the Reel's run: no `publishing` (a retried publish leaves it set, and the copy would count as possibly live
+ *  before doing anything), no `step`, no wait (`pollingSince`, `notBefore`), no hold. */
 async function queueTrial(c: Ctx, job: JobRow, p: Payload) {
-  const { mediaId: _m, permalink: _l, publishedAt: _t, commented: _c, commented2: _c2, ...rest } = p;
+  const {
+    mediaId: _m,
+    permalink: _l,
+    publishedAt: _t,
+    commented: _c,
+    commented2: _c2,
+    publishing: _p,
+    step: _s,
+    pollingSince: _w,
+    notBefore: _n,
+    onHold: _h,
+    ...rest
+  } = p;
   const payload: Payload = { ...rest, trial: true };
   await c.env.DB.prepare(
     `INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id)
