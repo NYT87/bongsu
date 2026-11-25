@@ -1,5 +1,6 @@
 // The platforms Bongsu knows. A new network registers here (and its provider in providers/); nothing else in the
 // core names a platform. docs/platforms.md: how to add one.
+import { bluesky } from "./bluesky";
 import { instagram } from "./instagram";
 import type { Platform } from "./types";
 import { youtube } from "./youtube";
@@ -7,6 +8,7 @@ import { youtube } from "./youtube";
 const registry = new Map<string, Platform>([
   [instagram.id, instagram],
   [youtube.id, youtube],
+  [bluesky.id, bluesky],
 ]);
 
 /** Adds (or replaces) a platform: a deployment's own network, or a test's fake one. */
