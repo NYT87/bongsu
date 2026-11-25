@@ -248,7 +248,7 @@ describe("tick: timings follow the interval", () => {
     const run = (min: number) => tick(e, { fetch: w.fetch, now: later(min), intervalS: 600 });
     await run(0); // the container
     for (let m = 10; m <= 120; m += 10) await run(m); // 12 polls, 1 h 50 min since the first
-    expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 12 });
+    expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 0 }); // polls aren't attempts
     expect(JSON.parse((await jobs())[0].payload).pollingSince).toBe(Math.floor(later(10).getTime() / 1000));
     await run(130); // the 13th poll, 2 h after the first
     expect((await jobs())[0]).toMatchObject({ state: "failed", last_error: "Instagram never finished processing" });
@@ -260,9 +260,9 @@ describe("tick: timings follow the interval", () => {
     const e = await testEnv(env);
     await tick(e, { fetch: w.fetch, now: AT }); // the container
     for (let m = 5; m <= 120; m += 5) await tick(e, { fetch: w.fetch, now: later(m) }); // 24 polls
-    expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 24 });
+    expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 0 });
     await tick(e, { fetch: w.fetch, now: later(125) });
-    expect((await jobs())[0]).toMatchObject({ state: "failed", attempts: 25 });
+    expect((await jobs())[0]).toMatchObject({ state: "failed", last_error: "Instagram never finished processing" });
   });
 });
 
@@ -353,8 +353,8 @@ describe("tick: publishing a Reel", () => {
       new RegExp(`^https://scheduler\\.test/m/drive/${driveId}\\.mp4\\?exp=\\d+&sig=[0-9a-f]{64}$`),
     );
 
-    await tick(e, { fetch: w.fetch, now: later(5) }); // IN_PROGRESS
-    expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 1 });
+    await tick(e, { fetch: w.fetch, now: later(5) }); // IN_PROGRESS: a poll, not an attempt
+    expect((await jobs())[0]).toMatchObject({ state: "container_created", attempts: 0 });
     await tick(e, { fetch: w.fetch, now: later(10) }); // FINISHED → publish
     expect((await jobs())[0].state).toBe("published");
     await tick(e, { fetch: w.fetch, now: later(15) }); // self-comment + posted
@@ -391,7 +391,7 @@ describe("tick: publishing a Reel", () => {
     igHappyPath(w);
     let n = 0;
     w.composio.INSTAGRAM_POST_IG_USER_MEDIA = (a) => {
-      if (a.location_id) throw new Error("Invalid location");
+      if (a.location_id) throw new Error("Param location_id is not a valid location page ID");
       return { id: `container-${++n}` };
     };
     await tick(await testEnv(env), { fetch: w.fetch, now: AT });
@@ -519,11 +519,11 @@ describe("tick: a failed job and a new approval (#148)", () => {
     await tick(e, { fetch: w.fetch, now: AT }); // the container
     // 24 polls already, all IN_PROGRESS, the first one more than 2 h ago
     const [stale] = await jobs();
-    await env.DB.prepare("UPDATE jobs SET attempts = 24, payload = ?1")
+    await env.DB.prepare("UPDATE jobs SET payload = ?1")
       .bind(JSON.stringify({ ...JSON.parse(stale.payload), pollingSince: Math.floor(later(-1).getTime() / 1000) }))
       .run();
     await tick(e, { fetch: w.fetch, now: later(120) });
-    expect((await jobs())[0]).toMatchObject({ state: "failed", container_id: "container-1", attempts: 25 });
+    expect((await jobs())[0]).toMatchObject({ state: "failed", container_id: "container-1" });
 
     igHappyPath(w);
     w.calls.length = 0;
@@ -636,6 +636,42 @@ describe("tick: a carousel whose location Instagram refuses", () => {
     await tick(e, { fetch: w.fetch, now: later(15) });
     expect((await postedRows()).map((r) => r.item_key)).toEqual([key]);
     expect(w.notifications.at(-1)?.body).toContain("(without its location: Instagram refused it)");
+  });
+
+  it("a passing error on the parent after its items' slow processing is retried, location and all", async () => {
+    const folder = "main/CONTENT/20261105_NAMSAN",
+      dir = "posts/cello1_col_de_namsan";
+    const key = await planItem({ kind: "post", folder, name: dir, time: "18:30", location: "남산" });
+    await copyText(`channels/${folder}/${dir}/caption.txt`, "Namsan");
+    w.drive.set("img_aaaaaaaaaa", { md5: MD5, mimeType: "image/jpeg" });
+    w.drive.set("img_cccccccccc", { md5: MD5, mimeType: "image/jpeg" });
+    await approve(key, {
+      due: "2026-10-20 18:30",
+      caption: "Namsan",
+      comment: null,
+      media: ["img_aaaaaaaaaa", "img_cccccccccc"].map((driveId) => ({ driveId, md5: MD5 })),
+    });
+    // the items process for two runs (polls), then the parent's first call hits a rate limit
+    igHappyPath(w, ["IN_PROGRESS", "FINISHED", "IN_PROGRESS", "FINISHED"]);
+    let n = 0,
+      limited = false;
+    w.composio.INSTAGRAM_POST_IG_USER_MEDIA = (a) => {
+      if (a.media_type === "CAROUSEL" && !limited) {
+        limited = true;
+        throw new Error("(#4) Application request limit reached");
+      }
+      return { id: `container-${++n}` };
+    };
+    const e = await testEnv(env);
+    // items, two polls, the limited parent, the retried parent
+    for (let m = 0; m <= 20; m += 5) await tick(e, { fetch: w.fetch, now: later(m) });
+    const parents = w.calls.filter(
+      (c) => c.slug === "INSTAGRAM_POST_IG_USER_MEDIA" && c.args.media_type === "CAROUSEL",
+    );
+    expect(parents).toHaveLength(2); // the limited call, then the retry a run later
+    expect(parents.every((c) => "location_id" in c.args)).toBe(true);
+    expect((await jobs())[0].state).not.toBe("failed");
+    expect(JSON.parse((await jobs())[0].payload).locationDropped).toBeUndefined();
   });
 });
 

@@ -107,7 +107,8 @@ describe("instagram-graph", () => {
     const e = await testEnv(env);
     await connectGraph();
     await seedReel(w, { account: "demo_cycling" });
-    w.graphRefuse = (_m, path, p) => (path.endsWith("/media") && p.location_id ? "Invalid location" : null);
+    w.graphRefuse = (_m, path, p) =>
+      path.endsWith("/media") && p.location_id ? "Param location_id is not a valid location page ID" : null;
     await tick(e, { fetch: w.fetch, now: AT });
     const creates = w.graph.filter((g) => g.path === "/17841400000000003/media");
     expect(creates.map((g) => g.params.location_id ?? null)).toEqual(["111", null]);

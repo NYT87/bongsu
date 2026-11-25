@@ -3,5 +3,6 @@
 ---
 
 A temporary Instagram error (a rate limit, a server error, a file Instagram couldn't fetch yet) no longer posts without
-the location: only Instagram refusing the place drops it, and any other error retries the post, location and all, on
-the next run.
+the location, and the published notice no longer says Instagram refused it: only Instagram refusing the place drops it.
+Any other error retries the post, location and all, on the next run; one that lasts three runs fails the post with a
+notice. A carousel whose items take a while to process now gets the same three tries for its final call.

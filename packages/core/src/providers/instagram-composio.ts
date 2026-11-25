@@ -34,12 +34,16 @@ export class ComposioInstagram implements InstagramApi {
       try {
         box = await this.c.instagramRaw(this.igUserId, "POST", `${this.igUserId}/media`, { ...p });
       } catch (e) {
-        throw e instanceof ComposioError ? new InstagramError(e.message, refusesLocation(p, e.message)) : e;
+        throw e instanceof ComposioError
+          ? new InstagramError(e.message, refusesLocation(p, e.graphMessage ?? e.message), { cause: e })
+          : e;
       }
     } else
       box = await this.exec("INSTAGRAM_POST_IG_USER_MEDIA", { ig_user_id: this.igUserId, ...p }).catch((e) => {
         // Composio passes Graph's own text on, so a refused place reads the same as on the direct path
-        throw e instanceof InstagramError ? new InstagramError(e.message, refusesLocation(p, e.message)) : e;
+        throw e instanceof InstagramError
+          ? new InstagramError(e.message, refusesLocation(p, e.message), { cause: e })
+          : e;
       });
     const id = idOf(box);
     if (!id) throw new InstagramError(`no container id: ${JSON.stringify(box).slice(0, 200)}`);

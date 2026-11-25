@@ -14,15 +14,17 @@ export class InstagramError extends Error {
   constructor(
     message: string,
     readonly locationRefused = false,
+    options?: ErrorOptions,
   ) {
-    super(message);
+    super(message, options);
   }
 }
 
 /** Whether a refusal of a call that carried a `location_id` is about that location ("Param location_id is not a valid
- *  location page ID"). It reads the API's own English message, not the user-facing one, which may be translated. */
+ *  location page ID"). Callers pass Graph's own English message, with the user-facing one beside it (which may be
+ *  translated, and then simply doesn't match). */
 export const refusesLocation = (params: { location_id?: unknown }, message: string): boolean =>
-  !!params.location_id && /location/i.test(message);
+  !!params.location_id && /\blocation/i.test(message);
 
 /** A media container, as Instagram's POST /<ig user>/media takes it. */
 export interface ContainerParams {

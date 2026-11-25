@@ -57,7 +57,7 @@ async function call<T>(
     const what = `${method} ${url.pathname.replace(/^\/v[\d.]+/, "")}`;
     throw new InstagramError(
       `Instagram ${what}: ${e?.error_user_msg || e?.message || `HTTP ${r.status}`}`.slice(0, 300),
-      refusesLocation(params, e?.message ?? ""),
+      refusesLocation(params, `${e?.message ?? ""} ${e?.error_user_msg ?? ""}`),
     );
   }
   return j;
