@@ -8,8 +8,23 @@ import type { Env } from "../env";
 import { ComposioInstagram } from "./instagram-composio";
 import { GraphInstagram, graphToken } from "./instagram-graph";
 
-/** Instagram (or the way to it) refused a call. The tick retries a container without its location on one. */
-export class InstagramError extends Error {}
+/** Instagram (or the way to it) refused a call. `locationRefused`: it refused the place a container was asked to
+ *  carry, the one error after which the container is made again without it (any other one is retried as it is). */
+export class InstagramError extends Error {
+  constructor(
+    message: string,
+    readonly locationRefused = false,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+  }
+}
+
+/** Whether a refusal of a call that carried a `location_id` is about that location ("Param location_id is not a valid
+ *  location page ID"). Callers pass Graph's own English message, with the user-facing one beside it (which may be
+ *  translated, and then simply doesn't match). */
+export const refusesLocation = (params: { location_id?: unknown }, message: string): boolean =>
+  !!params.location_id && /\blocation/i.test(message);
 
 /** A media container, as Instagram's POST /<ig user>/media takes it. */
 export interface ContainerParams {

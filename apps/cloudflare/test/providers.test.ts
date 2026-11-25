@@ -107,10 +107,28 @@ describe("instagram-graph", () => {
     const e = await testEnv(env);
     await connectGraph();
     await seedReel(w, { account: "demo_cycling" });
-    w.graphRefuse = (_m, path, p) => (path.endsWith("/media") && p.location_id ? "Invalid location" : null);
+    w.graphRefuse = (_m, path, p) =>
+      path.endsWith("/media") && p.location_id ? "Param location_id is not a valid location page ID" : null;
     await tick(e, { fetch: w.fetch, now: AT });
     const creates = w.graph.filter((g) => g.path === "/17841400000000003/media");
     expect(creates.map((g) => g.params.location_id ?? null)).toEqual(["111", null]);
+    expect((await jobs())[0].state).toBe("container_created");
+  });
+
+  it("keeps the location on any other error: the post waits for the next run, location and all", async () => {
+    const e = await testEnv(env);
+    await connectGraph();
+    await seedReel(w, { account: "demo_cycling" });
+    // a rate limit on the call with the location: not a refusal of the place
+    w.graphRefuse = (_m, path, p) =>
+      path.endsWith("/media") && p.location_id ? "(#4) Application request limit reached" : null;
+    await tick(e, { fetch: w.fetch, now: AT });
+    const creates = () => w.graph.filter((g) => g.path === "/17841400000000003/media");
+    expect(creates().map((g) => g.params.location_id ?? null)).toEqual(["111"]);
+    expect((await jobs())[0].state).not.toBe("container_created");
+    w.graphRefuse = () => null;
+    await tick(e, { fetch: w.fetch, now: later(5) });
+    expect(creates().map((g) => g.params.location_id ?? null)).toEqual(["111", "111"]);
     expect((await jobs())[0].state).toBe("container_created");
   });
 

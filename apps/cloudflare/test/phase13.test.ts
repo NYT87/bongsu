@@ -124,6 +124,48 @@ describe("Trial Reels", () => {
     expect(await postedRows()).toHaveLength(1);
   });
 
+  it("a trial copy drops its location only when Instagram refuses the place (Graph's own text, not the translated one)", async () => {
+    await seedReel(w, { account: "demo_running" });
+    const refusal = {
+      data: {
+        result_type: "completed",
+        status: 400,
+        data: {
+          error: {
+            message: "Param location_id is not a valid location page ID",
+            error_user_msg: "위치가 올바르지 않습니다",
+          },
+        },
+      },
+    };
+    w.workbench = (spec) => (spec.body?.location_id ? refusal : { data: { id: `trial-container-${w.raw.length}` } });
+    await run(3);
+    await run(1, 15); // the trial container
+    expect(w.raw.map((r) => r.body?.location_id ?? null)).toEqual(["111", null]);
+  });
+
+  it("a trial copy keeps its location on another error, and retries with it", async () => {
+    await seedReel(w, { account: "demo_running" });
+    let limited = false;
+    w.workbench = (spec) => {
+      if (spec.body?.location_id && !limited) {
+        limited = true;
+        return {
+          data: {
+            result_type: "completed",
+            status: 400,
+            data: { error: { message: "(#4) Application request limit reached", code: 4 } },
+          },
+        };
+      }
+      return { data: { id: `trial-container-${w.raw.length}` } };
+    };
+    await run(3);
+    await run(2, 15); // the limited call, then the retry a run later
+    expect(w.raw.map((r) => r.body?.location_id ?? null)).toEqual(["111", "111"]);
+    expect((await jobs())[1].state).not.toBe("failed");
+  });
+
   it("the trial copy refuses a caption changed since approval, and a wrong default account", async () => {
     const { key } = await seedReel(w, { account: "demo_running" });
     await run(3);

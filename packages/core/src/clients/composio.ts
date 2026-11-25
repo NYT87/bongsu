@@ -4,7 +4,15 @@ const URL = "https://connect.composio.dev/mcp";
 const GRAPH = "https://graph.instagram.com/v23.0";
 const MARK = "__BONGSU__";
 
-export class ComposioError extends Error {}
+/** `graphMessage`: Graph's own error text (its `message` and `error_user_msg`) when Composio passed an Instagram error on. */
+export class ComposioError extends Error {
+  constructor(
+    message: string,
+    readonly graphMessage?: string,
+  ) {
+    super(message);
+  }
+}
 
 export class Composio {
   constructor(
@@ -110,6 +118,7 @@ export class Composio {
           0,
           300,
         ),
+        igErr ? `${igErr.message ?? ""} ${igErr.error_user_msg ?? ""}` : undefined,
       );
     }
     return (http ? http.data : res.data) as T;

@@ -179,7 +179,7 @@ describe("YouTube uploads: the tick", () => {
     await run(at(-LEAD + 300));
     await run(at(-LEAD + 600));
     await run(at(-LEAD + 900)); // still processing: a poll
-    expect(await job()).toMatchObject({ phase: "processing", attempts: 1 });
+    expect(await job()).toMatchObject({ phase: "processing", attempts: 0 }); // a poll isn't an attempt
     const since = async () => JSON.parse((await job())!.payload).pollingSince;
     expect(await since()).toBe(Math.floor(at(-LEAD + 900).getTime() / 1000)); // the wait's start
     processed();

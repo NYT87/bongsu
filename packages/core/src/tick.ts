@@ -1268,14 +1268,15 @@ const platformName = (pr: Provider) => platform(pr.platform)?.name ?? pr.platfor
 /** A run without progress: one poll more. The step is kept (it carries a provider's state between runs). The wait is
  *  timed from its first poll, so it lasts MAX_POLL_S whatever the runs' interval. */
 async function pollWait(c: Ctx, job: JobRow, pr: Provider, polled: Payload) {
-  const attempts = job.attempts + 1;
+  // The wait is bounded by time (MAX_POLL_S), so a poll isn't an attempt: `attempts` counts errors only, and a slow
+  // container (a carousel's items) doesn't use up the tries its next call gets.
   const p = { ...polled, pollingSince: polled.pollingSince ?? c.nowS };
   if (c.nowS - p.pollingSince >= MAX_POLL_S) {
     const name = platformName(pr);
-    await c.setJob(job.id, { state: "failed", attempts, last_error: `${name} never finished processing`, payload: p });
+    await c.setJob(job.id, { state: "failed", last_error: `${name} never finished processing`, payload: p });
     await c.note.send(N.processingTimeout(job.item_key, name), job.workspace_id);
   } else {
-    await c.setJob(job.id, { attempts, payload: p });
+    await c.setJob(job.id, { payload: p });
   }
 }
 
