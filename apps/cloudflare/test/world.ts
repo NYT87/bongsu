@@ -211,6 +211,7 @@ export class World {
 
   /** Bluesky (bsky.social): blobs uploaded, records created (the request bodies), and the switches a test flips. */
   bskyBlobs: { type: string; bytes: number }[] = [];
+  // biome-ignore lint/suspicious/noExplicitAny: the fake records whatever the provider sends
   bskyRecords: { rkey: string; cid: string; body: Record<string, any> }[] = [];
   /** The next createRecord answers 429 once. */
   bskyRateLimit = false;
@@ -788,6 +789,7 @@ export class World {
           return json({ error: "RateLimitExceeded", message: "Rate Limit Exceeded" }, 429);
         }
         if (this.bskyReject !== null) return json({ error: "InvalidRequest", message: this.bskyReject }, 400);
+        // biome-ignore lint/suspicious/noExplicitAny: the fake records whatever the provider sends
         const body = (await req.json()) as Record<string, any>;
         const rkey = `3k${String(this.bskyRecords.length + 1).padStart(4, "0")}`;
         const cid = `bafyrec${this.bskyRecords.length + 1}`;
