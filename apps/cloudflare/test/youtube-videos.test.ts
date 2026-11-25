@@ -327,7 +327,8 @@ describe("one video, one place", () => {
 
   it("a release move into an hour another item of the channel holds is a 409 and changes nothing", async () => {
     await uploadAhead();
-    const asked = Math.floor(Date.now() / 1000) + 10 * 86400;
+    // on the hour, so the other item 10 minutes later is in the same hour whatever the clock says
+    const asked = Math.floor((Date.now() / 1000 + 10 * 86400) / 3600) * 3600;
     await env.DB.prepare(
       "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id) VALUES ('reel:OTHER/x', 'video', 'main', 'OTHER', 'x', ?1, '{}', 0, 2, 0, 0, 'default')",
     )
