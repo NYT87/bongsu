@@ -2,7 +2,7 @@
 // who already use Composio. A Trial Reel needs trial_params, which Composio's tools don't take, so it goes through the
 // raw Graph call in Composio's workbench, which only reaches the default Instagram connection (clients/composio.ts).
 import { Composio, ComposioError, idOf } from "../clients/composio";
-import { type ContainerParams, type IgComment, type InstagramApi, InstagramError } from "./instagram";
+import { type ContainerParams, type IgComment, type InstagramApi, InstagramError, refusesLocation } from "./instagram";
 import { TRIAL_MIN_FOLLOWERS } from "./instagram-graph";
 import type { Grant } from "./types";
 
@@ -34,9 +34,13 @@ export class ComposioInstagram implements InstagramApi {
       try {
         box = await this.c.instagramRaw(this.igUserId, "POST", `${this.igUserId}/media`, { ...p });
       } catch (e) {
-        throw e instanceof ComposioError ? new InstagramError(e.message) : e;
+        throw e instanceof ComposioError ? new InstagramError(e.message, refusesLocation(p, e.message)) : e;
       }
-    } else box = await this.exec("INSTAGRAM_POST_IG_USER_MEDIA", { ig_user_id: this.igUserId, ...p });
+    } else
+      box = await this.exec("INSTAGRAM_POST_IG_USER_MEDIA", { ig_user_id: this.igUserId, ...p }).catch((e) => {
+        // Composio passes Graph's own text on, so a refused place reads the same as on the direct path
+        throw e instanceof InstagramError ? new InstagramError(e.message, refusesLocation(p, e.message)) : e;
+      });
     const id = idOf(box);
     if (!id) throw new InstagramError(`no container id: ${JSON.stringify(box).slice(0, 200)}`);
     return id;

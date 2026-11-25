@@ -401,6 +401,19 @@ describe("tick: publishing a Reel", () => {
     expect((await jobs())[0].state).toBe("container_created");
   });
 
+  it("keeps the location when Composio fails for another reason", async () => {
+    await seedReel(w);
+    igHappyPath(w);
+    w.composio.INSTAGRAM_POST_IG_USER_MEDIA = () => {
+      throw new Error("Internal server error");
+    };
+    await tick(await testEnv(env), { fetch: w.fetch, now: AT });
+    expect(
+      w.calls.filter((c) => c.slug === "INSTAGRAM_POST_IG_USER_MEDIA").map((c) => "location_id" in c.args),
+    ).toEqual([true]);
+    expect((await jobs())[0].state).not.toBe("container_created");
+  });
+
   it("publishes a second Reel the same day on the same account (one per hour is enforced when planning)", async () => {
     await seedReel(w);
     await env.DB.prepare(

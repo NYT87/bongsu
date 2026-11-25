@@ -2,7 +2,7 @@
 // long-lived token: no third party in between, and trial_params is a plain field, so Trial Reels work for every account.
 // A long-lived token lasts 60 days; refreshConnections (providers/refresh.ts) renews it weekly from the inbox cron.
 // site/docs/instagram-graph.md: creating the Meta app and getting the first token.
-import { type ContainerParams, type IgComment, type InstagramApi, InstagramError } from "./instagram";
+import { type ContainerParams, type IgComment, type InstagramApi, InstagramError, refusesLocation } from "./instagram";
 import type { Grant, OAuthContext } from "./types";
 
 export const GRAPH = "https://graph.instagram.com/v23.0";
@@ -57,6 +57,7 @@ async function call<T>(
     const what = `${method} ${url.pathname.replace(/^\/v[\d.]+/, "")}`;
     throw new InstagramError(
       `Instagram ${what}: ${e?.error_user_msg || e?.message || `HTTP ${r.status}`}`.slice(0, 300),
+      refusesLocation(params, e?.message ?? ""),
     );
   }
   return j;
