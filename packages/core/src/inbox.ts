@@ -17,7 +17,7 @@
 // video still makes it in. Each item makes one draft only (inbox_seen), even if the draft is refused.
 
 import { instagramAccounts } from "./accounts";
-import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "./budget";
+import { BudgetSpent, canAfford, countSetting, noteFetch, type StepDeps } from "./budget";
 import { INBOX_WORKSPACES_PER_RUN, INBOX_WORKSPACES_PER_RUN_MAX } from "./constants";
 import type { Db } from "./db";
 import type { Env } from "./env";
@@ -118,9 +118,15 @@ const stem = (n: string) => n.replace(/\.[^.]+$/, "");
 
 /** Workspaces scanned per run: the INBOX_WORKSPACES_PER_RUN variable when it is a whole number from 1 (at most
  *  INBOX_WORKSPACES_PER_RUN_MAX), else the default for Cloudflare's free plan. Node sets its own (apps/node/src/env.ts). */
-export function inboxWorkspacesPerRun(env: Pick<Env, "INBOX_WORKSPACES_PER_RUN">): number {
-  const n = Number(env.INBOX_WORKSPACES_PER_RUN);
-  return Number.isInteger(n) && n >= 1 ? Math.min(n, INBOX_WORKSPACES_PER_RUN_MAX) : INBOX_WORKSPACES_PER_RUN;
+export function inboxWorkspacesPerRun(
+  env: Pick<Env, "INBOX_WORKSPACES_PER_RUN" | "INBOX_WORKSPACES_PER_RUN_DEFAULT">,
+): number {
+  const max = INBOX_WORKSPACES_PER_RUN_MAX;
+  return (
+    countSetting(env.INBOX_WORKSPACES_PER_RUN, max) ??
+    countSetting(env.INBOX_WORKSPACES_PER_RUN_DEFAULT, max) ??
+    INBOX_WORKSPACES_PER_RUN
+  );
 }
 
 const setting = (env: Env, key: string) =>

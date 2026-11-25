@@ -25,10 +25,13 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
     VAPID_SUBJECT: vars.VAPID_SUBJECT ?? "",
     MEDIA_SIGNING_KEY: vars.MEDIA_SIGNING_KEY ?? "",
     // no per-invocation subrequest limit here, unlike Cloudflare's free plan: more jobs a tick
-    JOBS_PER_TICK: vars.JOBS_PER_TICK ?? String(NODE_JOBS_PER_TICK),
+    // Node's own limits: what an unset or invalid JOBS_PER_TICK / INBOX_WORKSPACES_PER_RUN falls back to
+    JOBS_PER_TICK: vars.JOBS_PER_TICK,
+    JOBS_PER_TICK_DEFAULT: String(NODE_JOBS_PER_TICK),
     // no per-invocation call limit either; also what an invalid RUN_SUBREQUESTS falls back to
     RUN_SUBREQUESTS_DEFAULT: "unlimited",
-    INBOX_WORKSPACES_PER_RUN: vars.INBOX_WORKSPACES_PER_RUN ?? String(NODE_INBOX_WORKSPACES_PER_RUN),
+    INBOX_WORKSPACES_PER_RUN: vars.INBOX_WORKSPACES_PER_RUN,
+    INBOX_WORKSPACES_PER_RUN_DEFAULT: String(NODE_INBOX_WORKSPACES_PER_RUN),
   };
   // the optional ones, only when set
   for (const k of [

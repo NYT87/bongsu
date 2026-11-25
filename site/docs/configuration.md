@@ -145,8 +145,8 @@ The same names, from the environment (`.env` with docker-compose; [self-hosting.
 | `PORT`, `HOST` | `8787`, `0.0.0.0` | where it listens |
 | `MIGRATIONS_DIR`, `WEB_DIR` | set in the image | the folder holding `sqlite/` and `postgres/` migrations, and the built app |
 | `RP_ID` | `PUBLIC_URL`'s host | the passkeys' relying party |
-| `JOBS_PER_TICK` | `20` | publishing jobs advanced per run, at most `100` ([How many go out at once](#how-many-go-out-at-once)); an invalid value (not a whole number from 1) falls back to `4`, the core default, not `20` |
-| `INBOX_WORKSPACES_PER_RUN` | `20` | workspaces whose inbox folder one run scans, at most `100`; an invalid value falls back to `3`, the core default, not `20` |
+| `JOBS_PER_TICK` | `20` | publishing jobs advanced per run, at most `100` ([How many go out at once](#how-many-go-out-at-once)); an invalid value (not a whole number from 1) falls back to `20` |
+| `INBOX_WORKSPACES_PER_RUN` | `20` | workspaces whose inbox folder one run scans, at most `100`; an invalid value falls back to `20` |
 | `CRON_INSTAGRAM`, `CRON_SHORTS`, `CRON_UPKEEP` | as on Cloudflare | when each run happens ([When the runs happen](#when-the-runs-happen)); an invalid one stops the server at startup (unless `SCHEDULES=off`), naming the variable |
 | `RUN_SUBREQUESTS` | `unlimited` | the outgoing calls one run may make; Node has no such limit, so only the per-step caps bound a run |
 

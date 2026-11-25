@@ -22,7 +22,7 @@
 // dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
 
 import { type Account, findAccount, listAccounts } from "./accounts";
-import { BudgetSpent, type RunCalls, recordRun, runBudget, runSubrequests } from "./budget";
+import { BudgetSpent, countSetting, type RunCalls, recordRun, runBudget, runSubrequests } from "./budget";
 import { QuotaExceeded, SessionGone } from "./clients/youtube";
 import {
   AUDIT_KEEP_S,
@@ -423,9 +423,12 @@ export function isUploadStep(job: Pick<JobRow, "state">, p: Pick<Payload, "step"
 
 /** The jobs a tick advances: the JOBS_PER_TICK variable when it is a whole number from 1 (at most
  *  JOBS_PER_TICK_MAX), else the default for Cloudflare's free plan. Node sets its own default (apps/node/src/env.ts). */
-export function jobsPerTick(env: Pick<Env, "JOBS_PER_TICK">): number {
-  const n = Number(env.JOBS_PER_TICK);
-  return Number.isInteger(n) && n >= 1 ? Math.min(n, JOBS_PER_TICK_MAX) : JOBS_PER_TICK;
+export function jobsPerTick(env: Pick<Env, "JOBS_PER_TICK" | "JOBS_PER_TICK_DEFAULT">): number {
+  return (
+    countSetting(env.JOBS_PER_TICK, JOBS_PER_TICK_MAX) ??
+    countSetting(env.JOBS_PER_TICK_DEFAULT, JOBS_PER_TICK_MAX) ??
+    JOBS_PER_TICK
+  );
 }
 
 // ---------------------------------------------------------------- discovery

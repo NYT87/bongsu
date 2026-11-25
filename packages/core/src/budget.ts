@@ -37,6 +37,12 @@ export function runSubrequests(env: Pick<Env, "RUN_SUBREQUESTS" | "RUN_SUBREQUES
   return { value: fallback, source: "default", invalid: raw };
 }
 
+/** A count variable as written: a whole number from 1, capped at `max`; else null (unset, empty or invalid). */
+export function countSetting(raw: string | undefined, max: number): number | null {
+  const n = raw?.trim() ? Number(raw) : Number.NaN;
+  return Number.isInteger(n) && n >= 1 ? Math.min(n, max) : null;
+}
+
 export interface StepBudget {
   name: string;
   fetch: typeof fetch;

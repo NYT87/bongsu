@@ -6,9 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "@bongsu/api/app";
 import { runSubrequests } from "@bongsu/core/budget";
-import { NODE_JOBS_PER_TICK } from "@bongsu/core/constants";
+import { NODE_INBOX_WORKSPACES_PER_RUN, NODE_JOBS_PER_TICK } from "@bongsu/core/constants";
 import { dbCases } from "@bongsu/core/db-conformance";
 import type { Env } from "@bongsu/core/env";
+import { inboxWorkspacesPerRun } from "@bongsu/core/inbox";
 import { mediaStoreCases } from "@bongsu/core/media/conformance";
 import { registerStore } from "@bongsu/core/media/index";
 import { runSchedule, schedulesOff } from "@bongsu/core/schedules";
@@ -141,6 +142,13 @@ describe("the HTTP app and the schedules on Node", () => {
   it("advances more jobs a tick than Cloudflare by default, and takes JOBS_PER_TICK", () => {
     expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(NODE_JOBS_PER_TICK);
     expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test", JOBS_PER_TICK: "8" }, db))).toBe(8);
+  });
+
+  it("falls back to Node's own limits, not Cloudflare's, on a bad JOBS_PER_TICK or INBOX_WORKSPACES_PER_RUN", () => {
+    const env = nodeEnv({ PUBLIC_URL: "https://x.test", JOBS_PER_TICK: "abc", INBOX_WORKSPACES_PER_RUN: "0" }, db);
+    expect(jobsPerTick(env)).toBe(NODE_JOBS_PER_TICK);
+    expect(inboxWorkspacesPerRun(env)).toBe(NODE_INBOX_WORKSPACES_PER_RUN);
+    expect(inboxWorkspacesPerRun(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(NODE_INBOX_WORKSPACES_PER_RUN);
   });
 
   it("runs without a call limit by default, and falls back to that, not Cloudflare's 50, on a bad RUN_SUBREQUESTS", () => {

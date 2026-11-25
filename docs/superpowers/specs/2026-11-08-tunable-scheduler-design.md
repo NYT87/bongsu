@@ -188,7 +188,7 @@ Only instance admins reach it (as today); `apps/cloudflare/test/workspaces.test.
 |---|---|
 | Invalid `CRON_*` | Node: refuses to start, naming the variable. Cloudflare: logged each minute, that run skipped, the others run; dashboard shows it |
 | Invalid `RUN_SUBREQUESTS` | The runtime's default (50 on Cloudflare, `unlimited` on Node), flagged on the dashboard |
-| Invalid `JOBS_PER_TICK` / `INBOX_WORKSPACES_PER_RUN` | Not a whole number from 1: the core default (4 / 3, on Node too); above the max: clamped. Not flagged: the dashboard shows the value used |
+| Invalid `JOBS_PER_TICK` / `INBOX_WORKSPACES_PER_RUN` | Not a whole number from 1: the runtime's default (4 / 3 on Cloudflare, 20 / 20 on Node, through `JOBS_PER_TICK_DEFAULT` / `INBOX_WORKSPACES_PER_RUN_DEFAULT`); above the max: clamped. Not flagged: the dashboard shows the value used |
 | A step over its share | `BudgetSpent`, logged, the run continues; the step resumes next run |
 | Two runs due the same minute | Ticks: started side by side in one invocation, each under its own lock and with an equal part of a finite `RUN_SUBREQUESTS`; the dashboard warns (shared CPU and calls). Upkeep: moves to the next minute when that one is free of ticks, else shares its own |
 | The old `inbox` lock | Ignored; expires within 600 s |
