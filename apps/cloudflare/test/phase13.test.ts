@@ -7,7 +7,7 @@ import { pollComments } from "@bongsu/core/comments";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { postResults } from "@bongsu/core/results";
-import { tick } from "@bongsu/core/tick";
+import { mayBeLive, tick } from "@bongsu/core/tick";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearPlan, copyText, igHappyPath, postedRows, seedReel, testEnv, World } from "./world";
 
@@ -278,6 +278,52 @@ describe("Trial Reels", () => {
       error: string;
     };
     expect(back.error).toMatch(/isn't planned/);
+  });
+
+  /** The Reel waits on Instagram once, and its publishing call's answer is lost once (published on the retry): the
+   *  two ways its payload picks up run state (pollingSince, publishing) before the trial copy is queued. */
+  async function reelWithRetriedPublish() {
+    const { key } = await seedReel(w, { account: "demo_running" });
+    igHappyPath(w, ["IN_PROGRESS", "FINISHED"]);
+    let n = 0,
+      lost = false;
+    w.composio.INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH = () => {
+      if (!lost) {
+        lost = true;
+        throw new Error("Request timed out");
+      }
+      return { id: `media-${++n}` };
+    };
+    await run(5); // container → a poll → the lost answer → published on the retry → comments, done
+    expect((await jobs())[0]).toMatchObject({ item_key: key, state: "done" });
+    return key;
+  }
+
+  it("the trial copy starts fresh: none of its Reel's publishing state comes with it", async () => {
+    const key = await reelWithRetriedPublish();
+    const trial = (await jobs()).find((j) => j.item_key === `trial:${key}`);
+    expect(trial?.state).toBe("pending");
+    const p = JSON.parse(trial!.payload);
+    for (const field of ["publishing", "step", "pollingSince", "notBefore", "onHold", "mediaId", "permalink"])
+      expect(p, field).not.toHaveProperty(field);
+    expect(mayBeLive({ media_id: null }, p)).toBe(false);
+    expect(p).toMatchObject({ trial: true, username: "demo_running" }); // what describes the post stays
+  });
+
+  it("its item removed once the copy has its container: refused with the plain notice, not 'may already be public'", async () => {
+    const key = await reelWithRetriedPublish();
+    await run(1, 25); // the trial copy's container
+    expect((await jobs()).find((j) => j.item_key === `trial:${key}`)?.state).toBe("container_created");
+    await env.DB.prepare("DELETE FROM plan_items WHERE item_key = ?1").bind(key).run();
+    w.notifications.length = 0;
+    await run(1, 30);
+    expect((await jobs()).find((j) => j.item_key === `trial:${key}`)).toMatchObject({
+      state: "refused",
+      last_error: "removed from the plan",
+    });
+    const notes = w.notifications.filter((x) => x.title.includes("refused"));
+    expect(notes).toHaveLength(1);
+    expect(notes[0].body).not.toMatch(/may already be public/);
   });
 
   it("switched off after the Reel went out: the queued trial copy doesn't go", async () => {
