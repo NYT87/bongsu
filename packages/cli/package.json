@@ -1,6 +1,6 @@
 {
   "name": "bongsu",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Script a self-hosted Bongsu publishing scheduler: queue, texts, approvals, stats, export and an MCP bridge",
   "license": "MIT",
   "author": "NYT87 <nyt87@proton.me> (https://github.com/NYT87)",
