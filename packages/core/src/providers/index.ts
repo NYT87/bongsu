@@ -7,6 +7,7 @@ import { type Account, type Connection, connectionSecret } from "../accounts";
 import { refreshToken } from "../clients/google";
 import { ANALYTICS_SCOPE } from "../clients/youtube";
 import type { Env } from "../env";
+import { BlueskyProvider, blueskyGrant, parseBlueskyCredentials } from "./bluesky";
 import { instagramFor } from "./instagram";
 import { composioGrant } from "./instagram-composio";
 import { exchangeInstagramCode, instagramGrant, parseGraphCredentials, refreshGraphToken } from "./instagram-graph";
@@ -153,6 +154,33 @@ registerProvider("youtube", {
         ? new ConnectionBroken(`Google refused the refresh token (${msg.slice(0, 120)})`)
         : e;
     }
+    return undefined;
+  },
+});
+
+registerProvider("bluesky-atproto", {
+  factory: async (env, fetcher, a) => {
+    if (a.platform !== "bluesky") return null;
+    const creds = parseBlueskyCredentials(await connectionSecret(env, a.connection));
+    return creds ? new BlueskyProvider(creds, fetcher) : null;
+  },
+  connect: {
+    kind: "token",
+    label: "Bluesky (app password)",
+    platform: "bluesky",
+    pasteToken: true,
+    docs: "site/docs/bluesky.md",
+  },
+  paste: (_env, fetcher, value) => {
+    const creds = parseBlueskyCredentials(value);
+    if (!creds) throw new Error("paste the handle and an app password as handle:app-password");
+    return blueskyGrant(fetcher, creds);
+  },
+  // An app password doesn't expire, but the owner can revoke it: signing in weekly notices before a post fails.
+  keepAlive: async (env, fetcher, c) => {
+    const creds = parseBlueskyCredentials(await connectionSecret(env, c));
+    if (!creds) throw new ConnectionBroken("no app password");
+    await new BlueskyProvider(creds, fetcher).verify();
     return undefined;
   },
 });

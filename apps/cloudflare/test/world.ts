@@ -209,6 +209,16 @@ export class World {
     };
   }
 
+  /** Bluesky (bsky.social): blobs uploaded, records created (the request bodies), and the switches a test flips. */
+  bskyBlobs: { type: string; bytes: number }[] = [];
+  bskyRecords: { rkey: string; cid: string; body: Record<string, any> }[] = [];
+  /** The next createRecord answers 429 once. */
+  bskyRateLimit = false;
+  /** Every createRecord answers 400 with this message. */
+  bskyReject: string | null = null;
+  /** The app password was revoked: createSession answers 401. */
+  bskyRevoked = false;
+
   fetch: typeof fetch = async (input, init) => {
     const req = new Request(input as RequestInfo, init);
     const url = new URL(req.url);
@@ -752,6 +762,43 @@ export class World {
       return new Response(
         `: connected\n\nevent: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text }] } })}\n\n`,
       );
+    }
+    if (url.hostname === "bsky.social" && url.pathname.startsWith("/xrpc/")) {
+      const method = url.pathname.slice("/xrpc/".length);
+      const did = "did:plc:demotravel0000000000000";
+      if (method === "com.atproto.server.createSession") {
+        const b = (await req.json()) as { identifier?: string; password?: string };
+        if (this.bskyRevoked || b.identifier !== "demo_travel.bsky.social" || b.password !== "aaaa-bbbb-cccc-dddd")
+          return json({ error: "AuthenticationRequired", message: "Invalid identifier or password" }, 401);
+        return json({ accessJwt: "bsky-jwt", did, handle: b.identifier });
+      }
+      if (req.headers.get("Authorization") !== "Bearer bsky-jwt")
+        return json({ error: "AuthMissing", message: "Authentication Required" }, 401);
+      if (method === "com.atproto.repo.uploadBlob") {
+        const bytes = (await req.arrayBuffer()).byteLength;
+        const type = req.headers.get("Content-Type") ?? "";
+        this.bskyBlobs.push({ type, bytes });
+        return json({
+          blob: { $type: "blob", ref: { $link: `bafkblob${this.bskyBlobs.length}` }, mimeType: type, size: bytes },
+        });
+      }
+      if (method === "com.atproto.repo.createRecord") {
+        if (this.bskyRateLimit) {
+          this.bskyRateLimit = false;
+          return json({ error: "RateLimitExceeded", message: "Rate Limit Exceeded" }, 429);
+        }
+        if (this.bskyReject !== null) return json({ error: "InvalidRequest", message: this.bskyReject }, 400);
+        const body = (await req.json()) as Record<string, any>;
+        const rkey = `3k${String(this.bskyRecords.length + 1).padStart(4, "0")}`;
+        const cid = `bafyrec${this.bskyRecords.length + 1}`;
+        this.bskyRecords.push({ rkey, cid, body });
+        return json({ uri: `at://${did}/app.bsky.feed.post/${rkey}`, cid });
+      }
+      if (method === "com.atproto.repo.getRecord") {
+        const r = this.bskyRecords.find((x) => x.rkey === url.searchParams.get("rkey"));
+        if (!r) return json({ error: "RecordNotFound", message: "Could not locate record" }, 400);
+        return json({ uri: `at://${did}/app.bsky.feed.post/${r.rkey}`, cid: r.cid, value: r.body.record });
+      }
     }
     if (url.hostname === "api.resend.com" && url.pathname === "/emails") {
       if (req.headers.get("Authorization") !== "Bearer re_test") return new Response("bad key", { status: 401 });
