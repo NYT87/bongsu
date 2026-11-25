@@ -19,7 +19,7 @@ A deployment that sets no new variable behaves as today.
 | # | Decision | Why |
 |---|---|---|
 | D1 | All of #64 in one spec and one pull request; the plan builds part A (when) before part B (how much) | The dashboard section and the docs would otherwise change twice |
-| D2 | The cron Worker has **one** trigger, `* * * * *`; core decides each minute which runs are due | One source of truth for both runtimes; any expression works without touching triggers; 1 of the free plan's 5 cron triggers per account instead of 3 (LADN shares the account, #58) |
+| D2 | The cron Worker has **one** trigger, `* * * * *`; core decides each minute which runs are due | One source of truth for both runtimes; any expression works without touching triggers; 1 of the free plan's 5 cron triggers per account instead of 3 (another deployment shares the account, #58) |
 | D3 | One per-run budget, `RUN_SUBREQUESTS`, counted on the real `fetch` calls, shared out **in order, keeping one unit of work for each later step**, with carry-over and a hard stop (amended during the build: was "fair share") | Counts what Cloudflare counts instead of estimating; the inbox keeps today's room, no step can starve the rest or overshoot |
 | D4 | Set at deploy time only; the dashboard displays, never edits | The values belong to the hosting plan, and a wrong one fails runs quietly (decided in Phase 13 part 3a) |
 

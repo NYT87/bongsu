@@ -35,6 +35,7 @@ import {
 } from "./constants";
 import {
   contentPaths,
+  dbMedia,
   dueItems,
   getItem,
   type Held,
@@ -59,7 +60,7 @@ import { parseTexts, type YouTubeTexts } from "./formats/youtube-texts";
 import { acquire, release } from "./lock";
 import { mediaUrl } from "./media";
 import { type MediaStores, mediaStores } from "./media/index";
-import { isVideo, type MediaStore } from "./media/store";
+import { isMedia, isVideo, type MediaStore } from "./media/store";
 import { audit, type Notifier, notifier } from "./notify";
 import { leadOf, MAX_LEAD_S, platform } from "./platforms/index";
 import type { Format } from "./platforms/types";
@@ -143,6 +144,8 @@ export interface Payload {
   reel?: boolean;
   /** The Trial Reel copy (job 'trial:<key>'): the same approved Reel, shown to non-followers first. */
   trial?: boolean;
+  /** The Reel's time when its copy was queued: a move since then refuses the copy. */
+  reelDueAt?: number;
   /** Held because its item is on hold: it goes on (a new container) once the item is released. */
   onHold?: boolean;
   /** The publishing call was made (set just before it): the post may be live even if the job then failed, so a new
@@ -678,6 +681,11 @@ async function recheck(c: Ctx, job: JobRow, p: Payload): Promise<Recheck | null>
   if (!item) return { state: "refused", reason: "removed from the plan", removed: true };
   if (p.trial) {
     if (!(await trialFor(c.env.DB, item)).on) return { state: "done", reason: "trial copy switched off" };
+    // the Reel's plan as the copy was queued from it (jobs queued before this was kept have no time to compare)
+    if (p.reelDueAt !== undefined && item.due_at !== p.reelDueAt)
+      return { state: "refused", reason: "the Reel was rescheduled after it went out: the trial copy isn't posted" };
+    // a held copy has no way back (discover only brings back the regular item's job)
+    if (item.hold) return { state: "refused", reason: "the Reel is on hold: the trial copy isn't posted" };
   } else {
     if (await isPosted(c.env.DB, key))
       return { state: "done", reason: "already posted (published outside the scheduler)" };
@@ -792,6 +800,31 @@ async function sweepRemoved(c: Ctx) {
   }
 }
 
+/** The media an item has now, in the order approval lists them (null: it can't be told, e.g. the store isn't set up,
+ *  which the per-file checks report): a draft's references in slide order, a Reel's one file, or the files of a folder
+ *  post sorted by name. Approval's view of an item (api/pwa/approve.ts) reads the same way. */
+async function currentMedia(
+  c: Ctx,
+  itemKey: string,
+  workspaceId: string,
+): Promise<{ store: string; id: string }[] | null> {
+  const i = await getItem(c.env.DB, itemKey, workspaceId);
+  if (!i) return null;
+  if (i.format === "text") return [];
+  const stores = await c.storesFor(workspaceId);
+  const paths = contentPaths(i, (await workspaceSettings(c.env.DB, workspaceId)).mediaFolder);
+  if (i.content === "db") return (await dbMedia(c.env.DB, paths.media ?? `db:${i.item_key}`)).map((r) => ({ ...r }));
+  const store = stores.default;
+  if (!store || !paths.media) return null;
+  const node = await store.resolve(paths.media);
+  if (!node) return null;
+  if (paths.single) return [{ store: store.id, id: node.id }];
+  return (await store.list(node.id))
+    .filter((f) => isMedia(f))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((f) => ({ store: store.id, id: f.id }));
+}
+
 /** Every fingerprint again, just before publishing: the texts and each media file's checksum in its store. */
 async function verify(
   c: Ctx,
@@ -842,6 +875,17 @@ async function verify(
   const youtube = !!(ap.textsSha256 || textsRaw);
   const entries: { name: string; mime: string; size: number; ref: MediaRef }[] = [];
   const stores = await c.storesFor(workspaceId);
+  // which files the item holds now, not only whether the approved ones are unchanged: a file added to or removed from
+  // a folder post is a different post
+  const now = await currentMedia(c, itemKey.replace(/^trial:/, ""), workspaceId);
+  if (now && now.map((m) => `${m.store}/${m.id}`).join(",") !== ap.media.map((m) => `${m.store}/${m.id}`).join(","))
+    return {
+      problem: "the media selection changed after approval: approve again",
+      caption,
+      comment,
+      alts: [],
+      texts: null,
+    };
   for (const m of ap.media) {
     const store = stores.for(m);
     if (!store)
@@ -1034,12 +1078,8 @@ async function stepTrialPending(c: Ctx, job: JobRow, p: Payload) {
     await c.setJob(job.id, { state: "held", last_error: "trial copy not posted within the catch-up window" });
     return;
   }
-  const item = await getItem(c.env.DB, regular);
-  if (!item || !(await trialFor(c.env.DB, item)).on) {
-    // switched off after the Reel went out
-    await c.setJob(job.id, { state: "done", last_error: "trial copy switched off" });
-    return;
-  }
+  const r = await recheck(c, job, p); // the item, the switch, the plan and the account, as for any post
+  if (r) return settle(c, job, p, r);
   const v = await verify(c, p, job.workspace_id, job.item_key);
   if (v.problem) return refuse(c, job, `trial copy: ${v.problem}`);
   if (c.dry) {
@@ -1090,7 +1130,7 @@ async function queueTrial(c: Ctx, job: JobRow, p: Payload) {
     onHold: _h,
     ...rest
   } = p;
-  const payload: Payload = { ...rest, trial: true };
+  const payload: Payload = { ...rest, trial: true, reelDueAt: job.due_at };
   await c.env.DB.prepare(
     `INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id)
      VALUES (?1, 'video', ?2, ?3, 'pending', 0, ?4, ?3, ?3, ?5) ON CONFLICT (item_key) DO NOTHING`,
@@ -1128,6 +1168,9 @@ async function stepContainer(c: Ctx, job: JobRow, before: Payload) {
   if (leadOf(pr.platform) > 0) return stepAhead(c, job, { ...p, step: next }, pr, next, progressed(step, next));
   const r = await recheck(c, job, p);
   if (r) return settle(c, job, p, r);
+  // the texts or media may have changed while the container was processing: nothing goes live unapproved
+  const v = await verify(c, p, job.workspace_id, job.item_key);
+  if (v.problem) return refuse(c, job, p.trial ? `trial copy: ${v.problem}` : v.problem, p);
   return publish(c, job, p, pr, next);
 }
 

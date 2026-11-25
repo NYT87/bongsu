@@ -192,6 +192,46 @@ describe("Trial Reels", () => {
     expect((await jobs())[1].last_error).toMatch(/default Instagram account is not/);
   });
 
+  it("the trial copy follows the plan's changes since the Reel: a hold, a new time, a disabled account", async () => {
+    const { key } = await seedReel(w, { account: "demo_running" });
+    await run(3);
+    const trial = async () => (await jobs())[1];
+    const reset = async () => {
+      await env.DB.prepare("UPDATE plan_items SET hold = 0 WHERE item_key = ?1").bind(key).run();
+      await env.DB.prepare("UPDATE jobs SET state = 'pending', last_error = NULL WHERE item_key = ?1")
+        .bind(`trial:${key}`)
+        .run();
+    };
+    await env.DB.prepare("UPDATE plan_items SET hold = 1 WHERE item_key = ?1").bind(key).run();
+    await run(1, 15);
+    expect((await trial()).state).toBe("refused");
+    expect((await trial()).last_error).toMatch(/on hold/);
+
+    await reset();
+    await env.DB.prepare("UPDATE plan_items SET due_at = due_at + 3600 WHERE item_key = ?1").bind(key).run();
+    await run(1, 20);
+    expect((await trial()).last_error).toMatch(/rescheduled/);
+
+    await reset();
+    await env.DB.prepare("UPDATE plan_items SET due_at = due_at - 3600 WHERE item_key = ?1").bind(key).run();
+    await env.DB.prepare("UPDATE accounts SET status = 'disabled' WHERE id = 'demo_running'").run();
+    await run(1, 25);
+    expect((await trial()).last_error).toMatch(/disabled/);
+    await env.DB.prepare("UPDATE accounts SET status = 'active' WHERE id = 'demo_running'").run();
+    expect(w.raw).toEqual([]);
+  });
+
+  it("a trial copy whose Reel was put on hold after its container was made is not published", async () => {
+    const { key } = await seedReel(w, { account: "demo_running" });
+    await run(3);
+    await run(1, 15); // the trial container
+    expect(w.raw).toHaveLength(1);
+    await env.DB.prepare("UPDATE plan_items SET hold = 1 WHERE item_key = ?1").bind(key).run();
+    await run(3, 20);
+    expect(await env.DB.prepare("SELECT 1 FROM trial_posts").first()).toBeNull();
+    expect((await jobs())[1].state).not.toBe("published");
+  });
+
   it("24 h results: the copy is compared with its regular Reel and kept out of the account's median", async () => {
     const { key } = await seedReel(w, { account: "demo_running" });
     await run(6);
