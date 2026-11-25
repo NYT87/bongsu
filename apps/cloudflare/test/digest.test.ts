@@ -1,6 +1,10 @@
 import { env } from "cloudflare:workers";
+import { runBudget } from "@bongsu/core/budget";
 import { dailyDigest } from "@bongsu/core/digest";
+import { setPref } from "@bongsu/core/notify-prefs";
+import { addMember } from "@bongsu/core/people";
 import { beforeEach, describe, expect, it } from "vitest";
+import { keys } from "./push-helpers";
 import { clearPlan, planItem, seedReel, testEnv, World } from "./world";
 
 const AT = new Date("2026-10-20T00:07:00Z"); // 09:07 KST
@@ -31,5 +35,65 @@ describe("the daily digest", () => {
     expect(n.body).toContain("reel:X/short0: failed (container ERROR)");
     expect(await dailyDigest(e, { fetch: w.fetch, now: new Date(AT.getTime() + 15 * 60_000) })).toBe("already sent");
     expect(await dailyDigest(e, { fetch: w.fetch, now: new Date(AT.getTime() + 86400_000) })).toBe("sent"); // next day
+  });
+
+  it("waits for a run with calls enough, without marking the day sent", async () => {
+    await seedReel(w, { base: "short1_today", date: "2026-10-20", time: "18:00" });
+    const e = await testEnv(env);
+    const run = (limit: number, keep: number) => {
+      const budget = runBudget(limit, w.fetch).step("digest", keep);
+      return dailyDigest(e, { fetch: budget.fetch, now: AT, budget });
+    };
+    // two channels' upload lists and the message don't fit 4 calls: skipped, nothing claimed or sent
+    expect(await run(20, 10)).toBe("not yet");
+    expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'digest_last'").first()).toBeNull();
+    expect(w.notifications).toEqual([]);
+    // the next run has the calls: it's sent then, and once
+    expect(await run(50, 0)).toBe("sent");
+    expect(w.notifications).toHaveLength(1);
+    expect(await run(50, 0)).toBe("already sent");
+  });
+
+  it("counts the devices it pushes to: one more call each", async () => {
+    await seedReel(w, { base: "short1_today", date: "2026-10-20", time: "18:00" });
+    const k = await keys();
+    const e = await testEnv(env, { VAPID_PUBLIC_KEY: k.VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY: k.VAPID_PRIVATE_KEY });
+    await env.DB.batch(
+      [
+        "DELETE FROM push_subs",
+        "DELETE FROM memberships WHERE user_id = 'dg'",
+        "DELETE FROM users WHERE id = 'dg'",
+        "INSERT INTO users (id, name, created_at) VALUES ('dg', 'Dg', 0)",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    await addMember(env.DB, "default", "dg", "editor", 0);
+    await setPref(env.DB, "default", "dg", "editor", "digest", true, 0);
+    for (const id of ["one", "two"])
+      await env.DB.prepare(
+        "INSERT INTO push_subs (endpoint, p256dh, auth, created_at, user_id) VALUES (?1, ?2, ?3, 0, 'dg')",
+      )
+        .bind(`https://fcm.googleapis.com/fcm/send/${id}`, k.p256dh, k.auth)
+        .run();
+    const pushed: string[] = [];
+    const net: typeof fetch = async (input, init) => {
+      if (String(input).startsWith("https://fcm.googleapis.com/")) {
+        pushed.push(String(input));
+        return new Response(null, { status: 201 });
+      }
+      return w.fetch(input, init);
+    };
+    const run = (keep: number) => {
+      const budget = runBudget(50, net).step("digest", keep);
+      return dailyDigest(e, { fetch: budget.fetch, now: AT, budget });
+    };
+    // 10 calls: both channels' lists (9) and the ntfy message, but not both pushes: skipped, the day not claimed
+    expect(await run(34)).toBe("not yet");
+    expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'digest_last'").first()).toBeNull();
+    expect(pushed).toEqual([]);
+    expect(await run(0)).toBe("sent");
+    expect(pushed.sort()).toEqual([
+      "https://fcm.googleapis.com/fcm/send/one",
+      "https://fcm.googleapis.com/fcm/send/two",
+    ]);
   });
 });

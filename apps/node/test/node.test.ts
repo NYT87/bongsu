@@ -5,8 +5,11 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "@bongsu/api/app";
-import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS, NODE_JOBS_PER_TICK } from "@bongsu/core/constants";
+import { runSubrequests } from "@bongsu/core/budget";
+import { NODE_INBOX_WORKSPACES_PER_RUN, NODE_JOBS_PER_TICK } from "@bongsu/core/constants";
 import { dbCases } from "@bongsu/core/db-conformance";
+import type { Env } from "@bongsu/core/env";
+import { inboxWorkspacesPerRun } from "@bongsu/core/inbox";
 import { mediaStoreCases } from "@bongsu/core/media/conformance";
 import { registerStore } from "@bongsu/core/media/index";
 import { runSchedule, schedulesOff } from "@bongsu/core/schedules";
@@ -15,9 +18,10 @@ import Database from "better-sqlite3";
 import { afterAll, describe, expect, it } from "vitest";
 import { staticAssets } from "../src/assets";
 import { SqliteDb } from "../src/db";
-import { nodeEnv } from "../src/env";
+import { ConfigError, nodeEnv } from "../src/env";
 import { LocalStore, putFile } from "../src/local-store";
 import { migrate } from "../src/migrate";
+import { checkSchedules, startSchedules } from "../src/schedules";
 
 const MIGRATIONS = join(__dirname, "../../../migrations/sqlite");
 const tmp = mkdtempSync(join(tmpdir(), "bongsu-node-"));
@@ -140,6 +144,25 @@ describe("the HTTP app and the schedules on Node", () => {
     expect(jobsPerTick(nodeEnv({ PUBLIC_URL: "https://x.test", JOBS_PER_TICK: "8" }, db))).toBe(8);
   });
 
+  it("falls back to Node's own limits, not Cloudflare's, on a bad JOBS_PER_TICK or INBOX_WORKSPACES_PER_RUN", () => {
+    const env = nodeEnv({ PUBLIC_URL: "https://x.test", JOBS_PER_TICK: "abc", INBOX_WORKSPACES_PER_RUN: "0" }, db);
+    expect(jobsPerTick(env)).toBe(NODE_JOBS_PER_TICK);
+    expect(inboxWorkspacesPerRun(env)).toBe(NODE_INBOX_WORKSPACES_PER_RUN);
+    expect(inboxWorkspacesPerRun(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(NODE_INBOX_WORKSPACES_PER_RUN);
+  });
+
+  it("runs without a call limit by default, and falls back to that, not Cloudflare's 50, on a bad RUN_SUBREQUESTS", () => {
+    const limit = (vars: Record<string, string>) =>
+      runSubrequests(nodeEnv({ PUBLIC_URL: "https://x.test", ...vars }, db));
+    expect(limit({})).toEqual({ value: Number.POSITIVE_INFINITY, source: "default", invalid: null });
+    expect(limit({ RUN_SUBREQUESTS: "200" })).toEqual({ value: 200, source: "variable", invalid: null });
+    expect(limit({ RUN_SUBREQUESTS: "lots" })).toEqual({
+      value: Number.POSITIVE_INFINITY,
+      source: "default",
+      invalid: "lots",
+    });
+  });
+
   it("turns the schedules off with SCHEDULES=off, which the dashboard's Scheduler shows", () => {
     expect(schedulesOff(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(false);
     expect(schedulesOff(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db))).toBe(true);
@@ -153,9 +176,39 @@ describe("the HTTP app and the schedules on Node", () => {
 
   it("runs each schedule on an empty plan without errors", async () => {
     const at = new Date("2026-10-20T09:30:00Z");
-    for (const cron of [CRON_INSTAGRAM, CRON_SHORTS, CRON_INBOX]) await runSchedule(env, offline, cron, at);
-    // the inbox run releases its lock
+    for (const name of ["instagram", "shorts", "upkeep"] as const) await runSchedule(env, offline, name, at, 300);
+    // the upkeep run releases its lock
     expect(db.sqlite.prepare("SELECT COUNT(*) AS n FROM locks").get()).toEqual({ n: 0 });
+  });
+
+  it("refuses to start on an invalid CRON_* variable, naming it", () => {
+    const bad = nodeEnv({ PUBLIC_URL: "https://x.test", CRON_SHORTS: "bad" }, db);
+    expect(() => checkSchedules(bad)).toThrow(ConfigError);
+    expect(() => checkSchedules(bad)).toThrow(/CRON_SHORTS/);
+    expect(() => checkSchedules(env)).not.toThrow();
+  });
+
+  it("schedules one every-minute task that calls runDue for the minute, none with SCHEDULES=off", async () => {
+    const running = new Set<Promise<void>>();
+    const calls: [Env, Date][] = [];
+    const tasks = startSchedules(env, offline, running, async (e, _f, at) => {
+      calls.push([e, at]);
+      return [];
+    });
+    try {
+      expect(tasks.length).toBe(1);
+      expect(tasks[0].match(new Date("2026-10-20T09:31:00Z"))).toBe(true); // every minute
+      await tasks[0].execute();
+      expect(calls.length).toBe(1);
+      expect(calls[0][0]).toBe(env);
+      expect(calls[0][1].getTime() % 60_000).toBe(0); // the minute it was due, as Cloudflare's scheduledTime
+      expect(running.size).toBe(0); // finished runs leave the set the shutdown waits on
+    } finally {
+      for (const t of tasks) await t.destroy();
+    }
+    expect(startSchedules(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db), offline, running)).toEqual(
+      [],
+    );
   });
 });
 

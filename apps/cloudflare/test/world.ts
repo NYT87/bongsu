@@ -151,6 +151,9 @@ export class World {
   ytUploadCut: number | null = null;
   /** Bytes kept per cut PUT in order (then `ytUploadCut`): the server may keep less than the client guesses. */
   ytCuts: number[] = [];
+  /** Bytes YouTube keeps of each session PUT, answering 308 for the rest (a server may keep less than it was sent);
+   *  null: all of it. */
+  ytKeep: number | null = null;
   /** The channel's upload limit is reached: videos.insert answers 400 uploadLimitExceeded. */
   ytUploadLimit = false;
   /** The daily quota is used up: inserts, updates, captions and thumbnails answer 403 quotaExceeded. */
@@ -421,7 +424,7 @@ export class World {
           v.received += cut;
           throw new DOMException("The operation timed out", "TimeoutError");
         }
-        v.received += body.length;
+        v.received += this.ytKeep === null ? body.length : Math.min(body.length, this.ytKeep);
         return v.received >= v.size ? json({ id: vid }) : resume();
       }
       if (req.method === "POST" && url.pathname === "/upload/youtube/v3/videos") {

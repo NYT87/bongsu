@@ -17,6 +17,7 @@
 // video still makes it in. Each item makes one draft only (inbox_seen), even if the draft is refused.
 
 import { instagramAccounts } from "./accounts";
+import { BudgetSpent, canAfford, countSetting, noteFetch, type StepDeps } from "./budget";
 import { INBOX_WORKSPACES_PER_RUN, INBOX_WORKSPACES_PER_RUN_MAX } from "./constants";
 import type { Db } from "./db";
 import type { Env } from "./env";
@@ -59,6 +60,9 @@ const MAX_TRANSLATIONS = 5;
 /** Store reads (lists and file reads) a run makes at most. The free plan allows 50 subrequests per invocation and the
  *  run's other calls (settings, the notification, the media-store token) need room, so this stays well under. */
 export const INBOX_READ_BUDGET = 30;
+/** The calls a workspace's look at its inbox makes at the least (a Drive token, the inbox folder's listing and one
+ *  project's): a workspace isn't started without them in the run's share; listing more projects may stop on it. */
+export const INBOX_UNIT_CALLS = 3;
 
 const TEXT_FILE = /^(caption|title)\.([^.]+(?:\.[^.]+)*)\.txt$/;
 /** The language code in a translation file's name, or "" when it isn't one. */
@@ -113,10 +117,17 @@ const unix = (t?: string) => (t ? Math.floor(Date.parse(t) / 1000) : 0);
 const stem = (n: string) => n.replace(/\.[^.]+$/, "");
 
 /** Workspaces scanned per run: the INBOX_WORKSPACES_PER_RUN variable when it is a whole number from 1 (at most
- *  INBOX_WORKSPACES_PER_RUN_MAX), else the default for Cloudflare's free plan. Node sets its own (apps/node/src/env.ts). */
-export function inboxWorkspacesPerRun(env: Pick<Env, "INBOX_WORKSPACES_PER_RUN">): number {
-  const n = Number(env.INBOX_WORKSPACES_PER_RUN);
-  return Number.isInteger(n) && n >= 1 ? Math.min(n, INBOX_WORKSPACES_PER_RUN_MAX) : INBOX_WORKSPACES_PER_RUN;
+ *  INBOX_WORKSPACES_PER_RUN_MAX), else the runtime's default (INBOX_WORKSPACES_PER_RUN_DEFAULT: Node's 20), else
+ *  Cloudflare's free-plan 3. */
+export function inboxWorkspacesPerRun(
+  env: Pick<Env, "INBOX_WORKSPACES_PER_RUN" | "INBOX_WORKSPACES_PER_RUN_DEFAULT">,
+): number {
+  const max = INBOX_WORKSPACES_PER_RUN_MAX;
+  return (
+    countSetting(env.INBOX_WORKSPACES_PER_RUN, max) ??
+    countSetting(env.INBOX_WORKSPACES_PER_RUN_DEFAULT, max) ??
+    INBOX_WORKSPACES_PER_RUN
+  );
 }
 
 const setting = (env: Env, key: string) =>
@@ -238,7 +249,7 @@ export interface InboxRun {
   note?: string;
 }
 
-export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date }): Promise<InboxRun> {
+export async function scanInbox(env: Env, deps: StepDeps): Promise<InboxRun> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const limit = inboxWorkspacesPerRun(env);
   const active = (
@@ -246,29 +257,38 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
       id: string;
     }>()
   ).results.map((r) => r.id);
-  const reached = nextWorkspaces(active, await setting(env, "inbox_cursor"), limit);
+  const next = nextWorkspaces(active, await setting(env, "inbox_cursor"), limit);
+  /** The workspaces scanned: the next ones in turn, as many as the run's calls allow. */
+  const reached: string[] = [];
   const run = (r: Omit<InboxRun, "reached" | "waitingWorkspaces">): InboxRun => ({
     ...r,
     reached,
     waitingWorkspaces: active.length - reached.length,
   });
-  // what the dashboard shows of the budget: written even when nothing came of the run
-  await saveSetting(
-    env,
-    "inbox_last",
-    JSON.stringify({ at: nowS, reached: reached.length, total: active.length, limit }),
-  );
-  if (reached.length) await saveSetting(env, "inbox_cursor", reached[reached.length - 1]);
 
   const items: Item[] = [];
   const stores = new Map<string, MediaStore>();
   let inboxes = 0;
   const reads = { used: 0 };
   const failed: string[] = [];
-  for (const workspaceId of reached) {
-    const folder = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
+  let spent = false;
+  for (const workspaceId of next) {
+    // out of calls for this run: this workspace and the ones after it come first next run
+    if (spent || !canAfford(deps, INBOX_UNIT_CALLS)) break;
+    reached.push(workspaceId);
+    let folder: string;
+    let all: MediaStore[];
+    try {
+      folder = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
+      all = (await mediaStores(env, deps.fetch, workspaceId)).all;
+    } catch (e) {
+      if (e instanceof BudgetSpent) break;
+      // a workspace that can't be read is skipped (the cursor moves past it), not tried first again every run
+      failed.push(`${workspaceId}: ${(e as Error).message.slice(0, 200)}`);
+      continue;
+    }
     // the instance's stores and the workspace's own, each looked at in the workspace's folder
-    for (const store of (await mediaStores(env, deps.fetch, workspaceId)).all) {
+    for (const store of all) {
       // one store failing (a revoked grant, a bucket key that stopped working) doesn't stop the others
       try {
         const root = await inboxId(env, store, folder);
@@ -277,11 +297,25 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
         stores.set(store.id, store);
         items.push(...(await inboxItems(store, workspaceId, root, reads)));
       } catch (e) {
+        // the run's calls ran out midway: what this store held waits for the workspace's next turn
+        if (e instanceof BudgetSpent) {
+          spent = true;
+          break;
+        }
         failed.push(`${workspaceId}/${store.id}: ${(e as Error).message.slice(0, 200)}`);
       }
     }
   }
+  // what the dashboard shows of the budget: written even when nothing came of the run
+  await saveSetting(
+    env,
+    "inbox_last",
+    JSON.stringify({ at: nowS, reached: reached.length, total: active.length, limit }),
+  );
+  if (reached.length) await saveSetting(env, "inbox_cursor", reached[reached.length - 1]);
   if (failed.length) console.log(`inbox: ${failed.join("; ")}`);
+  if (!reached.length && next.length)
+    return run({ drafted: [], waiting: 0, note: "out of calls for this run before any workspace" });
   if (!inboxes) return run({ drafted: [], waiting: 0, note: "no inbox folder in any workspace's media folder" });
 
   if (!items.length) return run({ drafted: [], waiting: 0 });
@@ -322,14 +356,22 @@ export async function scanInbox(env: Env, deps: { fetch: typeof fetch; now: Date
   try {
     for (const i of ready) {
       // what reading this item's texts will cost, from the names already listed; the run's first item always goes, so
-      // one heavy item can't stall the inbox, the ones after it wait for the next run
+      // one heavy item can't stall the inbox, the ones after it wait for the next run. The run's calls are the hard
+      // limit, the first item's included: it waits when its reads don't fit the step's share.
       const cost = Object.values(i.texts).filter(Boolean).length + i.titles.length;
       if (drafted.length && reads.used + cost > INBOX_READ_BUDGET) break;
+      if (!canAfford(deps, cost)) break;
       reads.used += cost;
-      await draftItem(i);
+      try {
+        await draftItem(i);
+      } catch (e) {
+        // its reads ran past the share: nothing of it was written, it's drafted on a later run
+        if (e instanceof BudgetSpent) break;
+        throw e;
+      }
     }
   } finally {
-    const note = notifier(env, deps.fetch, nowS);
+    const note = notifier(env, noteFetch(deps), nowS);
     for (const ws of new Set(drafted.map((d) => d.workspaceId)))
       await note.send(newDrafts(drafted.filter((d) => d.workspaceId === ws).map((d) => d.title)), ws);
   }

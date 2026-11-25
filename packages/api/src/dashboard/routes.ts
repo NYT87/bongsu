@@ -32,7 +32,7 @@ import {
   startConnect,
   workspaceOAuthApps,
 } from "@bongsu/core/connections";
-import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS } from "@bongsu/core/constants";
+import { type Cron, CronError, firings, matcher, nextFiring, parseCron } from "@bongsu/core/cron";
 import { CryptoError } from "@bongsu/core/crypto";
 import { dueFrom, WhenError, waitingApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -76,7 +76,7 @@ import { describePlatform, NO_LINT, OptionsError, validateOptions } from "@bongs
 import { connectSpecs, providerRegistration } from "@bongsu/core/providers/index";
 import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { isInstanceAdmin, isRole } from "@bongsu/core/roles";
-import { schedulesOff } from "@bongsu/core/schedules";
+import { type RunName, type Schedule, schedulesOff, upkeepDue, upkeepSharesWith } from "@bongsu/core/schedules";
 import {
   callerZone,
   checkName,
@@ -203,6 +203,88 @@ const code = (n: number) => {
   const s = [...b].map((x) => A[x & 31]).join("");
   return s.replace(/(.{4})(?=.)/g, "$1-");
 };
+
+const RUN_NAMES: readonly RunName[] = ["instagram", "shorts", "upkeep"];
+/** A run's `run_last:<name>` row (core/budget.ts `recordRun`). */
+interface RunLast {
+  at: number;
+  used: number;
+  limit: number | "unlimited";
+  stopped: string[];
+  invalid: string | null;
+  /** Its limit was a part of RUN_SUBREQUESTS, split with the runs sharing its minute (absent in rows from before). */
+  shared?: boolean;
+}
+const WEEK_MINUTES = 7 * 24 * 60;
+
+const overlap = (a: Set<number>, b: Set<number>) => [...a].some((v) => b.has(v));
+
+/** Whether two schedules fire on the same minute within the week after `now`. Most pairs (the defaults) differ in
+ *  their minutes, so the week is walked only when they could meet, and then only `a`'s firings, from the sets: this
+ *  Worker's CPU is short too. */
+function sharesAMinute(a: Cron, b: Cron, now: Date): boolean {
+  if (!overlap(a.minutes, b.minutes) || !overlap(a.hours, b.hours)) return false;
+  const start = Math.floor(now.getTime() / 60_000) * 60_000;
+  const fires = matcher(b);
+  for (const t of firings(a, start, start + WEEK_MINUTES * 60_000)) if (fires(t)) return true;
+  return false;
+}
+
+/** The recorded schedules with each one's next firing and the runs it shares a minute with in the next week: those
+ *  start in one invocation, which on Workers free shares its CPU and its calls. An invalid one has neither. */
+function schedulerRuns(recorded: Schedule[], now: Date) {
+  const crons = recorded.map((s) => {
+    if (s.error) return null;
+    try {
+      return parseCron(s.expr);
+    } catch {
+      return null;
+    }
+  });
+  const shared = recorded.map(() => new Set<RunName>());
+  const isTick = (i: number) => recorded[i].name !== "upkeep";
+  // ticks with ticks: any common minute
+  for (const [i, a] of crons.entries())
+    for (const [j, b] of crons.entries())
+      if (i < j && a && b && isTick(i) && isTick(j) && sharesAMinute(a, b, now)) {
+        shared[i].add(recorded[j].name);
+        shared[j].add(recorded[i].name);
+      }
+  // upkeep with the ticks: only the minutes it can't move away from
+  const u = recorded.findIndex((s) => s.name === "upkeep");
+  const upkeep = u >= 0 ? crons[u] : null;
+  const ticks = crons.flatMap((cron, i) => (cron && isTick(i) ? [{ name: recorded[i].name, cron }] : []));
+  const tickCrons = ticks.map((t) => t.cron);
+  if (upkeep) {
+    for (const name of upkeepSharesWith(upkeep, ticks, now)) {
+      shared[u].add(name);
+      shared[recorded.findIndex((s) => s.name === name)].add("upkeep");
+    }
+  }
+  return recorded.map((s, i) => {
+    const cron = crons[i];
+    let next: string | null = null;
+    try {
+      if (cron) {
+        let t = nextFiring(cron, now);
+        // upkeep makes way for a tick in its minute: it then runs the minute after (core's upkeepDue)
+        if (i === u && !upkeepDue(cron, tickCrons, t)) t = new Date(t.getTime() + 60_000);
+        next = utcIso(t.getTime() / 1000);
+      }
+    } catch (e) {
+      if (!(e instanceof CronError)) throw e;
+    }
+    return {
+      name: s.name,
+      expr: s.expr,
+      variable: s.variable,
+      source: s.source,
+      error: s.error,
+      next,
+      shared: RUN_NAMES.filter((n) => shared[i].has(n)),
+    };
+  });
+}
 
 export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVerifiers) {
   const app = new Hono<Vars>();
@@ -1845,10 +1927,10 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }),
   );
 
-  // ---- the Scheduler page (instance admins: AREAS): when the Workers run and what they were limited by. The limits are
-  // what the cron Worker recorded in its last runs (core/tick.ts, core/inbox.ts), since the variables live on that
-  // Worker, not on this one.
-  const recorded = async <T extends { at: number }>(c: C, key: string): Promise<T | null> => {
+  // ---- the Scheduler page (instance admins: AREAS): when the runs fire, what they were limited by and what they used.
+  // All of it is what the cron side recorded (core/schedules.ts `schedules`, core/budget.ts `run_last:<name>`,
+  // core/tick.ts, core/inbox.ts), since the variables live on that Worker, not on this one (plan decision P1).
+  const recorded = async <T>(c: C, key: string): Promise<T | null> => {
     const r = await c.env.DB.prepare("SELECT value FROM settings WHERE key = ?1").bind(key).first<{ value: string }>();
     try {
       return r ? (JSON.parse(r.value) as T) : null;
@@ -1859,26 +1941,43 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   app.get(
     "/admin-api/scheduler",
     wrap(async (c) => {
+      const now = new Date();
+      const recordedRuns = await recorded<Schedule[]>(c, "schedules");
+      const lasts = await Promise.all(RUN_NAMES.map((n) => recorded<RunLast>(c, `run_last:${n}`)));
+      // the limit set is what a run alone gets: a shared minute's runs each had a part of it
+      const byLatest = lasts.filter((r) => r !== null).sort((a, b) => b.at - a.at);
+      const latest = byLatest.find((r) => !r.shared) ?? byLatest[0];
       const ticks = (
         await Promise.all(
           ["instagram", "shorts"].map((p) => recorded<{ at: number; jobsPerTick: number }>(c, `tick_last:${p}`)),
         )
       ).filter((t) => t !== null);
       const tick = ticks.sort((a, b) => b.at - a.at)[0];
-      const inbox = await recorded<{ at: number; reached: number; total: number; limit: number }>(c, "inbox_last");
+      const inbox = await recorded<{ at: number; limit: number }>(c, "inbox_last");
       return {
-        runs: [
-          { name: "instagram", cron: CRON_INSTAGRAM },
-          { name: "shorts", cron: CRON_SHORTS },
-          { name: "inbox", cron: CRON_INBOX },
-        ],
-        jobsPerTick: tick ? { value: tick.jobsPerTick, at: utcIso(tick.at) } : null,
-        inboxWorkspacesPerRun: inbox ? { value: inbox.limit, at: utcIso(inbox.at) } : null,
-        inboxLast: inbox
-          ? { at: utcIso(inbox.at), reached: inbox.reached, total: inbox.total, limit: inbox.limit }
-          : null,
+        runs: Array.isArray(recordedRuns) ? schedulerRuns(recordedRuns, now) : null,
+        limits: {
+          // the latest run's that had it whole (else the latest, marked shared): whether a valid limit was the default
+          // or set can't be told from here (the runs don't record where it came from), so only a refused value is
+          // flagged
+          runSubrequests: latest
+            ? { value: latest.limit, invalid: latest.invalid ?? null, shared: latest.shared === true }
+            : null,
+          jobsPerTick: tick ? { value: tick.jobsPerTick, at: utcIso(tick.at) } : null,
+          inboxWorkspacesPerRun: inbox ? { value: inbox.limit, at: utcIso(inbox.at) } : null,
+        },
+        last: Object.fromEntries(
+          RUN_NAMES.map((n, i) => {
+            const r = lasts[i];
+            return [n, r && { at: utcIso(r.at), used: r.used, limit: r.limit, stopped: r.stopped ?? [] }];
+          }),
+        ),
         schedulesOff: schedulesOff(c.env),
-        variables: { jobsPerTick: "JOBS_PER_TICK", inboxWorkspacesPerRun: "INBOX_WORKSPACES_PER_RUN" },
+        variables: {
+          runSubrequests: "RUN_SUBREQUESTS",
+          jobsPerTick: "JOBS_PER_TICK",
+          inboxWorkspacesPerRun: "INBOX_WORKSPACES_PER_RUN",
+        },
       };
     }),
   );

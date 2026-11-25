@@ -439,7 +439,8 @@ export const en = {
     "YouTube videos are published by YouTube itself; the scheduler only adds the pinned-comment text to Shorts, once you approve it.",
 
   // others' comments and replying
-  "comments.none": "No comments on the last two weeks' posts yet. New ones show up here (checked every 15 minutes).",
+  "comments.none":
+    "No comments on the last two weeks' posts yet. New ones show up here (checked at each upkeep run, every 15 minutes by default).",
   "comments.ytShort": "YouTube Short",
   "comments.igPost": "Instagram post",
   "comments.replied": "↳ You replied: {text}",

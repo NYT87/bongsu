@@ -12,8 +12,8 @@ Open the item in the app and read its state, then check in this order ([the phon
    notification says `<key>: held`, "not published within 6 h of its time"; post it by hand, or move the date and
    approve again. After a pause, overdue items go out only within that window.
 5. **Failed.** The notification's title is `<key>: failed` and its text says why: `<platform> reported: <error>`, or
-   "<platform> didn't finish processing within 2 h". Bongsu tries a step three times (and waits for Instagram's
-   processing up to 24 times) and then stops. Approving it again starts it over from a new upload (an approval made
+   "<platform> didn't finish processing within 2 h". Bongsu tries a step three times (and waits up to 2 hours for
+   Instagram's processing) and then stops. Approving it again starts it over from a new upload (an approval made
    after the failure; nothing an agent does reopens it). The exception: once Bongsu has asked the platform to publish,
    the post may be live even though the call failed, so approving again doesn't reopen it, to never post twice. Check
    the account, then record it with `record_posted` ([API reference](api-reference.md)) or post it by hand.
@@ -32,8 +32,8 @@ the workspace's admins also get an email, "Bongsu: a connection needs attention"
 - **Limit:** 100 published posts per account per 24 hours.
 - **The file can't be fetched:** Instagram downloads the media from Bongsu's signed link, so `PUBLIC_URL` must be
   reachable from the internet over HTTPS (a local instance needs a tunnel: [Instagram](instagram-graph.md)).
-- **Never finishes:** Bongsu waits for Instagram to process the video, checking every 5 minutes up to 24 times (2 h),
-  then fails the item: "Instagram didn't finish processing within 2 h" (the platform's name is the one Bongsu shows). Check the format (MP4/MOV, H.264) and approve
+- **Never finishes:** Bongsu waits for Instagram to process the video, checking at each Instagram run (every 5 minutes
+  by default, `CRON_INSTAGRAM`) for 2 hours from the first check, then fails the item: "Instagram didn't finish processing within 2 h" (the platform's name is the one Bongsu shows). Check the format (MP4/MOV, H.264) and approve
   again: that starts it over with a new upload.
 
 ## YouTube says the quota is gone

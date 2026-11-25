@@ -1,5 +1,5 @@
 // Bongsu on Node (site/docs/self-hosting.md): one process serves the HTTP app (packages/api) and the built PWA and
-// dashboard and runs the three schedules with node-cron. The database is one SQLite file, or Postgres when
+// dashboard and runs the scheduled runs with node-cron. The database is one SQLite file, or Postgres when
 // DATABASE_URL is set.
 //   node server.mjs                 migrate, then serve and schedule
 //   node server.mjs migrate         only apply the migrations
@@ -13,16 +13,16 @@ import type { Db } from "@bongsu/core/db";
 import { registerMailer } from "@bongsu/core/mail";
 import { registerStore } from "@bongsu/core/media/index";
 import { PostgresDb } from "@bongsu/core/postgres";
-import { runSchedule, SCHEDULES, schedulesOff } from "@bongsu/core/schedules";
+import { schedulesOff } from "@bongsu/core/schedules";
 import { exportData, importData, TransferError } from "@bongsu/schema/transfer";
 import { serve } from "@hono/node-server";
-import cron from "node-cron";
 import { staticAssets } from "./assets";
 import { SqliteDb } from "./db";
 import { ConfigError, nodeEnv } from "./env";
 import { LocalStore } from "./local-store";
 import { migrate, migratePostgres } from "./migrate";
 import { postgresDriver } from "./postgres";
+import { checkSchedules, startSchedules } from "./schedules";
 import { smtpMailer } from "./smtp";
 
 const vars = process.env;
@@ -118,6 +118,8 @@ async function main() {
   }
 
   const env = nodeEnv(vars, db, staticAssets(WEB));
+  // An invalid CRON_* stops the start, naming the variable, rather than leaving that run silently off.
+  if (!schedulesOff(env)) checkSchedules(env);
   // A lock left by a run this process didn't finish (a crash, a kill -9) would hold its schedule for up to its
   // expiry; this is the database's only process, so any lock at start is stale.
   await db.prepare("DELETE FROM locks").run();
@@ -127,26 +129,11 @@ async function main() {
     console.log(`bongsu: listening on ${HOST}:${a.port} (${env.PUBLIC_URL}), dry run ${env.DRY_RUN !== "0"}`),
   );
 
-  // The schedules, in UTC like Cloudflare's cron. Each run is awaited by the shutdown below.
+  // The schedules: one every-minute task (core's runDue). Each run is awaited by the shutdown below.
   const running = new Set<Promise<void>>();
   // SCHEDULES=off: serve only (a replica, a demo that must neither publish nor poll any platform)
-  const off = schedulesOff(env);
-  if (off) console.log("bongsu: schedules off");
-  const tasks = (off ? [] : SCHEDULES).map((expr) =>
-    cron.schedule(
-      expr,
-      (ctx) => {
-        // the minute it was due, as Cloudflare's scheduledTime
-        const at = new Date(Math.floor(ctx.date.getTime() / 60_000) * 60_000);
-        const run = runSchedule(env, realFetch, expr, at)
-          .catch((e) => console.log(`${expr} failed: ${(e as Error).stack ?? e}`))
-          .finally(() => running.delete(run));
-        running.add(run);
-        return run;
-      },
-      { timezone: "UTC", noOverlap: true, name: expr },
-    ),
-  );
+  if (schedulesOff(env)) console.log("bongsu: schedules off");
+  const tasks = startSchedules(env, realFetch, running);
 
   // Graceful shutdown: stop scheduling, stop taking requests, let the runs finish (30 s at most), free their locks.
   let stopping = false;

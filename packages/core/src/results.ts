@@ -6,6 +6,7 @@
 // (it reaches a different audience, so it stays out of the account's median).
 
 import { workingAccounts } from "./accounts";
+import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "./budget";
 import type { Env } from "./env";
 import { insightsOf, nearest24h, recordSample, type Sample, sampleOf } from "./metrics";
 import { notifier } from "./notify";
@@ -17,6 +18,8 @@ const GIVE_UP_S = 72 * 3600;
 const PER_RUN = 3;
 const REUSE_S = 3600; // a sample taken within the hour is the 24 h result
 const MEDIAN_OF = 20; // earlier posts the median covers
+/** The most calls one post's insights make: the call, and its retry without the follow metrics (insightsOf). */
+export const RESULTS_UNIT_CALLS = 2;
 
 interface Due {
   item_key: string;
@@ -94,7 +97,7 @@ const nice = (name: string) =>
     .replace(/_/g, " ")
     .replace(/^./, (c) => c.toUpperCase());
 
-export async function postResults(env: Env, deps: { fetch: typeof fetch; now: Date }): Promise<{ fetched: string[] }> {
+export async function postResults(env: Env, deps: StepDeps): Promise<{ fetched: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
   // not an archived workspace's: it stops completely
   const accounts = new Map((await workingAccounts(env.DB, "instagram")).map((a) => [a.id, a]));
@@ -134,9 +137,12 @@ export async function postResults(env: Env, deps: { fetch: typeof fetch; now: Da
     let v: Sample;
     if (recent) v = asSample(recent);
     else {
+      // out of calls for this run: this post and the ones after it get their result next run
+      if (!canAfford(deps, RESULTS_UNIT_CALLS)) break;
       try {
         v = sampleOf(await insightsOf(env, pr, d.item_key, d.media_id), nowS);
       } catch (e) {
+        if (e instanceof BudgetSpent) break; // the results found so far are still told
         console.log(`results ${d.item_key}: ${(e as Error).message}`);
         continue; // tried again next run, until it's 3 days old
       }
@@ -163,7 +169,7 @@ export async function postResults(env: Env, deps: { fetch: typeof fetch; now: Da
     );
     fetched.push(d.item_key);
   }
-  const note = notifier(env, deps.fetch, nowS);
+  const note = notifier(env, noteFetch(deps), nowS);
   for (const [ws, { lines, keys }] of byWs)
     await note.send(resultsNote(lines, keys.length === 1 ? `results:${keys[0]}` : undefined), ws);
   return { fetched };

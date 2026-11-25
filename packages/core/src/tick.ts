@@ -1,4 +1,5 @@
-// The scheduler's tick, run by the cron every 5 minutes.
+// The scheduler's publishing tick, run on its schedule (CRON_INSTAGRAM, CRON_SHORTS: every 5 minutes and at :02 and
+// :32 by default; schedules.ts).
 //
 //   lock → held workspaces (paused, archived) → discover due items → advance active jobs one step each → Shorts comments
 //   → prune audit
@@ -21,6 +22,7 @@
 // dry_run = 1 and a "would publish" note, and a job that was under way keeps its container unpublished.
 
 import { type Account, findAccount, listAccounts } from "./accounts";
+import { BudgetSpent, countSetting, type RunCalls, recordRun, runBudget, runSubrequests } from "./budget";
 import { QuotaExceeded, SessionGone } from "./clients/youtube";
 import {
   AUDIT_KEEP_S,
@@ -28,9 +30,8 @@ import {
   JOBS_PER_TICK,
   JOBS_PER_TICK_MAX,
   LINK_TTL_S,
-  MAX_POLLS,
+  MAX_POLL_S,
   SUBREQUESTS_KEPT,
-  SUBREQUESTS_PER_RUN,
 } from "./constants";
 import {
   contentPaths,
@@ -75,8 +76,18 @@ import { workspaceSettings, workspaceZone } from "./workspaces";
 export interface Deps {
   fetch: typeof fetch;
   now: Date;
-  /** The run's deadline for long transfers (tests pass their own); default: UPLOAD_BUDGET_S from the run's start. */
+  /** The run's deadline for long transfers (tests pass their own); default: from the run's start, below its lock. */
   signal?: AbortSignal;
+  /** The run's shortest gap between firings (seconds), which sizes its lock; default: every 5 minutes. */
+  intervalS?: number;
+  /** The run's part of RUN_SUBREQUESTS when other runs share its minute (one invocation's calls); default: all of it. */
+  subrequests?: number;
+}
+
+/** How long a tick holds its lock: until a minute before the next run (5 minutes: 240 s), at least a minute, and below
+ *  an hour (a run that died holding it blocks the next ones no longer than that). */
+export function lockSeconds(intervalS: number): number {
+  return Math.min(Math.max(intervalS - 60, 60), 3540);
 }
 
 /** Which part of the work this invocation does (one per cron trigger). */
@@ -120,6 +131,8 @@ export interface Payload {
   commented2?: boolean;
   /** An Instagram Story: no caption, no comments. */
   story?: boolean;
+  /** When the current wait for the platform's processing began (unix s, the first poll without progress). */
+  pollingSince?: number;
   /** The item's format (null: decided by the media) and its platform options, as planned. Jobs queued before these
    *  existed carry story / location / coverMs instead. */
   format?: Format | null;
@@ -180,8 +193,8 @@ class Ctx {
   constructor(
     public env: Env,
     public deps: Deps,
-    /** The run's budget for long transfers, shared by its jobs. */
-    public run: RunBudget,
+    /** The run's budget for long transfers, shared by its jobs, and its calls. */
+    public run: RunBudget & { calls: RunCalls },
   ) {
     this.nowS = Math.floor(deps.now.getTime() / 1000);
     this.dry = env.DRY_RUN !== "0";
@@ -272,18 +285,24 @@ export async function tick(
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const holder = crypto.randomUUID();
   const lock = `tick:${part}`;
-  if (!(await acquire(env.DB, lock, holder, nowS, 240))) return { status: "locked" };
+  const lockS = lockSeconds(deps.intervalS ?? 300);
+  if (!(await acquire(env.DB, lock, holder, nowS, lockS))) return { status: "locked" };
+  const run = tickBudget(env, deps, lockS);
   try {
     // what this run was limited by: the dashboard reads it, since the variables live on this Worker, not the API's
     await env.DB.prepare("INSERT INTO settings (key, value) VALUES (?1, ?2) ON CONFLICT (key) DO UPDATE SET value = ?2")
       .bind(`tick_last:${part}`, JSON.stringify({ at: nowS, jobsPerTick: jobsPerTick(env) }))
       .run();
-    const run = runBudget(deps);
     const c = new Ctx(env, { ...deps, fetch: run.fetch }, run);
     // a held workspace (paused or archived) is left alone; its pause was audited when it happened, not on every run
     c.held = await heldWorkspaces(env.DB);
     if (part === "shorts") {
-      await shortsComments(c);
+      try {
+        await shortsComments(c);
+      } catch (e) {
+        // the run's calls ran out: the comments left wait for the next Shorts run
+        if (!(e instanceof BudgetSpent)) throw e;
+      }
       await env.DB.prepare("DELETE FROM audit WHERE at < ?1")
         .bind(nowS - AUDIT_KEEP_S)
         .run();
@@ -298,23 +317,38 @@ export async function tick(
     const active = await activeJobs(c, accounts);
     let calling = 0;
     let advanced = 0;
+    let spent = false;
     for (const job of active) {
+      // past the run's deadline (a minute below its lock) no job starts: the lock may lapse before it ends, and the next
+      // run would take the same job up again
+      if (run.signal.aborted) {
+        spent = true;
+        break;
+      }
       const p = JSON.parse(job.payload) as Payload;
       // an upload starts only with time and subrequests left in the run; else it waits for the next, no attempt counted
       if (isUploadStep(job, p) && !canUpload(run)) continue;
       // a video only waiting for its time reaches nothing on the platform
       if (!waiting(c, job, p)) calling++;
       advanced++;
-      await advance(c, job);
+      // the run's calls ran out: the jobs after this one wait for the next run, as the upload gate's do
+      spent = !(await advance(c, job));
+      if (spent) break;
     }
-    // a full run has spent its subrequests on the jobs: the sweep waits for a quieter one
-    if (calling < jobsPerTick(env)) await sweepRemoved(c);
+    // a full run has spent its subrequests (or its time) on the jobs: the sweep waits for a quieter one. The deadline
+    // may also pass during the last job, with nothing left over: the sweep's deletes would run past it all the same
+    if (!spent && !run.signal.aborted && calling < jobsPerTick(env)) await sweepRemoved(c);
     return {
       status: "ok",
       detail: { part, advanced, held: [...c.held.keys()], dry_run: c.dry },
     };
   } finally {
-    await release(env.DB, lock, holder);
+    try {
+      // the tick runs no budget steps: none stopped. A part of the limit (deps.subrequests) means a shared minute
+      await recordRun(env.DB, part, nowS, run.calls, run.invalid, deps.subrequests !== undefined);
+    } finally {
+      await release(env.DB, lock, holder);
+    }
   }
 }
 
@@ -358,17 +392,25 @@ const waiting = (c: Ctx, job: JobRow, p: Payload) =>
 /** Subrequests an upload step needs at the least: a token, the offset query, the file's read and its PUT. */
 const UPLOAD_REQUESTS = 4;
 
-/** The run's budget: one deadline for all its uploads, from the run's start and below the 240 s lock (so two slow uploads
- *  never outlast it), and every fetch the run makes counted against the Worker's subrequests. */
-function runBudget(deps: Deps): RunBudget & { fetch: typeof fetch } {
-  let used = 0;
+/** The run's budget: one deadline for all its uploads, from the run's start and a minute below the lock (so two slow
+ *  uploads never outlast it), at least 30 s, and every fetch the run makes counted against its calls
+ *  (RUN_SUBREQUESTS). Uploads see what is left less SUBREQUESTS_KEPT, which stays for the end of the run (notes, the
+ *  sweep); a fetch past the limit itself is refused with BudgetSpent. */
+function tickBudget(
+  env: Env,
+  deps: Deps,
+  lockS: number,
+): RunBudget & { fetch: typeof fetch; calls: RunCalls; invalid: string | null } {
+  const limit = runSubrequests(env);
+  const calls = runBudget(deps.subrequests ?? limit.value, deps.fetch);
+  const deadlineS = Math.max(30, Math.min(UPLOAD_BUDGET_S, lockS - 60));
   return {
-    signal: deps.signal ?? AbortSignal.timeout(UPLOAD_BUDGET_S * 1000),
-    requestsLeft: () => SUBREQUESTS_PER_RUN - SUBREQUESTS_KEPT - used,
-    fetch: (input, init) => {
-      used++;
-      return deps.fetch(input, init);
-    },
+    calls,
+    invalid: limit.invalid,
+    signal: deps.signal ?? AbortSignal.timeout(deadlineS * 1000),
+    // Infinity less the reserve stays Infinity
+    requestsLeft: () => calls.left() - SUBREQUESTS_KEPT,
+    fetch: calls.fetch,
   };
 }
 
@@ -380,10 +422,13 @@ export function isUploadStep(job: Pick<JobRow, "state">, p: Pick<Payload, "step"
 }
 
 /** The jobs a tick advances: the JOBS_PER_TICK variable when it is a whole number from 1 (at most
- *  JOBS_PER_TICK_MAX), else the default for Cloudflare's free plan. Node sets its own default (apps/node/src/env.ts). */
-export function jobsPerTick(env: Pick<Env, "JOBS_PER_TICK">): number {
-  const n = Number(env.JOBS_PER_TICK);
-  return Number.isInteger(n) && n >= 1 ? Math.min(n, JOBS_PER_TICK_MAX) : JOBS_PER_TICK;
+ *  JOBS_PER_TICK_MAX), else the runtime's default (JOBS_PER_TICK_DEFAULT: Node's 20), else Cloudflare's free-plan 4. */
+export function jobsPerTick(env: Pick<Env, "JOBS_PER_TICK" | "JOBS_PER_TICK_DEFAULT">): number {
+  return (
+    countSetting(env.JOBS_PER_TICK, JOBS_PER_TICK_MAX) ??
+    countSetting(env.JOBS_PER_TICK_DEFAULT, JOBS_PER_TICK_MAX) ??
+    JOBS_PER_TICK
+  );
 }
 
 // ---------------------------------------------------------------- discovery
@@ -560,13 +605,16 @@ async function reopen(c: Ctx, id: number, cand: Candidate, a: Approval, old: Pay
 
 // ---------------------------------------------------------------- one step per job
 
-async function advance(c: Ctx, job: JobRow) {
+/** One step of a job; false when the run's calls ran out on it (BudgetSpent, refused before anything was sent): the
+ *  job is left for the next run with no attempt counted, and the run advances no more. */
+async function advance(c: Ctx, job: JobRow): Promise<boolean> {
   const p = JSON.parse(job.payload) as Payload;
   try {
     if (job.state === "pending") await stepPending(c, job, p);
     else if (job.state === "container_created") await stepContainer(c, job, p);
     else if (job.state === "published") await stepPublished(c, job, p);
   } catch (e) {
+    if (e instanceof BudgetSpent) return false;
     const attempts = job.attempts + 1;
     const msg = String((e as Error).message ?? e).slice(0, 500);
     if (attempts >= 3) {
@@ -576,6 +624,7 @@ async function advance(c: Ctx, job: JobRow) {
       await c.setJob(job.id, { attempts, last_error: msg });
     }
   }
+  return true;
 }
 
 /** A job that failed for good: a private video it uploaded is kept (never deleted on a failure), and the note says
@@ -954,7 +1003,7 @@ async function startPublishing(c: Ctx, job: JobRow, p: Payload, post: OutgoingPo
     if (e instanceof QuotaExceeded) return waitQuota(c, job, p);
     throw e;
   }
-  const { notBefore: _waited, ...rest } = p;
+  const { notBefore: _waited, ...rest } = unwaited(p);
   const next: Payload = {
     ...rest,
     step,
@@ -1056,7 +1105,7 @@ async function stepContainer(c: Ctx, job: JobRow, before: Payload) {
     const container = typeof next.data.container === "string" ? next.data.container : null;
     if (container !== job.container_id || progressed(step, next)) {
       // a new container to wait for (a carousel's parent), or a step forward: a fresh count of polls
-      await c.setJob(job.id, { container_id: container, attempts: 0, payload: { ...p, step: next } });
+      await c.setJob(job.id, { container_id: container, attempts: 0, payload: { ...unwaited(p), step: next } });
       return;
     }
     return pollWait(c, job, pr, { ...p, step: next });
@@ -1078,7 +1127,7 @@ async function stepAhead(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: St
   if (r) return settle(c, job, p, r);
   if (c.nowS < job.due_at) {
     // reaching the wait ends the polling: a fresh count for whatever comes after; a run that only waits writes nothing
-    if (moved) await c.setJob(job.id, { payload: p, attempts: 0 });
+    if (moved) await c.setJob(job.id, { payload: unwaited(p), attempts: 0 });
     return;
   }
   // a publishing call that went unanswered (retried here) may have made it public: the notes send the owner to check
@@ -1161,6 +1210,9 @@ async function publish(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: Step
   // (YouTubeTakenOver: nothing was written; a new approval's start() then keeps the video). `retry`: an earlier run
   // made the call and lost its answer.
   const retry = !!p.publishing;
+  // no call left for the publishing call: the run's limit would refuse it after the flag, leaving a job "may be live"
+  // that never went out. It waits for the next run as it is (advance: no attempt counted).
+  if (c.run.calls.left() < 1) throw new BudgetSpent("the run");
   await c.setJob(job.id, { payload: { ...p, step, publishing: true } });
   let got: Awaited<ReturnType<Provider["finish"]>>;
   try {
@@ -1205,12 +1257,20 @@ async function legacyStep(c: Ctx, job: JobRow, p: Payload): Promise<Step> {
   };
 }
 
+/** The payload without a running wait: a step forward (or a new container) starts a fresh one. */
+function unwaited(p: Payload): Payload {
+  const { pollingSince: _since, ...rest } = p;
+  return rest;
+}
+
 const platformName = (pr: Provider) => platform(pr.platform)?.name ?? pr.platform;
 
-/** A run without progress: one poll more. The step is kept (it carries a provider's state between runs). */
-async function pollWait(c: Ctx, job: JobRow, pr: Provider, p: Payload) {
+/** A run without progress: one poll more. The step is kept (it carries a provider's state between runs). The wait is
+ *  timed from its first poll, so it lasts MAX_POLL_S whatever the runs' interval. */
+async function pollWait(c: Ctx, job: JobRow, pr: Provider, polled: Payload) {
   const attempts = job.attempts + 1;
-  if (attempts > MAX_POLLS) {
+  const p = { ...polled, pollingSince: polled.pollingSince ?? c.nowS };
+  if (c.nowS - p.pollingSince >= MAX_POLL_S) {
     const name = platformName(pr);
     await c.setJob(job.id, { state: "failed", attempts, last_error: `${name} never finished processing`, payload: p });
     await c.note.send(N.processingTimeout(job.item_key, name), job.workspace_id);
@@ -1237,6 +1297,8 @@ async function postComment(
     await (await c.provider(p, job.workspace_id)).comment?.(p.mediaId!, text!);
     return "";
   } catch (e) {
+    // refused before it was sent: the next run posts it (the comments before it are marked done)
+    if (e instanceof BudgetSpent) throw e;
     return ` (${what} failed: ${(e as Error).message}; post it by hand)`;
   }
 }
@@ -1403,6 +1465,11 @@ async function shortsComments(c: Ctx) {
         await c.setJob(ins.id, { state: "done" });
         await c.note.send(N.commented(label || r.video_id, key), s.workspaceId);
       } catch (e) {
+        // refused before it was sent: the row goes, so the next run takes the comment up as new (no failure, no note)
+        if (e instanceof BudgetSpent) {
+          await c.env.DB.prepare("DELETE FROM jobs WHERE id = ?1").bind(ins.id).run();
+          throw e;
+        }
         await c.setJob(ins.id, { state: "failed", last_error: String((e as Error).message).slice(0, 500) });
         await c.note.send(N.jobFailed(key, String((e as Error).message).slice(0, 300)), s.workspaceId);
       }

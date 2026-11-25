@@ -79,7 +79,7 @@ The provider's step (`Step.data`) is kept with the job between runs, so a provid
 
 5. **Connections:** the account's `connections.provider` is your provider's value; `accounts.platform` your
    platform's id. Tokens go in `connections.credentials` (encrypted) or a secret named by `connections.secret_name`;
-   renewals belong in the inbox cron next to Instagram's (`providers/refresh.ts`).
+   renewals belong in the upkeep run next to Instagram's (`providers/refresh.ts`).
 
 ## Today's
 

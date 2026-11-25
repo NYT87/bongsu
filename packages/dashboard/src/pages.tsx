@@ -3743,23 +3743,40 @@ interface Recorded {
   value: number;
   at: string;
 }
+type RunName = "instagram" | "shorts" | "upkeep";
 interface SchedulerInfo {
-  runs: { name: string; cron: string }[];
-  jobsPerTick: Recorded | null;
-  inboxWorkspacesPerRun: Recorded | null;
-  inboxLast: { at: string; reached: number; total: number; limit: number } | null;
+  /** null until the scheduler has run once: the schedules are the cron side's variables, recorded by its runs. */
+  runs:
+    | {
+        name: RunName;
+        expr: string;
+        variable: string;
+        source: "default" | "variable";
+        error: string | null;
+        next: string | null;
+        shared: RunName[];
+      }[]
+    | null;
+  limits: {
+    /** `shared`: every recorded run shared its minute, so this is a part of the limit, not the limit itself. */
+    runSubrequests: { value: number | "unlimited"; invalid: string | null; shared: boolean } | null;
+    jobsPerTick: Recorded | null;
+    inboxWorkspacesPerRun: Recorded | null;
+  };
+  last: Record<RunName, { at: string; used: number; limit: number | "unlimited"; stopped: string[] } | null>;
   schedulesOff: boolean;
-  variables: { jobsPerTick: string; inboxWorkspacesPerRun: string };
+  variables: { runSubrequests: string; jobsPerTick: string; inboxWorkspacesPerRun: string };
 }
 const RUN_NAME: Record<string, string> = {
   instagram: "Instagram posts and comments",
   shorts: "YouTube Shorts comments",
-  inbox: "Media inbox scan",
+  upkeep: "Upkeep: inbox, results, metrics, comments, connections",
 };
 const at = (iso: string) => when(Date.parse(iso) / 1000);
+const runList = (names: string[]) => names.map((n) => RUN_NAME[n] ?? n).join(" and ");
 
-/** What the scheduler runs and how much it does per run: read-only, from what the runs recorded themselves (the
- *  limits are variables of the cron Worker or process, which this page can't read). */
+/** What the scheduler runs, when, and how much it may do per run: read-only, from what the runs recorded themselves
+ *  (the schedules and limits are variables of the cron Worker or process, which this page can't read). */
 function SchedulerCard() {
   const { data, error, reload } = useLoad<SchedulerInfo>("scheduler");
   const limit = (r: Recorded | null, variable: string, what: string) => (
@@ -3781,6 +3798,7 @@ function SchedulerCard() {
       </dd>
     </>
   );
+  const calls = data?.limits.runSubrequests;
   return (
     <Card title="Scheduler">
       {!data ? (
@@ -3794,32 +3812,87 @@ function SchedulerCard() {
             </p>
           )}
           <p className="muted small">
-            Runs on a schedule (UTC). Each run handles a limited amount, so a busy instance catches up over the next
-            runs. Read-only: the limits are set where the scheduler runs.
+            Each run handles a limited number of calls, so a busy instance catches up over the next runs. The
+            expressions are in UTC, the times in yours. Read-only: the schedules and limits are set where the scheduler
+            runs.
           </p>
           <dl className="facts">
-            {data.runs.map((r) => (
-              <Fragment key={r.name}>
-                <dt>{RUN_NAME[r.name] ?? r.name}</dt>
-                <dd>
-                  <code>{r.cron}</code>
-                </dd>
-              </Fragment>
-            ))}
-            {limit(data.jobsPerTick, data.variables.jobsPerTick, "Jobs per run")}
-            {limit(data.inboxWorkspacesPerRun, data.variables.inboxWorkspacesPerRun, "Workspaces per inbox run")}
-            <dt>Last inbox run</dt>
+            {data.runs ? (
+              data.runs.map((r) => {
+                const last = data.last[r.name];
+                return (
+                  <Fragment key={r.name}>
+                    <dt>{RUN_NAME[r.name] ?? r.name}</dt>
+                    <dd>
+                      <div>
+                        <code>{r.expr}</code>{" "}
+                        <span className="muted small">
+                          · {r.source === "variable" ? "set by " : "default, "}
+                          <code>{r.variable}</code>
+                          {r.source === "default" && " not set"}
+                        </span>
+                      </div>
+                      {r.error ? (
+                        <p className="error" role="alert">
+                          <code>{r.variable}</code> is invalid: {r.error}. This run is skipped until it's fixed.
+                        </p>
+                      ) : (
+                        <div className="small">next {r.next ? at(r.next) : "never"}</div>
+                      )}
+                      {r.shared.length > 0 && (
+                        <div>
+                          <span className="pill warn">
+                            Shares a minute with {runList(r.shared)}: they share one invocation's CPU and its calls
+                          </span>
+                        </div>
+                      )}
+                      <div className="muted small">
+                        {last ? (
+                          <>
+                            last run {at(last.at)}: {last.used} of {last.limit} calls
+                            {last.stopped.length > 0 && `; stopped on its share: ${last.stopped.join(", ")}`}
+                          </>
+                        ) : (
+                          "not run yet"
+                        )}
+                      </div>
+                    </dd>
+                  </Fragment>
+                );
+              })
+            ) : (
+              <>
+                <dt>Runs</dt>
+                <dd className="muted">not recorded yet: they show here after the scheduler's first run</dd>
+              </>
+            )}
+            <dt>Calls per run</dt>
             <dd>
-              {data.inboxLast ? (
+              {calls ? (
                 <>
-                  reached {data.inboxLast.reached} of {data.inboxLast.total} workspaces
-                  {data.inboxLast.reached < data.inboxLast.total && "; the others wait for the next run"}{" "}
-                  <span className="muted small">· {at(data.inboxLast.at)}</span>
+                  {/* whether it is the default or set can't be told from what the runs record */}
+                  <strong>{calls.value}</strong>{" "}
+                  <span className="muted small">
+                    {calls.shared ? "in the latest run, its part of a shared minute" : "in the latest run"} · set with{" "}
+                  </span>
+                  <code>{data.variables.runSubrequests}</code>
+                  {calls.invalid !== null && (
+                    <p className="error" role="alert">
+                      <code>{data.variables.runSubrequests}</code> is invalid (<code>{calls.invalid}</code>): the
+                      default is used.
+                    </p>
+                  )}
                 </>
               ) : (
-                <span className="muted">not run yet</span>
+                <span className="muted">
+                  not run yet <span className="small">(set by </span>
+                  <code className="small">{data.variables.runSubrequests}</code>
+                  <span className="small">)</span>
+                </span>
               )}
             </dd>
+            {limit(data.limits.jobsPerTick, data.variables.jobsPerTick, "Jobs per run")}
+            {limit(data.limits.inboxWorkspacesPerRun, data.variables.inboxWorkspacesPerRun, "Workspaces per inbox run")}
           </dl>
         </>
       )}

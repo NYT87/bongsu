@@ -804,6 +804,10 @@ without a deployment per person. The data model is already there (Phase 3).
 - [x] Notifications per user and workspace (who gets what). (Part 2: five groups, role defaults, `notify_prefs`.)
 - [x] Isolation tests across every surface, including the cron and the media links. (Part 2 covers notifications:
       pushes, groups and switching; part 3a the cron (inbox, store checks) and the media links; #24.)
+- [x] A tunable scheduler, set at deploy time (#64): the runs' times from `CRON_INSTAGRAM`, `CRON_SHORTS` and
+      `CRON_UPKEEP` (core's own cron matcher, one every-minute trigger on Cloudflare), the tick's lock and the
+      Instagram wait following the interval, and `RUN_SUBREQUESTS` bounding each run's calls, shared among the upkeep
+      steps in order; the dashboard's Scheduler section shows it all, read-only. (The inbox run renamed `upkeep`.)
 
 | Role | Can |
 |---|---|

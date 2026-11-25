@@ -39,6 +39,18 @@ In both wrangler files:
 | `VAPID_SUBJECT` | `mailto:` plus your email |
 | `DRY_RUN` | keep `"1"` until you trust the setup: every step logs and notifies instead of publishing |
 
+Optional, in `wrangler.cron.toml` only (the Worker that runs the schedules):
+
+| Variable | Default | Value |
+|---|---|---|
+| `RUN_SUBREQUESTS` | `50` | the outgoing calls one run may make: `50` on the free plan; on the paid plan `10000` (Cloudflare's default there, up to 10 million with the Worker's `limits` setting) |
+| `CRON_INSTAGRAM`, `CRON_SHORTS`, `CRON_UPKEEP` | `*/5 * * * *`, `2,32 * * * *`, `7,22,37,52 * * * *` | when each run happens (cron, UTC) |
+
+The cron Worker has one trigger, `* * * * *`: every minute it starts the runs whose schedule matches, so changing a
+schedule never touches the trigger. Cloudflare's free plan allows 5 cron triggers per account, and Bongsu uses 1.
+More in [When the runs happen](configuration.md#when-the-runs-happen) and
+[How much a run does](configuration.md#how-much-a-run-does).
+
 ## 4. Accounts come later
 
 Instagram accounts and YouTube channels are connected from the dashboard once it's running (step 8). A deployment

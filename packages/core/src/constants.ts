@@ -2,8 +2,8 @@
 
 /** A job missed by more than this waits for you instead of going out late (e.g. in the middle of the night). */
 export const CATCH_UP_S = 6 * 3600;
-/** Ticks to wait for Instagram to finish a container (5 min each) before giving up. */
-export const MAX_POLLS = 24;
+/** How long to wait for Instagram to finish a container, from the first poll, before giving up (whatever the interval). */
+export const MAX_POLL_S = 2 * 3600;
 /** Lifetime of the signed media links Instagram fetches. */
 export const LINK_TTL_S = 6 * 3600;
 /** Jobs advanced per tick, all accounts and workspaces together, the oldest due first; a video Instagram is still
@@ -12,11 +12,17 @@ export const LINK_TTL_S = 6 * 3600;
  *  defaults to NODE_JOBS_PER_TICK. The JOBS_PER_TICK variable overrides either, up to JOBS_PER_TICK_MAX. */
 export const JOBS_PER_TICK = 4;
 export const NODE_JOBS_PER_TICK = 20;
-/** Subrequests one run may make (Cloudflare's free plan allows 50 per invocation): chunked YouTube uploads stop short
- *  of it, keeping SUBREQUESTS_KEPT for what the run does after them (notes, the sweep). Every fetch of a tick counts. */
-export const SUBREQUESTS_PER_RUN = 50;
+/** Calls a run keeps out of its steps' shares (budget.ts) and out of the tick's uploads, for what it does after them
+ *  (notes, the sweep). */
 export const SUBREQUESTS_KEPT = 6;
-/** The most one tick advances whatever the setting: a tick holds its lock for 4 minutes, and the next one is 5 away. */
+/** Fetch calls one run (a tick, the upkeep run) may make, shared among its steps by budget.ts. The default fits
+ *  Cloudflare's free plan; the RUN_SUBREQUESTS variable (a number in range, or "unlimited") overrides it, and Node
+ *  defaults to "unlimited" (RUN_SUBREQUESTS_DEFAULT). Other values fall back to the runtime's default. */
+export const RUN_SUBREQUESTS = 50;
+export const RUN_SUBREQUESTS_MIN = 10;
+export const RUN_SUBREQUESTS_MAX = 10_000_000;
+/** The most one tick advances whatever the setting: a tick holds its lock until a minute before the next run (4 minutes
+ *  at the default 5), so the jobs must fit in it. */
 export const JOBS_PER_TICK_MAX = 100;
 /** Workspaces the inbox run scans per run (inbox.ts): each costs a few subrequests per store, and the free plan allows
  *  50 per invocation, so a run reaches a few and the next picks up after them. Node defaults to
@@ -24,12 +30,12 @@ export const JOBS_PER_TICK_MAX = 100;
 export const INBOX_WORKSPACES_PER_RUN = 3;
 export const NODE_INBOX_WORKSPACES_PER_RUN = 20;
 export const INBOX_WORKSPACES_PER_RUN_MAX = 100;
-/** The cron triggers (wrangler.toml): Instagram every 5 minutes; Shorts comments twice an hour, in their own
- *  invocation, so neither run gets near the free plan's 10 ms CPU limit. */
+/** The runs' default schedules (schedules.ts; the CRON_* variables override them): Instagram every 5 minutes; Shorts
+ *  comments twice an hour, on minutes of their own, so no two runs share an invocation's 10 ms CPU on the free plan. */
 export const CRON_INSTAGRAM = "*/5 * * * *";
 export const CRON_SHORTS = "2,32 * * * *";
-/** The Drive inbox scan: every 15 minutes, off the other runs' minutes. */
-export const CRON_INBOX = "7,22,37,52 * * * *";
+/** Upkeep (the inbox scan, cleanup, digest, results, metrics…): every 15 minutes, off the other runs' minutes. */
+export const CRON_UPKEEP = "7,22,37,52 * * * *";
 /** The least an agent key may leave between now and a YouTube release it sets: YouTube can take a while to pick up a
  *  new time, and an agent shouldn't be able to publish something at once. The owner has no such limit. */
 export const RELEASE_LEAD_S = 3600;

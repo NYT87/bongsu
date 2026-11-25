@@ -3,6 +3,8 @@
 // default of its scope, remove it (the instance's: with how many waiting approvals that voids; a workspace's: refused
 // while an approved item uses it), connect Google Drive with the owner's Google app, and check every store weekly in
 // the inbox's cron run.
+
+import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "../budget";
 import {
   authorizeUrl,
   type CallbackQuery,
@@ -28,6 +30,9 @@ const GOOGLE_AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN = "https://oauth2.googleapis.com/token";
 /** How often each store is checked (a revoked Drive grant, a bucket key that stopped working). */
 export const CHECK_EVERY_S = 7 * 86400;
+/** The most calls one store's check makes: a Drive token and a walk to the media folder (two levels), or an S3
+ *  object read and a listing. */
+export const STORES_UNIT_CALLS = 3;
 
 export class StoreError extends Error {}
 
@@ -341,10 +346,7 @@ export async function finishDriveConnect(
  *  Answering means the media folder of a workspace that uses it can be looked up: the store's own workspace, or for
  *  an instance store the first workspace not archived (none: the store is only built). A folder not made yet is
  *  fine; a request that fails is not. */
-export async function checkStores(
-  env: Env,
-  deps: { fetch: typeof fetch; now: Date },
-): Promise<{ checked: string[]; broken: string[] }> {
+export async function checkStores(env: Env, deps: StepDeps): Promise<{ checked: string[]; broken: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const out = { checked: [] as string[], broken: [] as string[] };
   const instance: string[] = [];
@@ -356,6 +358,8 @@ export async function checkStores(
   }>();
   for (const r of await storeRows(env.DB)) {
     if (r.lastCheckedAt !== null && r.lastCheckedAt > nowS - CHECK_EVERY_S) continue;
+    // out of calls for this run: the rest are still due next run
+    if (!canAfford(deps, STORES_UNIT_CALLS)) break;
     let error: string | null = null;
     try {
       const creds = r.credentials ? await decryptSecret(env.ENCRYPTION_KEY, r.credentials) : null;
@@ -363,6 +367,8 @@ export async function checkStores(
       const ws = r.workspaceId ?? firstActive?.id;
       if (ws) await store.resolve(mediaPath((await workspaceSettings(env.DB, ws)).mediaFolder));
     } catch (e) {
+      // the run's calls, not the store, ran out: it isn't marked, and the problems found so far are still told
+      if (e instanceof BudgetSpent) break;
       error = (e as Error).message.slice(0, 300);
     }
     await env.DB.prepare("UPDATE media_store SET status = ?1, last_error = ?2, last_checked_at = ?3 WHERE id = ?4")
@@ -375,8 +381,8 @@ export async function checkStores(
       else byWorkspace.set(r.workspaceId, [...(byWorkspace.get(r.workspaceId) ?? []), line]);
     }
   }
-  if (instance.length) await notifyInstanceAdmins(env, deps.fetch, mediaStoreProblem(instance.join("\n")), nowS);
-  const notify = notifier(env, deps.fetch, nowS);
+  if (instance.length) await notifyInstanceAdmins(env, noteFetch(deps), mediaStoreProblem(instance.join("\n")), nowS);
+  const notify = notifier(env, noteFetch(deps), nowS);
   for (const [workspaceId, lines] of byWorkspace)
     await notify.send(mediaStoreProblem(lines.join("\n"), true), workspaceId);
   return out;

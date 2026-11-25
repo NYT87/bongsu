@@ -63,6 +63,13 @@ async function devicesOf(env: Env, users: string[]): Promise<Sub[]> {
   return out;
 }
 
+/** The devices a workspace's note of this group goes to (none without the VAPID keys): one call each, for a caller
+ *  that must know what a send costs before it commits to it (the digest). */
+export async function pushDevices(env: Env, workspaceId: string, group: NoteGroup): Promise<number> {
+  if (!env.VAPID_PRIVATE_KEY || !env.VAPID_PUBLIC_KEY) return 0;
+  return (await devicesOf(env, await receivers(env.DB, workspaceId, group))).length;
+}
+
 export async function sendPush(
   env: Env,
   fetcher: typeof fetch,

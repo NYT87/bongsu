@@ -65,9 +65,13 @@ const run = (d: Date) => {
 };
 
 /** A draft-made YouTube item (content 'db'): the video, Spanish subtitles and a thumbnail in the Drive store. */
-async function seedVideo(o: { key?: string; time?: string } = {}) {
+async function seedVideo(o: { key?: string; time?: string; bytes?: string } = {}) {
   ids = {
-    clip: w.drivePut("UPLOADS/_uploads/clip.mp4", { md5: MD5S.clip, mimeType: "video/mp4", bytes: "0123456789" }),
+    clip: w.drivePut("UPLOADS/_uploads/clip.mp4", {
+      md5: MD5S.clip,
+      mimeType: "video/mp4",
+      bytes: o.bytes ?? "0123456789",
+    }),
     es: w.drivePut("UPLOADS/_uploads/es.srt", {
       md5: MD5S.es,
       mimeType: "application/x-subrip",
@@ -176,9 +180,12 @@ describe("YouTube uploads: the tick", () => {
     await run(at(-LEAD + 600));
     await run(at(-LEAD + 900)); // still processing: a poll
     expect(await job()).toMatchObject({ phase: "processing", attempts: 1 });
+    const since = async () => JSON.parse((await job())!.payload).pollingSince;
+    expect(await since()).toBe(Math.floor(at(-LEAD + 900).getTime() / 1000)); // the wait's start
     processed();
     await run(at(-LEAD + 1200));
     expect(await job()).toMatchObject({ state: "container_created", phase: "waiting", attempts: 0 });
+    expect(await since()).toBeUndefined(); // moved on: a later wait starts afresh
     for (const s of [-3600, -600, -1]) {
       await run(at(s));
       expect(await job()).toMatchObject({ state: "container_created", phase: "waiting", attempts: 0 });
@@ -395,6 +402,39 @@ describe("YouTube uploads: the tick", () => {
     // B waits, untouched and with no attempt counted
     expect(await job(B)).toMatchObject({ phase: "uploading", attempts: 0, last_error: null });
     expect(w.ytVideos.get("vid-2")?.received).toBe(0);
+  });
+
+  it("chunk mode sends as many pieces in a run as its call budget allows", async () => {
+    // YouTube keeps a byte of each piece, so a 300-byte file takes 300 pieces: more than any run here can send
+    const pieces = async (overrides: Partial<Env>) => {
+      await env.DB.batch(["audit", "jobs"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+      await clearPlan();
+      w = new World();
+      w.ytKeep = 1;
+      await setup({ YOUTUBE_UPLOAD_MODE: "chunk", ...overrides });
+      await seedVideo({ bytes: "x".repeat(300) });
+      await approveVideo();
+      await run(at(-LEAD)); // start
+      w.ytPuts = [];
+      let used = 0;
+      now = at(-LEAD + 300);
+      await tick(e, {
+        now,
+        fetch: (input, init) => {
+          used++;
+          return w.fetch(input, init);
+        },
+      });
+      expect(await job()).toMatchObject({ phase: "uploading", attempts: 0, last_error: null });
+      return { sent: w.ytPuts.filter((p) => p.length > 0).length, used };
+    };
+    const byDefault = await pieces({});
+    // today's ceiling: the Worker's 50 subrequests, less the 6 kept for the end of the run
+    expect(byDefault.used).toBeLessThanOrEqual(50 - 6);
+    const paid = await pieces({ RUN_SUBREQUESTS: "200" });
+    expect(paid.sent).toBeGreaterThan(byDefault.sent);
+    expect(paid.used).toBeLessThanOrEqual(200 - 6);
+    expect(paid.used).toBeGreaterThan(50);
   });
 
   it("videos waiting for their time don't keep the sweep from a run", async () => {
@@ -814,6 +854,33 @@ describe("YouTube uploads: changes, removal, quota and errors", () => {
     await run(at(660));
     expect(deletes.n).toBe(1);
     expect(w.ytVideos.has("vid-1")).toBe(false);
+  });
+
+  it("a run past its deadline leaves the sweep for a later one, though no job was left over", async () => {
+    await uploadAhead();
+    await env.DB.prepare("UPDATE plan_items SET due_at = ?1 WHERE item_key = ?2")
+      .bind(await localToUnix("2026-10-20", "19:00"), KEY)
+      .run();
+    await run(at(-3600));
+    expect(await job()).toMatchObject({ state: "refused", videoId: "vid-1" });
+    await removeItem();
+    await setup();
+    const { key: reel } = await seedReel(w, { time: "18:05" });
+    igHappyPath(w);
+    const deletes = countDeletes();
+    // the run's one job is the Reel, and its deadline passes while it is advanced: the loop ends on its own
+    const deadline = new AbortController();
+    const real = w.fetch;
+    w.fetch = async (input, init) => {
+      if (/instagram|composio/.test(new URL(new Request(input, init).url).hostname)) deadline.abort();
+      return real(input, init);
+    };
+    now = at(360);
+    await tick(e, { fetch: w.fetch, now, signal: deadline.signal });
+    w.fetch = real;
+    expect(deadline.signal.aborted).toBe(true);
+    expect((await job(reel))?.state).toBe("container_created");
+    expect(deletes.n).toBe(0);
   });
 
   it("a failed job's video is deleted once its item is removed", async () => {

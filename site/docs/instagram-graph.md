@@ -155,7 +155,7 @@ check the post itself.
 
 ## Keeping the token alive
 
-- Every week the inbox cron renews each instagram-graph token (Instagram allows it once a token is a day old) and
+- Every week the upkeep run renews each instagram-graph token (Instagram allows it once a token is a day old) and
   stores the new one encrypted (`connections.credentials`, `expires_at`). A token first given as a secret moves into
   the database on its first renewal; the secret is then unused.
 - If a renewal fails, the connection turns `expiring` and you get one notification. If the token runs out (60 days

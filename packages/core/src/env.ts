@@ -41,10 +41,24 @@ export interface Env {
   SMTP_PASS?: string;
   /** Publishing jobs advanced per tick (constants.ts JOBS_PER_TICK): unset, 4 on Cloudflare and 20 on Node. */
   JOBS_PER_TICK?: string;
+  /** The runtime's own JOBS_PER_TICK (Node sets NODE_JOBS_PER_TICK): what an unset or invalid JOBS_PER_TICK falls back
+   *  to, rather than Cloudflare's 4. */
+  JOBS_PER_TICK_DEFAULT?: string;
   /** Workspaces the inbox run scans per run (constants.ts INBOX_WORKSPACES_PER_RUN): unset, 3 on Cloudflare and 20 on Node. */
   INBOX_WORKSPACES_PER_RUN?: string;
+  /** The runtime's own INBOX_WORKSPACES_PER_RUN (Node sets NODE_INBOX_WORKSPACES_PER_RUN), as JOBS_PER_TICK_DEFAULT. */
+  INBOX_WORKSPACES_PER_RUN_DEFAULT?: string;
   /** "chunk": YouTube uploads go in 8 MiB pieces instead of one streamed request (if streaming costs too much CPU). */
   YOUTUBE_UPLOAD_MODE?: string;
   /** "off" on Node: the server only serves, nothing runs on a schedule (a replica, a demo). Never set on Cloudflare. */
   SCHEDULES?: string;
+  /** The runs' schedules, five-field cron expressions in UTC (schedules.ts); unset, constants.ts CRON_*. */
+  CRON_INSTAGRAM?: string;
+  CRON_SHORTS?: string;
+  CRON_UPKEEP?: string;
+  /** Outside calls one run may make: a whole number, or "unlimited". */
+  RUN_SUBREQUESTS?: string;
+  /** The runtime's own default for it, set by the runtime and not by hand: Node's "unlimited" (it has no per-invocation
+   *  limit), so an invalid RUN_SUBREQUESTS there falls back to that rather than to Cloudflare's 50. */
+  RUN_SUBREQUESTS_DEFAULT?: string;
 }

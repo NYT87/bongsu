@@ -5,7 +5,6 @@ import { createApp } from "@bongsu/api/app";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
-import { CRON_INBOX, CRON_INSTAGRAM, CRON_SHORTS } from "@bongsu/core/constants";
 import { registerStore } from "@bongsu/core/media/index";
 import { pgliteDriver } from "@bongsu/core/pglite";
 import { PostgresDb } from "@bongsu/core/postgres";
@@ -115,7 +114,7 @@ describe("Bongsu on Postgres (PGlite)", () => {
 
   it("runs the three schedules", async () => {
     const at = new Date("2026-10-20T09:30:00Z");
-    for (const cron of [CRON_INSTAGRAM, CRON_SHORTS, CRON_INBOX]) await runSchedule(env, offline, cron, at);
+    for (const name of ["instagram", "shorts", "upkeep"] as const) await runSchedule(env, offline, name, at, 300);
     expect((await db.prepare("SELECT COUNT(*) AS n FROM locks").first())?.n).toBe(0);
   });
 

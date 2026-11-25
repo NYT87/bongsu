@@ -5,7 +5,7 @@
   AI agents (REST /v1, /mcp) ┼─► bongsu ──┐    ├─ YouTube Data API (Shorts comments)
    Instagram fetching media ─┘  (Worker)  ├─ D1 ┤
                                           │    └─ Google Drive (media, inbox)
-                   cron triggers ─► bongsu-cron
+       cron trigger (every minute) ─► bongsu-cron
 ```
 
 ## Two Workers, one database
@@ -20,13 +20,54 @@ as Workers assets.
 
 ## Cron runs
 
-| Schedule | Run |
-|---|---|
-| `*/5 * * * *` | Instagram: create jobs for due approved items, advance up to `JOBS_PER_TICK` jobs: 4 on Cloudflare, 20 on Node (`packages/core/src/tick.ts`) |
-| `2,32 * * * *` | YouTube Shorts comments |
-| `7,22,37,52 * * * *` | Inbox scan, per workspace media folder (`<folder>/inbox` in its stores), `INBOX_WORKSPACES_PER_RUN` workspaces at a time: 3 on Cloudflare, 20 on Node (`packages/core/src/inbox.ts`); moving posted media aside, daily digest, 24 h results, new comments |
+The cron Worker has one trigger, `* * * * *`; Node has one node-cron task at the same rate. Each minute both call
+`runDue` (`packages/core/src/schedules.ts`), which starts the runs whose schedule matches that minute. A schedule is a
+`CRON_*` variable or its default, parsed by core's own matcher (`packages/core/src/cron.ts`, five fields, UTC), so the
+two runtimes can't drift.
 
-Each run takes a lock in the database, so two runs never overlap.
+| Run | Variable, default | Does |
+|---|---|---|
+| `instagram` | `CRON_INSTAGRAM`, `*/5 * * * *` | create jobs for due approved items, advance up to `JOBS_PER_TICK` jobs: 4 on Cloudflare, 20 on Node (`packages/core/src/tick.ts`) |
+| `shorts` | `CRON_SHORTS`, `2,32 * * * *` | YouTube Shorts comments |
+| `upkeep` | `CRON_UPKEEP`, `7,22,37,52 * * * *` | the steps of `UPKEEP_STEPS`, in order: inbox scan per workspace media folder (`INBOX_WORKSPACES_PER_RUN` workspaces at a time: 3 on Cloudflare, 20 on Node), moving posted media aside, daily digest, 24 h results, metrics, followers, new comments, connections, media stores |
+
+- Runs due the same minute start side by side; each takes its own lock in the database, so two runs of one name never
+  overlap. They share one invocation, so each gets `floor(limit / runs)` of a finite `RUN_SUBREQUESTS` (`runDue`) and
+  records `shared: true` in `run_last:<name>`. A minute with nothing due makes no database call (Workers cap D1
+  queries per invocation).
+- Upkeep yields the minute (`upkeepDue`, from the expressions only, no state): it runs at minute M when it matches M
+  and no tick is due at M; or when it matched M−1, a tick was due at M−1 and none is at M (it moved one minute, with
+  the whole limit). When a tick is due both in its minute and the next, it runs in its own minute, sharing it. The
+  dashboard's warning (`schedulerRuns`) follows the same rule: tick with tick on any shared minute, upkeep only when
+  it can't move.
+- `runDue` writes the schedules it used to the `schedules` settings row, and each run writes `run_last:<name>` (when,
+  calls used, the limit, the steps stopped, a refused `RUN_SUBREQUESTS`, whether the limit was split): the `bongsu` Worker serves the dashboard and
+  can't read the cron Worker's variables.
+- The publishing runs' lock and deadline follow the run's shortest interval (`lockSeconds`); past the deadline a run
+  starts no more jobs (uploads or others), so its work ends within the lock; the wait for Instagram's processing is a
+  time (`MAX_POLL_S`, 2 h from the first poll), not a count of runs.
+- An invalid `CRON_*`: Node refuses to start; Cloudflare logs it each minute and skips only that run.
+
+### The run budget
+
+`RUN_SUBREQUESTS` (50 on Cloudflare, `unlimited` on Node) bounds the `fetch` calls of one run
+(`packages/core/src/budget.ts`, `runBudget(limit, fetcher)`). The run's `fetch` counts every call and refuses one
+past the limit with `BudgetSpent` before sending it.
+
+- `SUBREQUESTS_KEPT` (6) is the reserve for the end of a run (notes, the sweep): the tick's upload gate leaves it, and
+  the upkeep steps' shares leave it out.
+- Upkeep: `calls.step(name, keepForLater)` gives each step, when it starts, what is left less the reserve less one
+  unit of work for each later step (`UPKEEP_UNIT_CALLS`, each step's `*_UNIT_CALLS`). Unused calls carry forward; the
+  per-step caps still bound each step. A step checks `canAfford(n)` before each unit and stops cleanly; a
+  `BudgetSpent` escaping it is logged like any step failure and the next step runs. The notifications (and mail) a
+  step sends about its work go through `deps.noteFetch`, the run's own fetch, so they are paid from the reserve: a
+  step that spent its share still tells the owner. The daily digest is the exception: its message is its work, paid
+  from its share (`DIGEST_UNIT_CALLS`).
+- The tick: a `BudgetSpent` leaves the job for the next run with no attempt counted; a Shorts comment refused this
+  way is re-armed for the next Shorts run; the sweep waits for a run that didn't spend its calls and whose deadline
+  hasn't passed.
+- D1 queries are capped per invocation too and aren't counted here: the steps keep their own query bounds
+  (`ACCOUNT_BACKFILL_PER_RUN`), and the cap is to be measured on the first real deployment (#58).
 
 ## How a Reel goes out
 
