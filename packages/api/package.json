@@ -13,8 +13,8 @@
   },
   "dependencies": {
     "@bongsu/core": "workspace:*",
-    "@simplewebauthn/server": "14.0.3",
-    "hono": "4.13.14"
+    "@simplewebauthn/server": "14.1.0",
+    "hono": "4.13.18"
   },
   "devDependencies": {
     "typescript": "7.0.2"
