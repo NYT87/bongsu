@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -10,4 +11,6 @@ export default defineConfig({
   plugins: [react()],
   build: { outDir: "../web/dist/dashboard", emptyOutDir: true, sourcemap: false },
   server: { proxy: { "/admin-api": api, "/app-api": api } },
+  // Component tests render the pages against a faked fetch (test/fake-api.ts), in a DOM.
+  test: { environment: "happy-dom" },
 });
