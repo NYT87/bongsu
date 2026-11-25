@@ -117,7 +117,8 @@ const unix = (t?: string) => (t ? Math.floor(Date.parse(t) / 1000) : 0);
 const stem = (n: string) => n.replace(/\.[^.]+$/, "");
 
 /** Workspaces scanned per run: the INBOX_WORKSPACES_PER_RUN variable when it is a whole number from 1 (at most
- *  INBOX_WORKSPACES_PER_RUN_MAX), else the default for Cloudflare's free plan. Node sets its own (apps/node/src/env.ts). */
+ *  INBOX_WORKSPACES_PER_RUN_MAX), else the runtime's default (INBOX_WORKSPACES_PER_RUN_DEFAULT: Node's 20), else
+ *  Cloudflare's free-plan 3. */
 export function inboxWorkspacesPerRun(
   env: Pick<Env, "INBOX_WORKSPACES_PER_RUN" | "INBOX_WORKSPACES_PER_RUN_DEFAULT">,
 ): number {

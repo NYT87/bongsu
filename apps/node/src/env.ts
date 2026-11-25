@@ -24,8 +24,8 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
     VAPID_PUBLIC_KEY: vars.VAPID_PUBLIC_KEY ?? "",
     VAPID_SUBJECT: vars.VAPID_SUBJECT ?? "",
     MEDIA_SIGNING_KEY: vars.MEDIA_SIGNING_KEY ?? "",
-    // no per-invocation subrequest limit here, unlike Cloudflare's free plan: more jobs a tick
-    // Node's own limits: what an unset or invalid JOBS_PER_TICK / INBOX_WORKSPACES_PER_RUN falls back to
+    // no per-invocation call limit here, unlike Cloudflare's free plan: Node's own, larger limits are what an unset or
+    // invalid JOBS_PER_TICK / INBOX_WORKSPACES_PER_RUN falls back to
     JOBS_PER_TICK: vars.JOBS_PER_TICK,
     JOBS_PER_TICK_DEFAULT: String(NODE_JOBS_PER_TICK),
     // no per-invocation call limit either; also what an invalid RUN_SUBREQUESTS falls back to

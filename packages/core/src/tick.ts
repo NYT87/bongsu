@@ -422,7 +422,7 @@ export function isUploadStep(job: Pick<JobRow, "state">, p: Pick<Payload, "step"
 }
 
 /** The jobs a tick advances: the JOBS_PER_TICK variable when it is a whole number from 1 (at most
- *  JOBS_PER_TICK_MAX), else the default for Cloudflare's free plan. Node sets its own default (apps/node/src/env.ts). */
+ *  JOBS_PER_TICK_MAX), else the runtime's default (JOBS_PER_TICK_DEFAULT: Node's 20), else Cloudflare's free-plan 4. */
 export function jobsPerTick(env: Pick<Env, "JOBS_PER_TICK" | "JOBS_PER_TICK_DEFAULT">): number {
   return (
     countSetting(env.JOBS_PER_TICK, JOBS_PER_TICK_MAX) ??
