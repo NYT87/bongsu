@@ -37,7 +37,7 @@ import { dateLocale, type Key, setLocale, t } from "./i18n";
 import { takeWorkspaceParam } from "./workspace-link";
 import { changedSettings, YT_DESCRIPTION_MAX, YT_TAGS_MAX, YT_TITLE_MAX, ytBlocked } from "./youtube-form";
 
-type Me = {
+export type Me = {
   signedIn: boolean;
   /** The workspace's locale: the catalogue the app reads its text from. */
   locale: string;
@@ -61,7 +61,7 @@ type Me = {
   /** The person's own name (all workspaces), the one this workspace shows for them, and what it shows now. */
   you?: { name: string | null; emailName: string | null; displayName: string | null; shownAs: string | null } | null;
 };
-type Status = {
+export type Status = {
   dry_run: boolean;
   paused: boolean;
   /** Who paused it, as the workspace names them (null: unknown). */
@@ -815,18 +815,7 @@ function SignedIn({ me, hash, onRefresh }: { me: Me; hash: string; onRefresh: ()
               </a>
             </span>
           </header>
-          {shared.status.data?.paused && (
-            <div className="banner bad" role="status">
-              {ICON.pause}
-              <span>
-                <strong>{t("header.paused")}</strong>{" "}
-                {shared.status.data.paused_by
-                  ? t("header.pausedBy", { name: shared.status.data.paused_by })
-                  : t("header.pausedDetail")}
-              </span>
-              <a href="#/settings">{t("header.resume")}</a>
-            </div>
-          )}
+          {shared.status.data?.paused && <PausedBanner pausedBy={shared.status.data.paused_by} />}
         </div>
         <main>{page}</main>
         {picking && <WorkspaceSheet me={me} onClose={() => setPicking(false)} onSwitched={onRefresh} />}
@@ -863,6 +852,27 @@ function SignedIn({ me, hash, onRefresh }: { me: Me; hash: string; onRefresh: ()
   );
 }
 
+/** What an item's approval says: by whom and when while it still matches, else what changed since. */
+export function ApprovedText({ approved }: { approved: NonNullable<Item["approved"]> }) {
+  if (!approved.matches) return <>{approved.commentsOnly ? t("item.commentsChanged") : t("item.changed")}</>;
+  const when = utcToZone(approved.at);
+  return <>{approved.by ? t("item.approvedByAt", { name: approved.by, when }) : t("item.approvedAt", { when })}</>;
+}
+
+/** The banner under the header while the scheduler is paused: who paused it, when the workspace names them. */
+export function PausedBanner({ pausedBy }: { pausedBy?: string | null }) {
+  return (
+    <div className="banner bad" role="status">
+      {ICON.pause}
+      <span>
+        <strong>{t("header.paused")}</strong>{" "}
+        {pausedBy ? t("header.pausedBy", { name: pausedBy }) : t("header.pausedDetail")}
+      </span>
+      <a href="#/settings">{t("header.resume")}</a>
+    </div>
+  );
+}
+
 /** A workspace's icon, small and rounded; nothing for one without (no placeholder box). */
 function WsIcon({ url }: { url?: string | null }) {
   return url ? <img className="ws-icon" src={url} alt="" width={24} height={24} /> : null;
@@ -871,7 +881,7 @@ function WsIcon({ url }: { url?: string | null }) {
 /** The header's picker: the workspaces the person can open, with their role in each. Choosing one moves the app's
  *  session there (the dashboard's keeps its own) and opens its queue. A native modal dialog, docked to the bottom in
  *  the thumb zone: it brings the focus trap, Escape and the backdrop. */
-function WorkspaceSheet({ me, onClose, onSwitched }: { me: Me; onClose: () => void; onSwitched: () => void }) {
+export function WorkspaceSheet({ me, onClose, onSwitched }: { me: Me; onClose: () => void; onSwitched: () => void }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -2067,13 +2077,7 @@ function ItemPage({
       )}
       {item.approved && !item.failed && !done && (
         <p className={`notice ${item.approved.matches ? "ok" : "warn"}`}>
-          {item.approved.matches
-            ? item.approved.by
-              ? t("item.approvedByAt", { name: item.approved.by, when: utcToZone(item.approved.at) })
-              : t("item.approvedAt", { when: utcToZone(item.approved.at) })
-            : item.approved.commentsOnly
-              ? t("item.commentsChanged")
-              : t("item.changed")}
+          <ApprovedText approved={item.approved} />
         </p>
       )}
       {!item.posted && item.problems.length > 0 && (
@@ -5024,7 +5028,7 @@ function unblockHelp(): string {
 }
 
 /** Your name everywhere, and the name this workspace shows for you (empty clears either). Each field saves alone. */
-function YouCard({ me, onRefresh }: { me: Me; onRefresh: () => void }) {
+export function YouCard({ me, onRefresh }: { me: Me; onRefresh: () => void }) {
   const you = me.you;
   const [name, setName] = useState(you?.name ?? "");
   const [shown, setShown] = useState(you?.displayName ?? "");

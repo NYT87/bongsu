@@ -64,6 +64,9 @@ Before finishing a change: `pnpm check && pnpm typecheck && pnpm test` pass.
   files. `pnpm check-personal` runs the owner's local list.
 - **Tests with every change.** Unit tests in `packages/core/test`; anything touching the database, routes or the tick in
   `apps/cloudflare/test`, using the fake world instead of real services.
+  UI changes get a component test: `packages/web/test/*.test.tsx` (app) and `packages/dashboard/test/*.test.tsx`
+  (dashboard), rendered in happy-dom with `fetch` faked at the API boundary (`test/fake-api.ts`), no server. Export a
+  component for a test only when rendering it through the app or the dashboard is out of reach.
 - **Match the surrounding code:** naming, comment density (comments explain why), small functions, no new dependency
   without a reason.
 
