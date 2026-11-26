@@ -4,23 +4,20 @@ import { startAuthentication, startRegistration } from "@simplewebauthn/browser"
 import { type FormEvent, useCallback, useEffect, useState } from "react";
 import { APP_ONLY, api, manages, NAVIGATED, STATE_STALE, switchWorkspace } from "./api";
 import { Guide, GuideLink } from "./docs";
-import {
-  AcceptInvite,
-  Accounts,
-  Audit,
-  Connections,
-  Devices,
-  FirstWorkspace,
-  GetStarted,
-  Keys,
-  Media,
-  Members,
-  OAuthApps,
-  Overview,
-  Settings,
-  Videos,
-  Workspaces,
-} from "./pages";
+import { Accounts } from "./pages/Accounts";
+import { Audit } from "./pages/Audit";
+import { Connections } from "./pages/Connections";
+import { Devices } from "./pages/Devices";
+import { AcceptInvite, FirstWorkspace } from "./pages/FirstRun";
+import { GetStarted } from "./pages/GetStarted";
+import { Keys } from "./pages/Keys";
+import { Media } from "./pages/Media";
+import { Members } from "./pages/Members";
+import { OAuthApps } from "./pages/OAuthApps";
+import { Overview } from "./pages/Overview";
+import { Settings } from "./pages/Settings";
+import { Videos } from "./pages/Videos";
+import { Workspaces } from "./pages/Workspaces";
 import { Brand, Card, Field, Loading, SecretOnce, Toasts } from "./ui";
 
 export interface State {

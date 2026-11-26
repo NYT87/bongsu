@@ -86,7 +86,7 @@ keys as base64url. Only web-standard APIs (`fetch`, `Response`, `crypto.subtle`)
 2. Add its kind to `STORE_KINDS` and `buildStore()` in `media/index.ts`, with its settings and credentials from the
    row (and its kind to the `media_store.kind` values, a schema migration). A store that needs Node APIs stays out of
    core: the runtime registers it (`registerStore`, as `apps/node` does for `local`). The dashboard's Media page needs
-   a form for its settings (`packages/dashboard/src/pages.tsx`) and `manage.ts` a check of what the form sends.
+   a form for its settings (`packages/dashboard/src/pages/Media.tsx`) and `manage.ts` a check of what the form sends.
 3. Run the conformance suite against it. It's framework-free, so any test runner calls it:
 
    ```ts

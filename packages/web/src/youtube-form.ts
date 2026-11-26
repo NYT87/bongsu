@@ -1,4 +1,4 @@
-// What a YouTube video's form sends for its settings (kept apart from App.tsx so it can be tested on its own).
+// What a YouTube video's form sends for its settings (kept apart from the screens so it can be tested on its own).
 import { LANG, tagsLength } from "@bongsu/core/formats/youtube-texts";
 import type { YouTubeSettings, YouTubeTexts } from "./api";
 

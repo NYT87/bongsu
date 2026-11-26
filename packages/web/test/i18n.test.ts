@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
-import appSource from "../src/App.tsx?raw";
-import chartSource from "../src/Chart.tsx?raw";
 import { dateLocale, en, type Key, setLocale, t } from "../src/i18n";
 
 afterEach(() => setLocale("en"));
+
+// every screen's source (App.tsx is the shell, each screen has its own file)
+const sources = import.meta.glob("../src/*.tsx", { query: "?raw", import: "default", eager: true }) as Record<
+  string,
+  string
+>;
+const appSource = Object.values(sources).join("\n");
 
 describe("t", () => {
   it("reads the English catalogue", () => {
@@ -41,13 +46,13 @@ describe("setLocale", () => {
 // Every string of the app goes through t() (#37): what is left in the sources is code, example values and names.
 
 describe("the app's text", () => {
-  it("has no JSX text of plain English words left in App.tsx", () => {
+  it("has no JSX text of plain English words left in the screens", () => {
     const left = [...appSource.matchAll(/>\s*([A-Z][a-z]+(?:\s+[a-z]+)+[.:…]?)\s*</g)].map((m) => m[1]);
     expect(left).toEqual([]);
   });
 
   it("uses only keys the English catalogue has", () => {
-    const used = [...`${appSource}\n${chartSource}`.matchAll(/\bt\("([a-zA-Z0-9_.]+)"/g)].map((m) => m[1]);
+    const used = [...appSource.matchAll(/\bt\("([a-zA-Z0-9_.]+)"/g)].map((m) => m[1]);
     expect(used.length).toBeGreaterThan(300);
     expect(used.filter((k) => !(k in en))).toEqual([]);
   });
