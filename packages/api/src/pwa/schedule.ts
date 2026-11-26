@@ -1,6 +1,7 @@
 // Draft → scheduled item: the owner picks the account, date and time in the app, edits
 // the texts, and the draft becomes a plan item whose texts and media live in D1 (content = 'db'). It still needs
 // the usual passkey approval (same fingerprints: text sha256 + the media's checksums) before the scheduler publishes it.
+
 import { listAccounts } from "@bongsu/core/accounts";
 import {
   dueFrom,
@@ -16,6 +17,7 @@ import {
   youtubeTextsStatement,
 } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
+import { cutGraphemes } from "@bongsu/core/formats/graphemes";
 import { checkTexts, parseTexts, type YouTubeTexts } from "@bongsu/core/formats/youtube-texts";
 import { mediaStores } from "@bongsu/core/media/index";
 import { assertOwns, MediaError } from "@bongsu/core/media/owns";
@@ -36,7 +38,7 @@ export class ScheduleError extends Error {
 
 const NAME = /^[A-Za-z0-9_.-]{1,80}$/;
 const text = (v: unknown, max: number) =>
-  typeof v === "string" && v.trim() ? v.replace(/\r\n/g, "\n").trim().slice(0, max) : null;
+  typeof v === "string" && v.trim() ? cutGraphemes(v.replace(/\r\n/g, "\n").trim(), max) : null;
 
 /** A video's texts, checked for the platform (a TextsError is the caller's mistake: 400). */
 function checked(p: Platform, raw: unknown): YouTubeTexts | null {

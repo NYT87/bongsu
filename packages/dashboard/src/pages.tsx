@@ -349,9 +349,11 @@ export function Connections({ go }: Props) {
                       <div className="muted small">
                         {k.kind === "composio"
                           ? "Paste the connected-account id from Composio."
-                          : ready
-                            ? "Sign in with the account and allow access."
-                            : `Needs your ${APP_NAME[k.app ?? ""] ?? "OAuth app"}: `}
+                          : k.kind === "token"
+                            ? "Paste the handle and an app password."
+                            : ready
+                              ? "Sign in with the account and allow access."
+                              : `Needs your ${APP_NAME[k.app ?? ""] ?? "OAuth app"}: `}
                         {!ready && (
                           <button type="button" className="link inline" onClick={() => go("apps")}>
                             add it
@@ -364,7 +366,11 @@ export function Connections({ go }: Props) {
                     <div className="row">
                       {k.canPaste && (
                         <button type="button" onClick={() => setPaste(k)}>
-                          {k.kind === "composio" ? "Paste the id" : "Paste a token"}
+                          {k.kind === "composio"
+                            ? "Paste the id"
+                            : k.kind === "token"
+                              ? "Paste the app password"
+                              : "Paste a token"}
                         </button>
                       )}
                       {k.kind === "oauth2" && (
@@ -437,11 +443,19 @@ function PasteForm({
   return (
     <form onSubmit={submit} className="inset">
       <Field
-        label={composio ? "Connected-account id" : `${kind.label}: long-lived token`}
+        label={
+          composio
+            ? "Connected-account id"
+            : kind.kind === "token"
+              ? `${kind.label}: handle:app-password`
+              : `${kind.label}: long-lived token`
+        }
         help={
           composio
             ? "From Composio's dashboard (ca_…). Only the id is kept; Composio holds the login."
-            : "Stored encrypted. Bongsu renews it before its 60 days run out."
+            : kind.kind === "token"
+              ? "Like demo_travel.bsky.social:aaaa-bbbb-cccc-dddd. Stored encrypted; Bongsu checks it weekly."
+              : "Stored encrypted. Bongsu renews it before its 60 days run out."
         }
         error={err}
       >

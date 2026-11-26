@@ -4,6 +4,7 @@
 import { findAccount, trialCapable, trialDefaultOn } from "./accounts";
 import type { Db } from "./db";
 import type { Approval, MediaRef } from "./formats/approved";
+import { graphemeCount } from "./formats/graphemes";
 import { TextsError } from "./formats/texts";
 import {
   parseInstant,
@@ -224,7 +225,9 @@ export async function writeTexts(
 ) {
   const txt = (v: unknown, max: number) => {
     const s = v == null ? "" : String(v).replace(/\r\n/g, "\n").trim();
-    if (s.length > max) throw new TextsError(`too long: ${s.length} characters (at most ${max})`);
+    // UTF-16 units first (cheap, and an upper bound); only a text over the cap is counted as readers see it
+    const n = s.length > max ? graphemeCount(s) : s.length;
+    if (n > max) throw new TextsError(`too long: ${n} characters (at most ${max})`);
     return s || null;
   };
   const sets: string[] = [],

@@ -15,6 +15,8 @@ export interface Limits {
   hashtagsMax?: number;
   /** Characters in one alt text. */
   altMax?: number;
+  /** Bytes in one image the network takes (Bluesky's blob limit); an image over it is refused at approval. */
+  imageBytesMax?: number;
 }
 
 export interface Features {

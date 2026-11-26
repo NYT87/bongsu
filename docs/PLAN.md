@@ -825,7 +825,7 @@ New networks on the 2.10 interfaces: a platform file, a provider, its fake, a do
 
 - [ ] **Threads** (`threads-graph`): text, image, video and carousel posts, replies, insights; free API, same Meta app
       model as Instagram.
-- [ ] **Bluesky** (`bluesky-atproto`): text and image posts (app password or OAuth); free, no review.
+- [x] **Bluesky** (`bluesky-atproto`): text and image posts (app password or OAuth); free, no review. Done with an app password, 300 graphemes, images up to 1 MB refused at approval; OAuth, video and an empty caption are left out.
 - [ ] **TikTok** (`tiktok-content`): video posts through the Content Posting API (upload → status → publish). Posts stay
       private until the app passes TikTok's audit; document it.
 - [ ] **X** (`x-api`): posts with media, threads as a second comment chain; needs a paid API tier beyond the free
