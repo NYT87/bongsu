@@ -938,7 +938,7 @@ export async function seedAccounts(db: Env["DB"] = env.DB) {
   await setWorkspaceSettings(db, "default", { timezone: "Asia/Seoul", digestHour: 8 }, at);
 }
 
-export const TEST_ENCRYPTION_KEY = "test-encryption-key-0123456789";
+export const TEST_ENCRYPTION_KEY = "test-encryption-key-0123456789"; // gitleaks:allow (a test constant)
 
 /** The tests' environment. `NOTIFY_URL` (test-only: the Worker reads topics from the database) sets the default
  *  workspace's ntfy topic, https://ntfy.test/topic unless given (undefined: none), where `w.notifications` collects. */

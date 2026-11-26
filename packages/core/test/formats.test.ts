@@ -89,7 +89,7 @@ describe("approval fingerprints", () => {
   });
 });
 
-describe("caption lint (ported from shorts-check caption.py)", () => {
+describe("caption lint", () => {
   it("matches the reference lint on synthetic captions and edge cases", async () => {
     const cases = (await import("./fixtures/caption_lint.json")).default as {
       file: string;

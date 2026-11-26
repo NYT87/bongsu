@@ -1001,7 +1001,7 @@ export async function planRemove(c: OpCtx, key: string) {
   return { key, removed: true };
 }
 
-/** Record a post made by hand (ig.py, the app), so the scheduler never publishes it again. */
+/** Record a post made by hand (in Instagram itself), so the scheduler never publishes it again. */
 export async function recordManualPost(c: OpCtx, b: Record<string, unknown>) {
   const tz = await zoneOf(c);
   const key = String(b.key ?? "");
@@ -1066,7 +1066,7 @@ export async function shortsAdd(c: OpCtx, b: Record<string, unknown>) {
   };
 }
 
-/** Record a Shorts comment posted by hand (yt.py), so the scheduler doesn't comment again. */
+/** Record a Shorts comment posted by hand (in YouTube itself), so the scheduler doesn't comment again. */
 export async function recordManualComment(c: OpCtx, b: Record<string, unknown>) {
   const tz = await zoneOf(c);
   const video = String(b.video_id ?? "");
