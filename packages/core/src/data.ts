@@ -539,12 +539,17 @@ export async function addApproval(
 export const isPosted = async (db: Db, key: string) =>
   !!(await db.prepare("SELECT 1 FROM posted WHERE item_key = ?1").bind(key).first());
 
-/** Whether another workspace left a posted record or a job under this key. Keys are shared by every workspace and
- *  those rows are looked up by key alone, so a new item under it would be skipped or refused without a word (#91). */
+/** Whether another workspace has, or ever had, an item under this key: planned, approved (an approval names its
+ *  account), recorded as posted, or left a job. Keys are shared by every workspace and those rows are looked up by key
+ *  alone, so a new item under it would be skipped or refused without a word (#91), or its notes would name the other
+ *  workspace's account (#100). The answer says only that the name is taken. */
 export const keyTakenElsewhere = async (db: Db, key: string, workspaceId: string) =>
   !!(await db
     .prepare(
-      `SELECT 1 FROM posted WHERE item_key = ?1 AND workspace_id != ?3
+      `SELECT 1 FROM plan_items WHERE item_key = ?1 AND workspace_id != ?3
+       UNION ALL SELECT 1 FROM approvals ap JOIN accounts ac ON ac.id = ap.account
+         WHERE ap.item_key = ?1 AND ac.workspace_id != ?3
+       UNION ALL SELECT 1 FROM posted WHERE item_key = ?1 AND workspace_id != ?3
        UNION ALL SELECT 1 FROM jobs WHERE item_key IN (?1, ?2) AND workspace_id != ?3 LIMIT 1`,
     )
     .bind(key, `trial:${key}`, workspaceId)

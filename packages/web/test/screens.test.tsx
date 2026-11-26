@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApprovedText, type Me, PausedBanner, WorkspaceSheet, YouCard } from "../src/App";
+import { ApprovedText, type Me, PausedBanner, TrialCopy, WorkspaceSheet, YouCard } from "../src/App";
 import { fakeApi } from "./fake-api";
 
 afterEach(() => {
@@ -112,6 +112,22 @@ describe("the workspace picker", () => {
     render(<WorkspaceSheet me={me} onClose={() => {}} onSwitched={() => {}} />);
     await userEvent.setup().click(within(row("Demo Running")).getByRole("button"));
     expect((await screen.findByRole("alert")).textContent).toBe("You're no longer in that workspace.");
+  });
+});
+
+describe("the Trial Reel copy", () => {
+  const trial = { on: true, byDefault: true, explicit: false, permalink: null, at: null, results: null };
+
+  it("a copy closed without going out says it wasn't posted and why, not that it's still posting (#99)", () => {
+    const { container, rerender } = render(
+      <TrialCopy trial={{ ...trial, state: "done", error: "trial copy switched off" }} />,
+    );
+    expect(container.textContent).toBe("Trial Reel not posted: trial copy switched off");
+    expect(container.querySelector(".pill.bad")).toBeNull(); // nothing went wrong
+    rerender(<TrialCopy trial={{ ...trial, state: "pending", error: null }} />);
+    expect(container.textContent).toBe("Trial Reel posting the trial copy…");
+    rerender(<TrialCopy trial={{ ...trial, state: "failed", error: "Instagram busy" }} />);
+    expect(container.querySelector(".pill.bad")).toBeTruthy();
   });
 });
 

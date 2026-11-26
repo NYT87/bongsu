@@ -7,6 +7,7 @@ import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, markVerified, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
 import { encryptSecret } from "@bongsu/core/crypto";
+import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { iconByHash, removeIcon, setIcon } from "@bongsu/core/icon";
@@ -307,6 +308,29 @@ describe("an item key another workspace left rows under (#91)", () => {
     expect((await call(KEY_A, "/v1/plan", plan)).status).toBe(409);
     // B's own key is still B's to plan again
     expect((await call(KEY_B, "/v1/plan", { ...plan, account: "b_shop" })).status).toBe(200);
+  });
+
+  it("says only that the name is taken: not whether, or by whom, it's planned elsewhere (#100)", async () => {
+    expect((await call(KEY_A, "/v1/plan", plan)).status).toBe(200);
+    const r = await call(KEY_B, "/v1/plan", { ...plan, account: "b_shop" });
+    expect([r.status, r.json.error]).toEqual([409, "that name is taken: pick another"]);
+    // A's own clash still names its item, which A can see
+    expect((await call(KEY_A, "/v1/plan", plan)).json.error).toBe(`${key} is already planned (use plan_update)`);
+  });
+
+  it("can't be planned: an approval A gave for an item it then removed (its notes would name A's account)", async () => {
+    await addApproval(env.DB, {
+      key,
+      account: "demo_travel",
+      dueAt: 1,
+      captionSha256: "a".repeat(64),
+      commentSha256: null,
+      altSha256: null,
+      media: [],
+      approvedAt: "2026-10-01T00:00:00Z",
+      approvedBy: "owner@app",
+    });
+    expect((await call(KEY_B, "/v1/plan", { ...plan, account: "b_shop" })).status).toBe(409);
   });
 });
 
