@@ -87,6 +87,9 @@ importers:
       '@electric-sql/pglite-socket':
         specifier: 0.2.20
         version: 0.2.20(@electric-sql/pglite-age@0.0.18(@electric-sql/pglite@0.5.17))(@electric-sql/pglite-pg_hashids@0.0.18(@electric-sql/pglite@0.5.17))(@electric-sql/pglite-pg_ivm@0.0.18(@electric-sql/pglite@0.5.17))(@electric-sql/pglite-pg_textsearch@0.0.19(@electric-sql/pglite@0.5.17))(@electric-sql/pglite-pg_uuidv7@0.0.18(@electric-sql/pglite@0.5.17))(@electric-sql/pglite-pgtap@0.0.18(@electric-sql/pglite@0.5.17))(@electric-sql/pglite-pgvector@0.0.18(@electric-sql/pglite@0.5.17))(@electric-sql/pglite@0.5.17)
+      '@playwright/test':
+        specifier: 1.65.1
+        version: 1.65.1
       '@types/better-sqlite3':
         specifier: 9.6.0
         version: 9.6.0
@@ -1278,6 +1281,11 @@ packages:
     resolution: {integrity: sha512-adpW58ySPQMOUPv8pTKT3RIyCFqfUFt8X05ukPdtkQToXDVr8dMtxuenik1yx8tNFTbpApWsM/Hi5SzlIx48+Q==}
     engines: {node: '>=20.0.0'}
 
+  '@playwright/test@1.65.1':
+    resolution: {integrity: sha512-y+NCIRm2LvY4slUVWvGh1nujJ8RF/hEisIsq2mtUPgdQC4L701bq5hZGMhrpeXjACvwvO9tj5dJqhvM6TP9lbw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   '@pnpm/deps.graph-sequencer@1100.0.1':
     resolution: {integrity: sha512-pOr5+q1fLYKwFN3LAJuGZEnfXDcQ73zqgDHMtGy+K+uIoUqyY+6MeDCWFwfu+4EFuq76I5EPFofoNAI+Bmmq4A==}
     engines: {node: '>=22.13'}
@@ -2250,6 +2258,16 @@ packages:
   picomatch@4.0.7:
     resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
     engines: {node: '>=12'}
+
+  playwright-core@1.65.1:
+    resolution: {integrity: sha512-hqPpz7blSMPxWVdoeE1yiBSzXsKiVOd2k+kjCvmUywD2GPO2Dd9HfcWnq9NN0GHbNZDFgZ9JfBFr+X5/BLo0qw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.65.1:
+    resolution: {integrity: sha512-vJ1FuoOrNwOKHUIVEvSt3jT1L+wjjDpwhwIstKtfvTh8XIG4FG4bIFuvNdMxi81LGfAhUgUZleVFaOLY4RIUUw==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   postcss@8.5.33:
     resolution: {integrity: sha512-RVHEU9/Pp1Fnjr/MpAJsZoADukCKhfIi15OunEYiGktIkYLkPVvC1sioWolGDS7XByMTx9m/IGbro0Js13zhnQ==}
@@ -3446,6 +3464,10 @@ snapshots:
       tslib: 2.9.1
       tsyringe: 4.10.0
 
+  '@playwright/test@1.65.1':
+    dependencies:
+      playwright: 1.65.1
+
   '@pnpm/deps.graph-sequencer@1100.0.1': {}
 
   '@poppinss/colors@4.1.6':
@@ -4273,6 +4295,12 @@ snapshots:
   picocolors@1.1.1: {}
 
   picomatch@4.0.7: {}
+
+  playwright-core@1.65.1: {}
+
+  playwright@1.65.1:
+    dependencies:
+      playwright-core: 1.65.1
 
   postcss@8.5.33:
     dependencies:

@@ -10,7 +10,8 @@
     "start": "node dist/server.mjs",
     "migrate": "node dist/server.mjs migrate",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "@bongsu/api": "workspace:*",
@@ -24,6 +25,7 @@
   "devDependencies": {
     "@electric-sql/pglite": "0.5.17",
     "@electric-sql/pglite-socket": "0.2.20",
+    "@playwright/test": "1.65.1",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "22.20.5",
     "@types/nodemailer": "8.0.2",
