@@ -6,11 +6,11 @@ import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
 import { addMember, archiveWorkspace, createWorkspace } from "@bongsu/core/people";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, testEnv, World } from "./world";
+import { clearPlan, testEnv, upsertAccount, World } from "./world";
 
 const nowS = () => Math.floor(Date.now() / 1000);
 const fake: Verifiers = {

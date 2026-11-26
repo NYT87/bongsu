@@ -20,7 +20,7 @@ as Workers assets.
 
 ## Cron runs
 
-The cron Worker has one trigger, `* * * * *`; Node has one node-cron task at the same rate. Each minute both call
+The cron Worker has one trigger, `* * * * *`; Node has one timer at the same rate. Each minute both call
 `runDue` (`packages/core/src/schedules.ts`), which starts the runs whose schedule matches that minute. A schedule is a
 `CRON_*` variable or its default, parsed by core's own matcher (`packages/core/src/cron.ts`, five fields, UTC), so the
 two runtimes can't drift.

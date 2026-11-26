@@ -13,7 +13,7 @@ videos and Shorts comments, posted on time after the owner approves them with a 
 | `packages/web` | The PWA (React + Vite). `PRODUCT.md` and `DESIGN.md` describe it; follow them for UI work |
 | `packages/cli` | The `bongsu` command (`login`, `queue`, `texts`, `approve`, `export`, `mcp`, `schema`, `deploy-secrets`): talks to `/v1` over HTTP only, bundled with esbuild; `site/docs/cli.md` |
 | `apps/cloudflare` | The two Workers (`src/index.ts`, `src/cron.ts`), wrangler configs, integration tests (`test/`, fake world in `test/world.ts`) |
-| `apps/node` | The same app on Node (`src/main.ts`): the better-sqlite3 `Db` adapter, migrations, node-cron, static files, the `local` media store and `smtp` mailer; bundled with esbuild for the `Dockerfile` |
+| `apps/node` | The same app on Node (`src/main.ts`): the better-sqlite3 `Db` adapter, migrations, the every-minute timer, static files, the `local` media store and `smtp` mailer; bundled with esbuild for the `Dockerfile` |
 | `packages/schema` | The neutral schema (`src/migrations/`): every table once, with the SQL for each database generated from it (`pnpm --filter @bongsu/schema generate`); `docs/schema.md` is the readable version |
 | `migrations/` | Generated and historical SQL per database: `sqlite/` (D1 and Node; 0001–0009 hand-written, later ones generated), `postgres/` (generated) |
 | `site/docs/` | The public guides, built into the site and the dashboard (`nav.json` orders them) |

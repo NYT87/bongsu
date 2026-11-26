@@ -376,8 +376,6 @@ export const sameSnapshot = (a: Snapshot, b: Snapshot) => JSON.stringify(a) === 
 /** Records the approval in D1: by `userId`, through `approvedBy` (owner@app: a passkey in the app; owner@cli: a CLI token). */
 export async function writeApproval(
   env: Env,
-  _fetcher: typeof fetch,
-  _r: Resolved,
   s: Snapshot,
   now: Date,
   userId: string,

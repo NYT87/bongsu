@@ -4,7 +4,7 @@ import { env, exports } from "cloudflare:workers";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import { buildDigest } from "@bongsu/core/digest";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
@@ -21,6 +21,7 @@ import {
   planItem,
   seedReel,
   testEnv,
+  upsertAccount,
   World,
 } from "./world";
 

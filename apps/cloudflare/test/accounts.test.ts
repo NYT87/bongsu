@@ -9,14 +9,13 @@ import {
   listAccounts,
   setAccountSettings,
   trialDefaultOn,
-  upsertAccount,
   upsertConnection,
 } from "@bongsu/core/accounts";
 import { encryptSecret } from "@bongsu/core/crypto";
 import { trialDefault } from "@bongsu/core/data";
 import { tick } from "@bongsu/core/tick";
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, seedReel, testEnv, World } from "./world";
+import { clearPlan, seedReel, testEnv, upsertAccount, World } from "./world";
 
 beforeEach(async () => {
   await clearPlan();

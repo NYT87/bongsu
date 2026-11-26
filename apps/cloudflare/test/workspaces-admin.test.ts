@@ -7,7 +7,7 @@ import { adminRoutes, FRESH_S } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, setSessionWorkspace } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import { dailyDigest } from "@bongsu/core/digest";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
@@ -15,7 +15,7 @@ import { createWorkspace } from "@bongsu/core/people";
 import { tick } from "@bongsu/core/tick";
 import { setMediaFolder, setWorkspaceSettings, workspaceSettings } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { approve, clearPlan, copyText, igHappyPath, MD5, planItem, testEnv, World } from "./world";
+import { approve, clearPlan, copyText, igHappyPath, MD5, planItem, testEnv, upsertAccount, World } from "./world";
 
 const AT = new Date("2026-10-20T09:32:00Z"); // 18:32 KST: B's Reel below is due
 const later = (min: number) => new Date(AT.getTime() + min * 60_000);

@@ -4,7 +4,6 @@ import { env } from "cloudflare:workers";
 import { ApiError, youtubeReschedule } from "@bongsu/api/agent/ops";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
-import { upsertAccount } from "@bongsu/core/accounts";
 import { calendar, channelUploads } from "@bongsu/core/calendar";
 import { addApproval, latestApprovals } from "@bongsu/core/data";
 import type { Db, DbStatement } from "@bongsu/core/db";
@@ -18,7 +17,7 @@ import { moveRelease, releaseStatus } from "@bongsu/core/release";
 import { tick } from "@bongsu/core/tick";
 import { bongsuVideos } from "@bongsu/core/youtube-videos";
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, serveLinks, testEnv, World } from "./world";
+import { clearPlan, serveLinks, testEnv, upsertAccount, World } from "./world";
 
 const KEY = "post:20261020_DEMO/clip";
 const MANUAL = "man-1";
