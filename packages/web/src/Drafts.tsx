@@ -167,7 +167,8 @@ export function FreeSlots({ slots, onPick }: { slots: Slot[]; onPick: (s: Slot) 
   );
 }
 
-/** Turn a draft into a scheduled item: account, date, time, name and texts; approval follows on the item page. */
+/** Turn a draft into scheduled items: one or several accounts (cross-posting: an item each), date, time, name and
+ *  texts; approval follows on each item's page. */
 function ScheduleForm({
   d,
   accounts,
@@ -180,7 +181,9 @@ function ScheduleForm({
   onCancel: () => void;
 }) {
   const kind = d.kind === "reel" ? "reel" : "post";
-  const [account, setAccount] = useState(accounts.includes(d.account) ? d.account : accounts[0]);
+  const [picked, setPicked] = useState([accounts.includes(d.account) ? d.account : accounts[0]]);
+  const chosen = accounts.filter((a) => picked.includes(a)); // in the list's order
+  const several = chosen.length > 1;
   const [date, setDate] = useState(zoneShift(1));
   const [time, setTime] = useState(kind === "reel" ? "18:00" : "19:00");
   const [name, setName] = useState(d.payload.name ?? d.id);
@@ -189,7 +192,7 @@ function ScheduleForm({
   const [story, setStory] = useState(false);
   // a YouTube channel takes a video with its title, settings and languages; its settings start at the channel's
   // defaults with the draft's own on top, and only what the form changes is sent
-  const channel = info[account]?.youtube;
+  const channel = chosen.map((a) => info[a]?.youtube).find(Boolean);
   const tube = kind === "reel" && !!channel;
   const start: YtState | null = channel
     ? {
@@ -213,9 +216,10 @@ function ScheduleForm({
       onSubmit={async (texts, yt) => {
         setSlots([]);
         const { alt: _alt, ...words } = texts;
+        if (!chosen.length) throw new Error(t("schedule.pickAccount"));
         try {
-          const r = await api<{ key: string }>(`drafts/${d.id}/schedule`, {
-            account,
+          const r = await api<{ key: string; keys?: string[]; shortened?: string[] }>(`drafts/${d.id}/schedule`, {
+            ...(several ? { accounts: chosen } : { account: chosen[0] }),
             date,
             time,
             name,
@@ -229,7 +233,10 @@ function ScheduleForm({
                 ? { format: "story" }
                 : texts),
           });
-          location.hash = `#/item/${encodeURIComponent(r.key)}`;
+          // several: the first item whose caption was cut for its network (so the cut is seen), else the queue
+          const cut = r.shortened?.[0];
+          const show = several ? r.keys?.[chosen.indexOf(cut ?? "")] : r.key;
+          location.hash = show ? `#/item/${encodeURIComponent(show)}` : "#/queue";
         } catch (e) {
           setSlots(slotsOf(e));
           throw e;
@@ -246,16 +253,20 @@ function ScheduleForm({
           </button>
         </div>
       )}
-      <label>
-        {t("schedule.account")}
-        <select value={account} onChange={(e) => setAccount(e.target.value)}>
-          {accounts.map((a) => (
-            <option key={a} value={a}>
-              @{a}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="picks" role="group" aria-label={t("schedule.accounts")}>
+        <span className="small muted">{t("schedule.accounts")}</span>
+        {accounts.map((a) => (
+          <button
+            key={a}
+            type="button"
+            aria-pressed={picked.includes(a)}
+            onClick={() => setPicked(picked.includes(a) ? picked.filter((x) => x !== a) : [...picked, a])}
+          >
+            @{a}
+          </button>
+        ))}
+      </div>
+      {several && <p className="small muted">{t("schedule.crossHint")}</p>}
       <div className="row">
         <label>
           {t("common.dateIn", { zone: zoneLabel() })}
@@ -278,7 +289,7 @@ function ScheduleForm({
         {t("name.name")}{" "}
         <span className="muted small">
           {t("schedule.itemKey", {
-            key: `${story || kind === "post" ? "post" : "reel"}:${d.payload.folder ?? "drafts"}/${name}`,
+            key: `${story || kind === "post" ? "post" : "reel"}:${d.payload.folder ?? "drafts"}/${name}${several ? ".<account>" : ""}`,
           })}
         </span>
         <input value={name} onChange={(e) => setName(e.target.value)} />

@@ -92,6 +92,12 @@ Scheduling asks for the account, the date and time in your zone, a name, and the
 **Story**. If another item already holds that hour on the account, you are told, and free hours appear as buttons to
 pick. **Schedule** opens the item's page, where you approve it. Nothing in Drafts is published before that.
 
+**Several accounts at once (cross-posting):** tap more than one account. Each gets its own item, named after the draft
+plus the account (`photo.demo_running`), and each is approved on its own. The texts are the same for all, except that a
+caption longer than a network allows is shortened for that account: Schedule then opens that item so you can check or
+rewrite it, else the queue. If one account can't take the draft (too many files for that network, its hour already
+taken), nothing is scheduled and you're told which account it was.
+
 **New draft** adds one from the phone: choose files, a project, a name and the texts, then **Upload and create
 draft**. The files go from the phone straight to Drive, so the button only appears when uploads are set up (see
 [Google Drive](drive.md)). They land in the workspace's media folder, under `_uploads/`, and the page names the folder to drop files in for the inbox.

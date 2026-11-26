@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
-import { setAccountSettings } from "@bongsu/core/accounts";
+import { setAccountSettings, upsertConnection } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { tick } from "@bongsu/core/tick";
@@ -16,6 +16,7 @@ import {
   seedMediaStore,
   seedReel,
   testEnv,
+  upsertAccount,
   World,
 } from "./world";
 
@@ -562,6 +563,104 @@ describe("a draft becomes a scheduled item (texts in D1)", () => {
     expect(await env.DB.prepare("SELECT source FROM posted WHERE item_key = ?1").bind(key).first("source")).toBe(
       "scheduler",
     );
+  });
+});
+
+describe("a draft cross-posted to several accounts (#30)", () => {
+  /** A Bluesky account beside the Instagram ones, and a photo draft with `n` images. */
+  async function setup(n = 1) {
+    await signUp();
+    await upsertConnection(
+      env.DB,
+      { workspaceId: "default", id: "c_bsky", provider: "bluesky-atproto", kind: "service", secretName: "UNUSED" },
+      0,
+    );
+    await upsertAccount(
+      env.DB,
+      {
+        workspaceId: "default",
+        id: "demo_bsky",
+        platform: "bluesky",
+        handle: "demo_travel.bsky.social",
+        externalId: "did:plc:demotravel0000000000000",
+        connectionId: "c_bsky",
+      },
+      0,
+    );
+    const media = Array.from({ length: n }, (_, i) => ({
+      store: "drive",
+      id: w.drivePut(`UPLOADS/inbox/20261020_DEMO/p${i}.jpg`, { md5: MD5, mimeType: "image/jpeg" }),
+    }));
+    await env.DB.prepare(
+      "INSERT INTO drafts (id, kind, account, payload, source, created_by) VALUES ('d_x', 'photo', 'demo_travel', ?1, 'pwa', 'owner')",
+    )
+      .bind(JSON.stringify({ folder: "20261020_DEMO", name: "photo", media }))
+      .run();
+  }
+  const keys = ["post:20261020_DEMO/photo.demo_travel", "post:20261020_DEMO/photo.demo_bsky"];
+  const planned = () =>
+    env.DB.prepare("SELECT item_key, account, caption FROM plan_items WHERE draft_id = 'd_x' ORDER BY item_key").all();
+
+  it("makes one item per account, each to approve, the caption cut to each network's limit", async () => {
+    await setup();
+    const caption = "a".repeat(400);
+    const r = await post("/app-api/drafts/d_x/schedule", {
+      accounts: ["demo_travel", "demo_bsky"],
+      date: "2026-10-20",
+      time: "19:00",
+      caption,
+    });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toEqual({ key: keys[0], keys, shortened: ["demo_bsky"] });
+    const rows = (await planned()).results as { item_key: string; account: string; caption: string }[];
+    expect(rows.map((x) => [x.account, x.caption.length])).toEqual([
+      ["demo_bsky", 300],
+      ["demo_travel", 400],
+    ]);
+    expect(await env.DB.prepare("SELECT status FROM drafts WHERE id = 'd_x'").first("status")).toBe("approved");
+    for (const key of keys) {
+      const item = (await (await call(`/app-api/item?key=${encodeURIComponent(key)}`)).json()) as { approved: unknown };
+      expect(item.approved, key).toBeNull();
+    }
+  });
+
+  it("plans none of them when one account can't take it, and says which", async () => {
+    await setup(5);
+    const r = await post("/app-api/drafts/d_x/schedule", {
+      accounts: ["demo_travel", "demo_bsky"],
+      date: "2026-10-20",
+      time: "19:00",
+      caption: "Five photos",
+    });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { error: string }).error).toBe("@demo_bsky: Bluesky takes 4 files at most");
+    expect((await planned()).results).toEqual([]);
+    expect(await env.DB.prepare("SELECT status FROM drafts WHERE id = 'd_x'").first("status")).toBe("draft");
+  });
+
+  it("plans none of them when one account's hour is taken", async () => {
+    await setup();
+    await planItem({ folder: "travel/CONTENT/20261020_OTHER", name: "short1_x", account: "demo_travel" }); // 18:00
+    const r = await post("/app-api/drafts/d_x/schedule", {
+      accounts: ["demo_bsky", "demo_travel"],
+      date: "2026-10-20",
+      time: "18:30",
+      caption: "Busy",
+    });
+    expect(r.status).toBe(409);
+    expect(((await r.json()) as { error: string }).error).toMatch(/^@demo_travel: .*one item per account per hour/);
+    expect((await planned()).results).toEqual([]);
+  });
+
+  it("refuses an unknown account and more than ten", async () => {
+    await setup();
+    const at = { date: "2026-10-20", time: "19:00", caption: "x" };
+    expect((await post("/app-api/drafts/d_x/schedule", { ...at, accounts: ["demo_travel", "nope"] })).status).toBe(400);
+    const many = Array.from({ length: 11 }, (_, i) => `a${i}`);
+    expect(
+      ((await (await post("/app-api/drafts/d_x/schedule", { ...at, accounts: many })).json()) as { error: string })
+        .error,
+    ).toBe("pick 1 to 10 accounts");
   });
 });
 

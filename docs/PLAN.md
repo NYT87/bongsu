@@ -833,8 +833,9 @@ New networks on the 2.10 interfaces: a platform file, a provider, its fake, a do
 - [ ] **X** (`x-api`): posts with media, threads as a second comment chain; needs a paid API tier beyond the free
       allowance; document the cost.
 - [ ] **LinkedIn** (`linkedin-posts`): personal and page posts with images or video.
-- [ ] **Cross-posting:** one draft planned to several accounts on different networks at once (each still its own item
-      and approval, texts adapted per platform's limits).
+- [x] **Cross-posting:** one draft planned to several accounts on different networks at once (each still its own item
+      and approval, texts adapted per platform's limits). Done from the app's draft scheduling: the caption is cut to
+      each network's limit and the cut items are named back; all the items or none. Agents still plan per account.
 - [x] YouTube uploads (Shorts and videos) through `start` / `check` / `finish`, beside the existing comments, with
       titles, translations, subtitles and a thumbnail. (Done 2026-11-06, #31.)
 
