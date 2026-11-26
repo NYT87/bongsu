@@ -18,7 +18,7 @@ export class InstagramProvider implements Provider {
     this.trialNote = ig.trialNote;
   }
 
-  /** A container with the post's location; without it when Instagram refuses that place (as ig.py does), and then
+  /** A container with the post's location; without it when Instagram refuses that place, and then
    *  `locationDropped` to keep in the step's data. Any other error (a rate limit, a 5xx, a file not fetched yet) is
    *  thrown, so the step is retried with its location. */
   private async withLocation(

@@ -1,5 +1,5 @@
-// Instagram's caption rules (platforms/instagram.ts uses them as its Platform.lint), ported from the shorts-check skill (.claude/skills/shorts-check/caption.py, lint_ig) so
-// the app can show it before approving. Same checks, limits and wording; a FAIL blocks
+// Instagram's caption rules (platforms/instagram.ts uses them as its Platform.lint), so the app can show them before
+// approving. Their expected results (test/fixtures/caption_lint.json) come from the lint this replaced; a FAIL blocks
 // approval in the app as it does in the CLI's `bongsu approve`. Keep the two in step when one changes.
 
 export interface Check {

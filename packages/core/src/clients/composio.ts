@@ -125,7 +125,7 @@ export class Composio {
   }
 }
 
-/** A container or media id from a Composio Instagram response (it nests them inconsistently, as ig.py handles). */
+/** A container or media id from a Composio Instagram response (it nests them inconsistently). */
 export function idOf(d: Record<string, unknown>): string | undefined {
   return (d.id as string) ?? ((d.data as Record<string, unknown> | undefined)?.id as string | undefined);
 }

@@ -1,5 +1,5 @@
-// The texts as published, built the way ig.py builds them (read_caption, self_comment_text, question_of); approval
-// fingerprints hash exactly these. Python twin: server/tools/formats.py (golden-tested).
+// The texts as published; approval fingerprints hash exactly these, so a change here asks every queued item for a
+// new approval.
 
 export const captionText = (raw: string): string => raw.trim();
 

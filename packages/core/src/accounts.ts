@@ -212,7 +212,7 @@ export interface NewConnection {
   secretName?: string | null;
 }
 
-/** Creates or replaces a connection (the dashboard's Connect flows, Phase 4b; tests and setup scripts until then). */
+/** Creates or replaces a connection: the tests' setup (the dashboard's Connect flows write their own rows). */
 export async function upsertConnection(db: Db, c: NewConnection, nowS: number) {
   await db
     .prepare(

@@ -364,10 +364,11 @@ Rough effort in working sessions (one session ≈ a few focused hours). Each pha
   - [x] The 18 migrations squashed into `migrations/0001_init.sql` (schema only: `0006` held real media ids).
   - [x] Personal strings replaced (handles, ids, connection names, URLs, emails, channel names, project and
         place names); the grep list finds nothing outside lockfiles' regenerated names.
-  - [ ] Comments that reference the old plan's phases, dates and "(user)" notes: rewrite as plain
-        explanations (moved to Phase 2, as each module moves).
-- [ ] `gitleaks detect --no-git` (gitleaks isn't installed here; a regex scan for keys and tokens found only the test
-      world's generated throwaway PEM). Run it before pushing.
+  - [x] Comments that reference the old plan's phases, dates and "(user)" notes: rewrite as plain
+        explanations (moved to Phase 2, as each module moves; the last ones naming the old Python scripts went
+        2026-11-26).
+- [x] `gitleaks detect --no-git` (run 2026-11-26 on the committed tree: three hits, all test fakes, the web-push
+      spec's example keys and the test encryption key, now marked `gitleaks:allow`).
 - [x] First commit: the code (still Cloudflare-only), MIT license, a short README, `docs/` (overview, architecture,
       deploy, configuration, agents, security, development, this plan), `.gitignore`, `.editorconfig`.
       Author: NYT87 <nyt87@proton.me> (https://github.com/NYT87).
@@ -390,8 +391,8 @@ Rough effort in working sessions (one session ≈ a few focused hours). Each pha
       `apps/cloudflare/test` (Workers pool, 90). 103 in all, as before.
 - [x] Dead GitLab fake removed from `test/world.ts`.
 - [x] The old plan's references (phases, dates, "(user)" notes) stripped from code comments.
-- [ ] The remaining hints in messages and the app (21) point at the old command-line scripts: replace them with
-      dashboard or CLI wording in Phase 6.
+- [x] The remaining hints in messages and the app (21) point at the old command-line scripts: replace them with
+      dashboard or CLI wording in Phase 6 (none left in messages or the app, checked 2026-11-26).
 - [x] Existing databases and the squashed schema: `0001_init.sql` is the squashed schema, so a database that already
       has it only gets the new migrations (0002+).
 - [x] CI on pnpm (`pnpm typecheck`, `pnpm test`, `pnpm build`).
