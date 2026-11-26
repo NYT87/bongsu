@@ -3,11 +3,11 @@
 import { env } from "cloudflare:workers";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import { utcIso, zoneDate, zoneToUnix } from "@bongsu/core/formats/time";
 import { callerZone } from "@bongsu/core/workspaces";
 import { beforeEach, describe, expect, it } from "vitest";
-import { testEnv, World } from "./world";
+import { testEnv, upsertAccount, World } from "./world";
 
 const D = 86400;
 const H = 3600;

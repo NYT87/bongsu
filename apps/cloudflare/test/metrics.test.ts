@@ -3,13 +3,13 @@
 import { env } from "cloudflare:workers";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import { METRICS_ATTEMPTS_PER_RUN, METRICS_DENSE_S, METRICS_PER_RUN } from "@bongsu/core/constants";
 import { utcIso } from "@bongsu/core/formats/time";
 import { sampleMetrics } from "@bongsu/core/metrics";
 import { postResults } from "@bongsu/core/results";
 import { beforeEach, describe, expect, it } from "vitest";
-import { clearPlan, seedReel, testEnv, World } from "./world";
+import { clearPlan, seedReel, testEnv, upsertAccount, World } from "./world";
 
 const T0 = new Date("2026-10-26T03:00:00Z");
 const at = (h: number) => new Date(T0.getTime() + h * 3600_000);

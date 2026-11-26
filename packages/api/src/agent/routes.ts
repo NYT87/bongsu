@@ -169,7 +169,7 @@ export function apiRoutes(fetcher: typeof fetch) {
       const now = await snapshot(r);
       if (!sameSnapshot(b.snapshot as Snapshot, now))
         throw new ApiError(409, "it changed since you looked: check the new version, then approve", { changed: true });
-      await writeApproval(c.env, fetcher, r, now, new Date(), caller.userId!, "owner@cli");
+      await writeApproval(c.env, now, new Date(), caller.userId!, "owner@cli");
       await audit(ctx(c), "approve", key, { due_at: now.dueAt, media: now.media.length });
       return { approved: true, key, due: r.due };
     }),

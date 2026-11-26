@@ -1,5 +1,5 @@
-// The three named runs, for every runtime: the Cloudflare cron Worker (apps/cloudflare/src/cron.ts) and node-cron
-// (apps/node) both call runDue every minute, which starts the runs whose schedule (a CRON_* variable, or its
+// The three named runs, for every runtime: the Cloudflare cron Worker (apps/cloudflare/src/cron.ts) and Node's
+// timer (apps/node) both call runDue every minute, which starts the runs whose schedule (a CRON_* variable, or its
 // default) matches that minute, so the two runtimes can't drift.
 
 import { ACCOUNTS_UNIT_CALLS, sampleAccounts } from "./account-metrics";

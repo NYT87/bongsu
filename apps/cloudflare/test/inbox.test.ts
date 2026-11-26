@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import { runBudget } from "@bongsu/core/budget";
 import { cleanMedia } from "@bongsu/core/cleanup";
 import { inboxTexts, nextWorkspaces, scanInbox } from "@bongsu/core/inbox";
@@ -16,6 +16,7 @@ import {
   TEST_S3_KEYS,
   TEST_S3_SETTINGS,
   testEnv,
+  upsertAccount,
   World,
 } from "./world";
 

@@ -4,7 +4,7 @@
 import { env } from "cloudflare:workers";
 import { listAccountsOp, planAdd, planUpdate } from "@bongsu/api/agent/ops";
 import { resolveItem } from "@bongsu/api/pwa/approve";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import type { Env } from "@bongsu/core/env";
 import { registerPlatform } from "@bongsu/core/platforms/index";
 import { NO_FEATURES, NO_LINT } from "@bongsu/core/platforms/types";
@@ -12,7 +12,7 @@ import { registerProvider } from "@bongsu/core/providers/index";
 import type { OutgoingPost, Provider } from "@bongsu/core/providers/types";
 import { tick } from "@bongsu/core/tick";
 import { beforeEach, describe, expect, it } from "vitest";
-import { approve, clearPlan, postedRows, testEnv, World } from "./world";
+import { approve, clearPlan, postedRows, testEnv, upsertAccount, World } from "./world";
 
 const AT = new Date("2026-10-20T10:01:00Z"); // 19:01 in Seoul
 const sent: { op: string; args: unknown }[] = [];

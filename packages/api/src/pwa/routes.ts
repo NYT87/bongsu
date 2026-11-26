@@ -790,7 +790,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         { error: "it changed since you opened it: check the new version, then approve", changed: true },
         409,
       );
-    await writeApproval(c.env, fetcher, r, now, new Date(), userOf(c), "owner@app");
+    await writeApproval(c.env, now, new Date(), userOf(c), "owner@app");
     await audit(c, "approve", shown.key, { due_at: shown.dueAt, media: shown.media.length });
     return c.json({ approved: true, key: shown.key, due: r.due });
   });

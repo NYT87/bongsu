@@ -5,7 +5,7 @@ import { createApp } from "@bongsu/api/app";
 import { resolveItem } from "@bongsu/api/pwa/approve";
 import { createSession } from "@bongsu/api/pwa/session";
 import { draftFromUploads, startUpload, UploadError } from "@bongsu/api/pwa/uploads";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import { cleanMedia, MOVE_AFTER_S } from "@bongsu/core/cleanup";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -28,6 +28,7 @@ import {
   TEST_S3_KEYS,
   TEST_S3_SETTINGS,
   testEnv,
+  upsertAccount,
   World,
 } from "./world";
 

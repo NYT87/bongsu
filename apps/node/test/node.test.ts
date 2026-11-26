@@ -15,7 +15,7 @@ import { registerStore } from "@bongsu/core/media/index";
 import { runSchedule, schedulesOff } from "@bongsu/core/schedules";
 import { jobsPerTick } from "@bongsu/core/tick";
 import Database from "better-sqlite3";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { staticAssets } from "../src/assets";
 import { SqliteDb } from "../src/db";
 import { ConfigError, nodeEnv } from "../src/env";
@@ -202,27 +202,34 @@ describe("the HTTP app and the schedules on Node", () => {
     expect(() => checkSchedules(env)).not.toThrow();
   });
 
-  it("schedules one every-minute task that calls runDue for the minute, none with SCHEDULES=off", async () => {
+  it("calls runDue at the start of every minute, for that minute, until stopped; nothing with SCHEDULES=off", async () => {
+    vi.useFakeTimers({ now: new Date("2026-10-20T09:30:30Z") });
     const running = new Set<Promise<void>>();
-    const calls: [Env, Date][] = [];
-    const tasks = startSchedules(env, offline, running, async (e, _f, at) => {
-      calls.push([e, at]);
+    const calls: [Env, string][] = [];
+    const stop = startSchedules(env, offline, running, async (e, _f, at) => {
+      calls.push([e, at.toISOString()]);
       return [];
     });
     try {
-      expect(tasks.length).toBe(1);
-      expect(tasks[0].match(new Date("2026-10-20T09:31:00Z"))).toBe(true); // every minute
-      await tasks[0].execute();
-      expect(calls.length).toBe(1);
-      expect(calls[0][0]).toBe(env);
-      expect(calls[0][1].getTime() % 60_000).toBe(0); // the minute it was due, as Cloudflare's scheduledTime
+      await vi.advanceTimersByTimeAsync(29_999);
+      expect(calls).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      // the minute it was due, as Cloudflare's scheduledTime
+      expect(calls).toEqual([
+        [env, "2026-10-20T09:31:00.000Z"],
+        [env, "2026-10-20T09:32:00.000Z"],
+      ]);
       expect(running.size).toBe(0); // finished runs leave the set the shutdown waits on
+      stop!();
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(calls.length).toBe(2);
     } finally {
-      for (const t of tasks) await t.destroy();
+      vi.useRealTimers();
     }
-    expect(startSchedules(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db), offline, running)).toEqual(
-      [],
-    );
+    expect(
+      startSchedules(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db), offline, running),
+    ).toBeNull();
   });
 });
 

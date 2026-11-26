@@ -2,10 +2,11 @@
 // fetch function.
 
 import { env } from "cloudflare:workers";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { type PlatformId, upsertConnection } from "@bongsu/core/accounts";
 import { clearTokenCache } from "@bongsu/core/clients/google";
 import { encryptSecret } from "@bongsu/core/crypto";
 import { addApproval, defaultTime } from "@bongsu/core/data";
+import type { Db } from "@bongsu/core/db";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneToUnix } from "@bongsu/core/formats/time";
@@ -1226,4 +1227,46 @@ export function igHappyPath(w: World, states: string[] = ["FINISHED"]) {
   };
   w.composio.INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH = () => ({ id: "media-1" });
   w.composio.INSTAGRAM_POST_IG_MEDIA_COMMENTS = () => ({ id: "comment-1" });
+}
+
+/** Creates or updates an account by id, keeping its settings when they aren't given: the tests' way to set one up
+ *  (the app makes accounts from connections, connections.ts). */
+export interface NewAccount {
+  id: string;
+  workspaceId: string;
+  platform: PlatformId;
+  handle: string;
+  displayName?: string | null;
+  externalId?: string | null;
+  connectionId?: string | null;
+  capabilities?: Record<string, unknown>;
+  settings?: Record<string, unknown>;
+  sort?: number;
+}
+
+/** Creates or updates an account (keeps its settings when they aren't given). */
+export async function upsertAccount(db: Db, a: NewAccount, nowS: number) {
+  await db
+    .prepare(
+      `INSERT INTO accounts (id, workspace_id, platform, handle, display_name, external_id, connection_id,
+         capabilities, settings, sort, created_at, updated_at)
+       VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+       ON CONFLICT (id) DO UPDATE SET handle = excluded.handle, display_name = excluded.display_name,
+         external_id = excluded.external_id, connection_id = excluded.connection_id,
+         capabilities = excluded.capabilities, sort = excluded.sort, updated_at = excluded.updated_at`,
+    )
+    .bind(
+      a.id,
+      a.workspaceId,
+      a.platform,
+      a.handle,
+      a.displayName ?? null,
+      a.externalId ?? null,
+      a.connectionId ?? null,
+      JSON.stringify(a.capabilities ?? {}),
+      JSON.stringify(a.settings ?? {}),
+      a.sort ?? 0,
+      nowS,
+    )
+    .run();
 }

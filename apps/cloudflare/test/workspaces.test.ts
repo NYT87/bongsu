@@ -5,7 +5,7 @@ import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { resolveItem } from "@bongsu/api/pwa/approve";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import { createSession, markVerified, setSessionWorkspace } from "@bongsu/api/pwa/session";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import { encryptSecret } from "@bongsu/core/crypto";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
@@ -18,7 +18,7 @@ import { setDisplayName, setWorkspaceSettings } from "@bongsu/core/workspaces";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { png } from "./icon-png";
 import { decrypt, keys } from "./push-helpers";
-import { clearPlan, seedReel, TEST_ENCRYPTION_KEY, testEnv, World } from "./world";
+import { clearPlan, seedReel, TEST_ENCRYPTION_KEY, testEnv, upsertAccount, World } from "./world";
 
 const KEY_A = "bongsu_workspaceAworkspaceAworksp";
 const KEY_B = "bongsu_workspaceBworkspaceBworksp";

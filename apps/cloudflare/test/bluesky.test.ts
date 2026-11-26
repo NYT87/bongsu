@@ -1,13 +1,13 @@
 // Bluesky (docs/superpowers/specs/2026-11-25-bluesky-design.md): the approval page, the provider and the tick.
 import { env } from "cloudflare:workers";
 import { resolveItem } from "@bongsu/api/pwa/approve";
-import { upsertAccount, upsertConnection } from "@bongsu/core/accounts";
+import { upsertConnection } from "@bongsu/core/accounts";
 import { pasteConnect } from "@bongsu/core/connections";
 import type { Env } from "@bongsu/core/env";
 import { refreshConnections } from "@bongsu/core/providers/refresh";
 import { tick } from "@bongsu/core/tick";
 import { beforeEach, describe, expect, it } from "vitest";
-import { approve, clearPlan, localToUnix, serveLinks, testEnv, World } from "./world";
+import { approve, clearPlan, localToUnix, serveLinks, testEnv, upsertAccount, World } from "./world";
 
 const KEY = "post:20261020_DEMO/photo";
 

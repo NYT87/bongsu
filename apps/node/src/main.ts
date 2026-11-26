@@ -1,5 +1,5 @@
 // Bongsu on Node (site/docs/self-hosting.md): one process serves the HTTP app (packages/api) and the built PWA and
-// dashboard and runs the scheduled runs with node-cron. The database is one SQLite file, or Postgres when
+// dashboard and runs the scheduled runs on an every-minute timer. The database is one SQLite file, or Postgres when
 // DATABASE_URL is set.
 //   node server.mjs                 migrate, then serve and schedule
 //   node server.mjs migrate         only apply the migrations
@@ -133,7 +133,7 @@ async function main() {
   const running = new Set<Promise<void>>();
   // SCHEDULES=off: serve only (a replica, a demo that must neither publish nor poll any platform)
   if (schedulesOff(env)) console.log("bongsu: schedules off");
-  const tasks = startSchedules(env, realFetch, running);
+  const stopSchedules = startSchedules(env, realFetch, running);
 
   // Graceful shutdown: stop scheduling, stop taking requests, let the runs finish (30 s at most), free their locks.
   let stopping = false;
@@ -141,7 +141,7 @@ async function main() {
     if (stopping) return;
     stopping = true;
     console.log(`bongsu: ${signal}, stopping`);
-    for (const t of tasks) await t.stop();
+    stopSchedules?.();
     server.close();
     await Promise.race([Promise.all(running), new Promise((r) => setTimeout(r, 30_000))]);
     await db.prepare("DELETE FROM locks").run();
