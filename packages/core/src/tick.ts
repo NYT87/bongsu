@@ -124,6 +124,8 @@ export interface Payload {
     /** sha256 of the approved YouTube texts; absent/null: the item has none. */
     textsSha256?: string | null;
     media: MediaRef[];
+    /** Whether a Trial Reel copy was approved with the post; null/absent: approved before this was kept. */
+    trial?: boolean | null;
   };
   children?: string[];
   childKinds?: ("image" | "video")[];
@@ -508,15 +510,18 @@ async function discover(c: Ctx, a: Account) {
  *  released (it's due again, dueItems leaves out held ones). A failed job comes back on an approval made after it
  *  failed. None comes back once the publishing call was ever made: the post may be live then (a timeout on
  *  Instagram's side, a read-back YouTube didn't answer), and posting again could double it, revising a YouTube video
- *  would make it private again; the owner checks the account and records it by hand (#148). */
+ *  would make it private again; the owner checks the account and records it by hand (#148). A job a dry run closed
+ *  comes back on a newer approval, like a refused one. */
 export function reopens(
-  job: { state: string; media_id?: string | null; updated_at?: number },
+  job: { state: string; media_id?: string | null; updated_at?: number; dry_run?: number },
   p: Payload,
   a: Pick<Approval, "dueAt" | "approvedAt">,
 ): boolean {
   if (a.dueAt === null || mayBeLive(job, p)) return false;
   const newer = a.approvedAt !== p.approvedAt;
   if (job.state === "refused") return newer;
+  // a dry run published nothing: approving again lets the item go out for real (#92)
+  if (job.state === "done") return !!job.dry_run && newer;
   // a private upload under way ahead of its time: a new approval revises it before its time (previousUpload);
   // Instagram's containers have neither, and stay as they are
   if (job.state === "container_created") return newer && !!(p.step?.data.videoId || p.step?.data.session);
@@ -541,6 +546,7 @@ function withApproval(cand: Candidate, a: Approval): { payload: Payload; kind: K
       altSha256: a.altSha256,
       textsSha256: a.textsSha256 ?? null,
       media: a.media,
+      trial: a.trial ?? null,
     },
   };
   // no format planned: the approved media decide (one file: an image, or a video once its type is known; several: a carousel)
@@ -1414,7 +1420,8 @@ async function stepPublished(c: Ctx, job: JobRow, p: Payload) {
   await c.setJob(job.id, { state: "done" });
   if (p.reel && !p.story) {
     const item = await getItem(c.env.DB, job.item_key);
-    if (item && (await trialFor(c.env.DB, item)).on) await queueTrial(c, job, p);
+    // only a copy the approval covered: a switch turned on after it would add a post nobody approved (#93)
+    if (item && p.approval?.trial !== false && (await trialFor(c.env.DB, item)).on) await queueTrial(c, job, p);
   }
   await c.note.send(
     N.published(job.item_key, p.permalink ?? null, { story: !!p.story, locationDropped: !!p.locationDropped }),

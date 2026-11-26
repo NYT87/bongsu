@@ -208,6 +208,10 @@
         "texts_sha": {
           "type": "text",
           "description": "sha256 of the approved texts in canonical JSON; NULL: none"
+        },
+        "trial": {
+          "type": "bool",
+          "description": "1: a trial copy was approved with the Reel; 0: it wasn't; NULL: approved before this was kept"
         }
       },
       "indexes": [

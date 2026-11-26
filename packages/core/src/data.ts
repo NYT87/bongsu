@@ -431,6 +431,7 @@ interface ApprovalRow {
   approved_by: string;
   user_id?: string | null;
   texts_sha?: string | null;
+  trial?: number | null;
 }
 
 function toApproval(r: ApprovalRow): Approval {
@@ -448,6 +449,7 @@ function toApproval(r: ApprovalRow): Approval {
     approvedBy: r.approved_by,
     approvedByUser: r.user_id ?? null,
     textsSha256: r.texts_sha ?? null,
+    trial: r.trial == null ? null : !!r.trial,
   };
 }
 
@@ -506,11 +508,13 @@ export async function addApproval(
     userId?: string | null;
     /** sha256 of the approved texts (canonical JSON); null: the item has none. */
     textsSha256?: string | null;
+    /** Whether a Trial Reel copy is approved with it (null: not known). */
+    trial?: boolean | null;
   },
 ): Promise<void> {
   await db
     .prepare(
-      "INSERT INTO approvals (item_key, due_at, caption_sha, comment_sha, alt_sha, media, approved_at, approved_by, comment2_sha, user_id, account, texts_sha) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+      "INSERT INTO approvals (item_key, due_at, caption_sha, comment_sha, alt_sha, media, approved_at, approved_by, comment2_sha, user_id, account, texts_sha, trial) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
     )
     .bind(
       a.key,
@@ -525,6 +529,7 @@ export async function addApproval(
       a.userId ?? null,
       a.account,
       a.textsSha256 ?? null,
+      a.trial == null ? null : a.trial ? 1 : 0,
     )
     .run();
 }
@@ -533,6 +538,17 @@ export async function addApproval(
 
 export const isPosted = async (db: Db, key: string) =>
   !!(await db.prepare("SELECT 1 FROM posted WHERE item_key = ?1").bind(key).first());
+
+/** Whether another workspace left a posted record or a job under this key. Keys are shared by every workspace and
+ *  those rows are looked up by key alone, so a new item under it would be skipped or refused without a word (#91). */
+export const keyTakenElsewhere = async (db: Db, key: string, workspaceId: string) =>
+  !!(await db
+    .prepare(
+      `SELECT 1 FROM posted WHERE item_key = ?1 AND workspace_id != ?3
+       UNION ALL SELECT 1 FROM jobs WHERE item_key IN (?1, ?2) AND workspace_id != ?3 LIMIT 1`,
+    )
+    .bind(key, `trial:${key}`, workspaceId)
+    .first());
 
 /** Instagram's "2026-10-18T03:31:00+0000" → unix seconds (null if it isn't one). */
 export function igTime(ts: unknown): number | null {

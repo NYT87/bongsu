@@ -9,6 +9,7 @@ import {
   getItem,
   isPosted,
   keyClass,
+  keyTakenElsewhere,
   makeKey,
   slotMessage,
   slotTaken,
@@ -157,6 +158,8 @@ export async function scheduleDraft(
     .first<{ folder: string }>();
   const folder = known?.folder ?? `inbox/${project}`;
   const key = makeKey(keyClass(format), folder, name);
+  if (await keyTakenElsewhere(env.DB, key, workspaceId))
+    throw new ScheduleError(409, "that name is taken: pick another");
   // A YouTube video's settings: the draft's (create_draft kept them in its payload), the body's on top.
   let options: Record<string, unknown> = b.location && !story ? { location: String(b.location).slice(0, 40) } : {};
   if (tube) {

@@ -16,6 +16,7 @@ import {
   igTime,
   itemOptions,
   keyClass,
+  keyTakenElsewhere,
   latestApprovals,
   makeKey,
   type PlanItem,
@@ -875,6 +876,8 @@ export async function planAdd(c: OpCtx, b: Record<string, unknown>) {
   const tz = await zoneOf(c);
   const due = askedDue(b, format, tz) ?? null;
   const key = makeKey(keyClass(format), folder, name);
+  if (await keyTakenElsewhere(c.env.DB, key, c.caller.workspaceId))
+    throw new ApiError(409, "that name is taken: pick another");
   const story = format === "story";
   if (due !== null && !story) {
     const taken = await slotTaken(c.env.DB, account, due, tz, key);

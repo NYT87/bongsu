@@ -366,6 +366,31 @@ describe("Trial Reels", () => {
     expect(notes[0].body).not.toMatch(/may already be public/);
   });
 
+  it("switched on after approval: the Reel goes out, the copy nobody approved doesn't (#93)", async () => {
+    const call = await signedIn();
+    const post = async (path: string, b: unknown) =>
+      (await call(path, { method: "POST", body: JSON.stringify(b) })).json() as Promise<Record<string, unknown>>;
+    const approved = async (key: string) =>
+      ((await (await call(`/app-api/item?key=${encodeURIComponent(key)}`)).json()) as { approved: unknown }).approved;
+    const { key, folder, base } = await seedReel(w, { account: "demo_running", approve: false });
+    w.drivePut(`UPLOADS/${folder}/exports/shorts/instagram/${base}.mp4`, {
+      md5: "a".repeat(32),
+      mimeType: "video/mp4",
+    });
+    await post("/app-api/item/trial", { key, on: false });
+    const o = await post("/app-api/approve/options", { key });
+    expect(
+      await post("/app-api/approve/verify", { challengeId: o.challengeId, response: { id: "cred1" } }),
+    ).toMatchObject({ approved: true });
+    expect(await approved(key)).toMatchObject({ matches: true });
+
+    await post("/app-api/item/trial", { key, on: true });
+    expect(await approved(key)).toMatchObject({ matches: false }); // the app asks for a new approval
+    await run(6);
+    expect((await jobs()).map((j) => [j.item_key, j.state])).toEqual([[key, "done"]]);
+    expect(w.raw).toEqual([]);
+  });
+
   it("switched off after the Reel went out: the queued trial copy doesn't go", async () => {
     const { key } = await seedReel(w, { account: "demo_running" });
     await run(3);

@@ -67,4 +67,11 @@ describe("reopens", () => {
     for (const state of ["pending", "container_created", "published", "done"])
       expect(reopens({ state, updated_at: FAILED_AT }, p(), after)).toBe(false);
   });
+
+  it("brings back a job a dry run closed, on a newer approval only (#92)", () => {
+    expect(reopens({ state: "done", dry_run: 1 }, p(), after)).toBe(true);
+    expect(reopens({ state: "done", dry_run: 1 }, p(), { dueAt: 1, approvedAt: "2026-10-17T01:00:00Z" })).toBe(false);
+    expect(reopens({ state: "done", dry_run: 0 }, p(), after)).toBe(false);
+    expect(reopens({ state: "done", dry_run: 1 }, p({ publishing: true }), after)).toBe(false);
+  });
 });
