@@ -79,7 +79,8 @@ past the limit with `BudgetSpent` before sending it.
    Instagram downloads the file through `bongsu`, which streams it from the media store (or, for a store with presigned
    URLs, straight from the store).
 5. Later ticks poll the container, publish it, post the self-comment (and second comment), record the post, and notify.
-6. If the account has Trial Reels on and the Reel's switch is on, a trial copy job follows.
+6. If the account has Trial Reels on, the Reel's switch is on and the approval covered the copy (it records the switch), a
+   trial copy job follows.
 
 ## Database
 

@@ -27,6 +27,8 @@ export interface Approval {
   approvedByUser?: string | null;
   /** sha256 of the approved texts (a YouTube video's title, tags, translations) in canonical JSON; null/absent = none. */
   textsSha256?: string | null;
+  /** Whether a Trial Reel copy was approved with it; null/absent: approved before this was kept (the switch decides). */
+  trial?: boolean | null;
 }
 
 /** sha256 hex of a text, as approval fingerprints use (UTF-8, exactly as stored). */

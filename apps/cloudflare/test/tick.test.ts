@@ -328,6 +328,24 @@ describe("tick: dry run", () => {
     expect(await audits("would_publish")).toEqual([expect.objectContaining({ workspace_id: "default" })]);
     expect(w.notifications.map((n) => n.title)).toEqual([`dry run: would publish ${KEY}`]);
   });
+
+  it("publishes for real once dry run is off and the item is approved again (#92)", async () => {
+    const { driveId } = await seedReel(w);
+    await tick(await testEnv(env, { DRY_RUN: "1" }), { fetch: w.fetch, now: AT });
+    igHappyPath(w);
+    const e = await testEnv(env);
+    await tick(e, { fetch: w.fetch, now: later(1) }); // the same approval: stays done
+    expect((await jobs())[0].state).toBe("done");
+    await approve(KEY, {
+      due: "2026-10-20 18:00",
+      caption: "A caption\n\nWhere next?\n\n#travel",
+      comment: "📍 Somewhere. Have you been?",
+      media: [{ driveId, md5: MD5 }],
+      approvedAt: "2026-10-20T09:33:00Z",
+    });
+    await tick(e, { fetch: w.fetch, now: later(2) });
+    expect((await jobs())[0]).toMatchObject({ state: "container_created", dry_run: 0 });
+  });
 });
 
 describe("tick: publishing a Reel", () => {

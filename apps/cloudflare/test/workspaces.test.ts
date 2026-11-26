@@ -278,6 +278,38 @@ describe("an agent key in workspace B", () => {
   });
 });
 
+describe("an item key another workspace left rows under (#91)", () => {
+  const plan = {
+    kind: "reel",
+    account: "demo_travel",
+    folder: "vlogs/CONTENT/20261030_LISBON",
+    name: "short5_x",
+    date: "2026-10-30",
+    time: "18:00",
+    caption: "Lisbon",
+  };
+  const key = "reel:20261030_LISBON/short5_x";
+
+  it("can't be planned: a posted record B made before A planned it", async () => {
+    const posted = await call(KEY_B, "/v1/posted", { key, account: "b_shop", date: "2026-10-01" });
+    expect(posted.json).toMatchObject({ recorded: true });
+    const r = await call(KEY_A, "/v1/plan", plan);
+    expect([r.status, r.json.error]).toEqual([409, "that name is taken: pick another"]);
+    expect(await env.DB.prepare("SELECT 1 FROM plan_items WHERE item_key = ?1").bind(key).first()).toBeNull();
+  });
+
+  it("can't be planned: a job B's removed item left", async () => {
+    await env.DB.prepare(
+      "INSERT INTO jobs (item_key, kind, account, due_at, state, payload, created_at, updated_at, workspace_id) VALUES (?1, 'video', 'x', 0, 'done', '{}', 0, 0, 'b')",
+    )
+      .bind(key)
+      .run();
+    expect((await call(KEY_A, "/v1/plan", plan)).status).toBe(409);
+    // B's own key is still B's to plan again
+    expect((await call(KEY_B, "/v1/plan", { ...plan, account: "b_shop" })).status).toBe(200);
+  });
+});
+
 describe("the scheduler", () => {
   it("serves every workspace, each job tagged with its own", async () => {
     const e = await testEnv(env);

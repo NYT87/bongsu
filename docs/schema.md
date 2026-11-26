@@ -91,6 +91,7 @@ What was approved, as fingerprints: the texts' sha256 and the media references, 
 | `due_at` | timestamp | yes |  |  |
 | `account` | text | yes |  | The account (its id) the approval is for; a Shorts comment's channel. NULL only on one older than this column whose item was gone: never valid. |
 | `texts_sha` | text | yes |  | sha256 of the approved texts in canonical JSON; NULL: none |
+| `trial` | bool | yes |  | 1: a trial copy was approved with the Reel; 0: it wasn't; NULL: approved before this was kept |
 
 Index `approvals_key`: (item_key, id).
 

@@ -14,6 +14,7 @@ import {
   keyClass,
   latestApprovals,
   readText,
+  trialFor,
 } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex, youtubeSha } from "@bongsu/core/formats/approved";
@@ -40,6 +41,8 @@ export interface Resolved {
   postFormat: Format | null;
   /** The platform's options for this post (Instagram: location, coverMs, trial). */
   options: Record<string, unknown>;
+  /** Whether a Trial Reel copy follows the post (its switch, else its account's default): part of what is approved. */
+  trial: boolean;
   /** The account's platform, and what it calls this post ("Reel"…). */
   platform: string;
   label: string;
@@ -93,6 +96,8 @@ export interface Snapshot {
   /** sha256 of a YouTube video's texts (canonical JSON); null off YouTube. */
   textsSha256: string | null;
   media: string[];
+  /** A Trial Reel copy goes out too: turning it on later would add a post nobody approved (#93). */
+  trial: boolean;
 }
 
 /** An item of the workspace, with its texts and media checked for approving (null: not one of its items); `tz` is the
@@ -250,6 +255,7 @@ export async function resolveItem(
     kind: keyClass(i.format),
     postFormat: i.format ?? null,
     options: opts,
+    trial: (await trialFor(env.DB, i)).on,
     platform: acc?.platform ?? "unknown",
     label: formatLabel(plat, i.format),
     account: i.account,
@@ -282,6 +288,7 @@ export async function resolveItem(
       a.captionSha256 === snap.captionSha256 &&
       (a.altSha256 ?? null) === snap.altSha256 &&
       (a.textsSha256 ?? null) === snap.textsSha256 &&
+      (a.trial == null || a.trial === snap.trial) && // an approval from before #93 kept none: not held against it
       a.media.map((x) => `${x.store}:${x.id}:${x.checksum}`).join(" ") === snap.media.join(" ");
     const comments = a.commentSha256 === snap.commentSha256 && (a.comment2Sha256 ?? null) === snap.comment2Sha256;
     const by = a.approvedByUser ? await memberName(env.DB, a.approvedByUser, workspaceId) : null;
@@ -316,6 +323,7 @@ async function resolveShort(env: Env, key: string, workspaceId: string): Promise
     kind: "post",
     postFormat: null,
     options: {},
+    trial: false,
     platform: acc?.platform ?? "youtube",
     label: "Shorts comment",
     account: row.channel,
@@ -359,6 +367,7 @@ export async function snapshot(r: Resolved): Promise<Snapshot> {
     altSha256: r.alt ? await sha256Hex(r.alt) : null,
     textsSha256: r.youtube ? await youtubeSha(r.youtube.texts, r.youtube.roles, r.youtube.settings) : null,
     media: r.media.map((m) => `${m.store}:${m.id}:${m.checksum}`),
+    trial: r.trial,
   };
 }
 
@@ -383,6 +392,7 @@ export async function writeApproval(
     comment2Sha256: s.comment2Sha256,
     altSha256: s.altSha256,
     textsSha256: s.textsSha256,
+    trial: s.trial,
     media: s.media.map((x) => {
       const [store, id, ...rest] = x.split(":");
       return { store, id, checksum: rest.join(":") };
