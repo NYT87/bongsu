@@ -45,6 +45,10 @@ One package: `pnpm --filter @bongsu/core test`. On a busy machine run the Cloudf
 - `apps/node/test/`: plain vitest on Node: the Db conformance cases on better-sqlite3 (the same ones D1 runs in
   `apps/cloudflare/test/db-conformance.test.ts`), the migrations, the local media store, static files, `/health`, the
   schedules, backups and the SMTP mailer.
+- `apps/node/e2e/`: the Playwright smoke test against the Node build, on a fresh database and media folder: the
+  first run (setup with Chromium's virtual passkey, the first workspace), the dashboard's paths and the app's hash
+  routes, the service worker and the static files: what happy-dom can't see. After `pnpm build`:
+  `pnpm --filter @bongsu/node e2e` (once: `pnpm --filter @bongsu/node exec playwright install chromium`).
 
 ## Local testing
 
@@ -181,7 +185,8 @@ weekly updates for npm, the workflows' actions and the Docker base image.
 ## CI
 
 `.github/workflows/`: `ci.yml` runs `biome ci`, `pnpm typecheck`, `pnpm test`, `pnpm test:site`, `pnpm site`,
-`pnpm build` and commitlint over the commits of every pull request and push; `pr-title.yml` lints the pull request
+`pnpm build` and commitlint over the commits of every pull request and push, and the smoke test (`e2e`, its own job
+since it needs a browser); `pr-title.yml` lints the pull request
 title (again when it's edited), since it becomes the squashed commit's message; `release.yml` (above); `pages.yml`
 (the site on GitHub Pages); `mirror.yml` (main and the tags to the private GitLab backup, with the
 `GITLAB_DEPLOY_KEY` secret: an SSH deploy key with write access on the GitLab project). None of them deploys an instance.

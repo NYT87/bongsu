@@ -35,6 +35,23 @@ jobs:
       - run: pnpm site
       - run: pnpm build
 
+  # The smoke test (apps/node/e2e): the Node build in Chromium, through a first run, the routes and the static files.
+  # Its own job because it needs a browser.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.0 (the version in packageManager)
+        with:
+          cache: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build # the app and the dashboard, and the Node server
+      - run: pnpm --filter @bongsu/node exec playwright install --with-deps chromium
+      - run: pnpm --filter @bongsu/node e2e
+
   # Conventional Commits (commitlint.config.js): every commit of a pull request, or of a push. The title of a pull
   # request is checked by pr-title.yml, which also runs when the title is edited. Dependabot's commits are skipped:
   # their bodies quote release notes past the line limit; their titles are still checked.
