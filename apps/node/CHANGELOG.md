@@ -1,5 +1,20 @@
 # @bongsu/node
 
+## 0.5.1
+
+### Patch Changes
+
+- 3d5d29e: A Trial Reel copy that didn't go out (its switch was turned off first, or a dry run) says "not posted" on the item page, instead of "posting" forever. A name another workspace has used is refused with "that name is taken" and nothing more: the answer no longer tells whether it's planned there, and that workspace's old approval can't reach your item. On Node, the local media folder keeps one checksum per file, so its memory no longer grows with every change.
+- Updated dependencies [8b158f8]
+- Updated dependencies [f9387d8]
+- Updated dependencies [b9e3c05]
+- Updated dependencies [732e4aa]
+- Updated dependencies [3d5d29e]
+- Updated dependencies [1c1a340]
+  - @bongsu/core@0.7.0
+  - @bongsu/api@0.7.0
+  - @bongsu/schema@0.5.1
+
 ## 0.5.0
 
 ### Minor Changes

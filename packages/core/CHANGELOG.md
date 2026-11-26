@@ -1,5 +1,18 @@
 # @bongsu/core
 
+## 0.7.0
+
+### Minor Changes
+
+- f9387d8: Bluesky: connect an account by pasting its handle and an app password, then publish text posts and posts with up to 4 images (with alt texts), with the first and second comment as replies. A text over 300 characters, or an image over 1 MB, can't be approved.
+- 1c1a340: Threads: connect a profile with your Threads app (or a pasted token), then publish text posts, images, videos and carousels of up to 20 items, with alt texts, and the first and second comment as replies. Its replies show in the app's comments and its results (views, likes, replies, shares) are recorded. A text over 500 characters, or an image over 8 MB, can't be approved.
+
+### Patch Changes
+
+- 8b158f8: A post that went through a dry run publishes for real once it's approved again. A Trial Reel copy goes out only when the approval covered it: turning the switch on afterwards asks for a new approval. A name another workspace already used (a post it recorded, or a job it left) can't be planned again: you're asked to pick another, instead of the post being skipped without a word.
+- 732e4aa: A post is checked against its approval again before it goes live, after its container is ready too, and a folder post's current files must match the approved selection. A Trial Reel copy follows the plan like any post: a hold, a new time or a disabled account stops it.
+- 3d5d29e: A Trial Reel copy that didn't go out (its switch was turned off first, or a dry run) says "not posted" on the item page, instead of "posting" forever. A name another workspace has used is refused with "that name is taken" and nothing more: the answer no longer tells whether it's planned there, and that workspace's old approval can't reach your item. On Node, the local media folder keeps one checksum per file, so its memory no longer grows with every change.
+
 ## 0.6.0
 
 ### Minor Changes

@@ -1,5 +1,18 @@
 # @bongsu/cloudflare
 
+## 0.7.0
+
+### Patch Changes
+
+- Updated dependencies [8b158f8]
+- Updated dependencies [f9387d8]
+- Updated dependencies [b9e3c05]
+- Updated dependencies [732e4aa]
+- Updated dependencies [3d5d29e]
+- Updated dependencies [1c1a340]
+  - @bongsu/core@0.7.0
+  - @bongsu/api@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

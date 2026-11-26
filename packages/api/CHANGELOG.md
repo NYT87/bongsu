@@ -1,5 +1,23 @@
 # @bongsu/api
 
+## 0.7.0
+
+### Minor Changes
+
+- f9387d8: Bluesky: connect an account by pasting its handle and an app password, then publish text posts and posts with up to 4 images (with alt texts), with the first and second comment as replies. A text over 300 characters, or an image over 1 MB, can't be approved.
+- b9e3c05: Cross-posting: schedule a draft to several accounts at once, on any networks. Each account gets its own item to approve; a caption over a network's limit is shortened for that account, and the app opens it so you can check it. If one account can't take the draft, nothing is scheduled and you're told which.
+- 1c1a340: Threads: connect a profile with your Threads app (or a pasted token), then publish text posts, images, videos and carousels of up to 20 items, with alt texts, and the first and second comment as replies. Its replies show in the app's comments and its results (views, likes, replies, shares) are recorded. A text over 500 characters, or an image over 8 MB, can't be approved.
+
+### Patch Changes
+
+- 8b158f8: A post that went through a dry run publishes for real once it's approved again. A Trial Reel copy goes out only when the approval covered it: turning the switch on afterwards asks for a new approval. A name another workspace already used (a post it recorded, or a job it left) can't be planned again: you're asked to pick another, instead of the post being skipped without a word.
+- Updated dependencies [8b158f8]
+- Updated dependencies [f9387d8]
+- Updated dependencies [732e4aa]
+- Updated dependencies [3d5d29e]
+- Updated dependencies [1c1a340]
+  - @bongsu/core@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes

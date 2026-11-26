@@ -1,5 +1,17 @@
 # @bongsu/schema
 
+## 0.5.1
+
+### Patch Changes
+
+- 8b158f8: A post that went through a dry run publishes for real once it's approved again. A Trial Reel copy goes out only when the approval covered it: turning the switch on afterwards asks for a new approval. A name another workspace already used (a post it recorded, or a job it left) can't be planned again: you're asked to pick another, instead of the post being skipped without a word.
+- Updated dependencies [8b158f8]
+- Updated dependencies [f9387d8]
+- Updated dependencies [732e4aa]
+- Updated dependencies [3d5d29e]
+- Updated dependencies [1c1a340]
+  - @bongsu/core@0.7.0
+
 ## 0.5.0
 
 ### Minor Changes
