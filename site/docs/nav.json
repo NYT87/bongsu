@@ -3,7 +3,7 @@
   { "section": "Install", "pages": ["deploy-cloudflare", "self-hosting"] },
   {
     "section": "Connect your accounts",
-    "pages": ["instagram-graph", "instagram-composio", "youtube", "bluesky", "drive", "s3"]
+    "pages": ["instagram-graph", "instagram-composio", "youtube", "bluesky", "threads", "drive", "s3"]
   },
   { "section": "Use Bongsu", "pages": ["the-app", "captions-and-checks", "the-dashboard"] },
   { "section": "Agents", "pages": ["connect-claude", "what-agents-can-do", "api-reference", "cli"] },

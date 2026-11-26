@@ -108,7 +108,7 @@ describe("OAuth apps", () => {
   it("lists the apps the providers use with the redirect URLs to register, and keeps the secret encrypted", async () => {
     const r = await call("/admin-api/oauth-apps");
     const apps = r.json.apps as { id: string; clientId: string | null; providers: { redirectUri: string }[] }[];
-    expect(apps.map((a) => a.id).sort()).toEqual(["google", "meta"]);
+    expect(apps.map((a) => a.id).sort()).toEqual(["google", "meta", "threads"]);
     expect(apps.find((a) => a.id === "meta")?.providers[0].redirectUri).toBe(
       "https://bongsu.test/admin-api/connect/instagram/callback",
     );
@@ -233,6 +233,46 @@ describe("Connect Instagram (Instagram Login)", () => {
     const r = await call("/admin-api/connect/instagram/paste", { value: "ig-token-1" });
     expect(r.status).toBe(200);
     expect(r.json).toMatchObject({ label: "@demo_cycling", accounts: [{ id: "demo_cycling", created: false }] });
+  });
+});
+
+describe("Connect Threads", () => {
+  const THREADS = { clientId: "threads-app-id", clientSecret: "threads-secret" };
+
+  it("needs the Threads app first", async () => {
+    const r = await call("/admin-api/connect/threads/start", {});
+    expect(r.status).toBe(400);
+    expect(r.json.error).toMatch(/Threads app/);
+  });
+
+  it("authorizes, exchanges the code for a long-lived token and connects the profile it reaches", async () => {
+    await call("/admin-api/oauth-apps/threads", THREADS);
+    const url = new URL((await call("/admin-api/connect/threads/start", {})).json.url as string);
+    expect(url.origin + url.pathname).toBe("https://threads.net/oauth/authorize");
+    expect(url.searchParams.get("client_id")).toBe("threads-app-id");
+    expect(url.searchParams.get("scope")).toBe(
+      "threads_basic,threads_content_publish,threads_manage_replies,threads_read_replies,threads_manage_insights",
+    );
+    const back = await callback("threads", { code: "th-code#_", state: url.searchParams.get("state")! });
+    expect(backParams(back.location)).toEqual({ connected: "@demo_travel", accounts: "1" });
+    expect(w.threadsCodes[0]).toMatchObject({
+      code: "th-code",
+      redirect_uri: "https://bongsu.test/admin-api/connect/threads/callback",
+    });
+    const a = (await listAccounts(env.DB, { all: true })).find((x) => x.platform === "threads")!;
+    expect(a).toMatchObject({ handle: "demo_travel", externalId: "th_user_1" });
+    expect(JSON.parse((await connectionSecret(e, a.connection))!).access_token).toBe("th-token");
+    const c = await env.DB.prepare("SELECT expires_at FROM connections WHERE provider = 'threads'").first<number>(
+      "expires_at",
+    );
+    expect(c).toBeGreaterThan(Date.now() / 1000 + 59 * 86400);
+  });
+
+  it("refuses a bad code", async () => {
+    await call("/admin-api/oauth-apps/threads", THREADS);
+    const url = new URL((await call("/admin-api/connect/threads/start", {})).json.url as string);
+    const bad = await callback("threads", { code: "wrong", state: url.searchParams.get("state")! });
+    expect(backParams(bad.location).error).toMatch(/Invalid verification code/);
   });
 });
 
@@ -583,6 +623,7 @@ describe("connecting into the workspace the flow started from", () => {
     expect(r.providers).toEqual([
       expect.objectContaining({ provider: "instagram", ready: false }),
       expect.objectContaining({ provider: "youtube", ready: true }),
+      expect.objectContaining({ provider: "threads", ready: false }),
     ]);
     await youtubeFromApp(cara);
     r = (await app(cara, "/app-api/connections")).json as typeof r;

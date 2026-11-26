@@ -30,7 +30,7 @@ interface Connection {
   accounts: string[];
 }
 
-const APP_NAME: Record<string, string> = { meta: "Meta app", google: "Google app" };
+const APP_NAME: Record<string, string> = { meta: "Meta app", google: "Google app", threads: "Threads app" };
 
 /** Sends the browser to the provider's sign-in (after a passkey check when the last one is old). */
 async function startConnect(provider: string, reconnect?: string) {
@@ -40,7 +40,7 @@ async function startConnect(provider: string, reconnect?: string) {
   location.assign(r.url);
 }
 
-const PROVIDER_NAME: Record<string, string> = { instagram: "Instagram", youtube: "YouTube" };
+const PROVIDER_NAME: Record<string, string> = { instagram: "Instagram", youtube: "YouTube", threads: "Threads" };
 
 /** What the provider's redirect back says (…/connections?connected=… or ?error=…), as a toast, once. */
 function useReturn() {

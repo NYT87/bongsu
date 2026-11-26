@@ -24,6 +24,12 @@ const APP_GUIDE: Record<string, { title: string; idLabel: string; secretLabel: s
     secretLabel: "Instagram app secret",
     docs: "site/docs/instagram-graph.md",
   },
+  threads: {
+    title: "Threads app",
+    idLabel: "Threads app ID",
+    secretLabel: "Threads app secret",
+    docs: "site/docs/threads.md",
+  },
   google: {
     title: "Google app (YouTube)",
     idLabel: "Client ID",
@@ -37,7 +43,7 @@ export function OAuthApps(_: Props) {
   return (
     <Page
       title="OAuth apps"
-      intro="Your own Meta and Google apps: Bongsu signs in to Instagram and YouTube with them. Make each app once, register the redirect URL shown here, then paste its id and secret."
+      intro="Your own Meta, Threads and Google apps: Bongsu signs in to Instagram, Threads and YouTube with them. Make each app once, register the redirect URL shown here, then paste its id and secret."
     >
       {!data ? (
         <Loading error={error} retry={reload} />
