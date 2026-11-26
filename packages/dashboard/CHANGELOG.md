@@ -1,5 +1,12 @@
 # @bongsu/dashboard
 
+## 0.7.0
+
+### Minor Changes
+
+- f9387d8: Bluesky: connect an account by pasting its handle and an app password, then publish text posts and posts with up to 4 images (with alt texts), with the first and second comment as replies. A text over 300 characters, or an image over 1 MB, can't be approved.
+- 1c1a340: Threads: connect a profile with your Threads app (or a pasted token), then publish text posts, images, videos and carousels of up to 20 items, with alt texts, and the first and second comment as replies. Its replies show in the app's comments and its results (views, likes, replies, shares) are recorded. A text over 500 characters, or an image over 8 MB, can't be approved.
+
 ## 0.6.0
 
 ### Minor Changes

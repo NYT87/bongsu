@@ -1,5 +1,21 @@
 # @bongsu/web
 
+## 0.7.0
+
+### Minor Changes
+
+- b9e3c05: Cross-posting: schedule a draft to several accounts at once, on any networks. Each account gets its own item to approve; a caption over a network's limit is shortened for that account, and the app opens it so you can check it. If one account can't take the draft, nothing is scheduled and you're told which.
+
+### Patch Changes
+
+- 3d5d29e: A Trial Reel copy that didn't go out (its switch was turned off first, or a dry run) says "not posted" on the item page, instead of "posting" forever. A name another workspace has used is refused with "that name is taken" and nothing more: the answer no longer tells whether it's planned there, and that workspace's old approval can't reach your item. On Node, the local media folder keeps one checksum per file, so its memory no longer grows with every change.
+- Updated dependencies [8b158f8]
+- Updated dependencies [f9387d8]
+- Updated dependencies [732e4aa]
+- Updated dependencies [3d5d29e]
+- Updated dependencies [1c1a340]
+  - @bongsu/core@0.7.0
+
 ## 0.6.0
 
 ### Minor Changes
