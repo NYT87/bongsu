@@ -4,7 +4,8 @@ import { cleanup, render, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PausedBanner, WorkspaceSheet } from "../src/App";
-import type { Me } from "../src/common";
+import { type DraftsAnswer, type Me, type Shared, SharedCtx } from "../src/common";
+import { DraftsPage } from "../src/Drafts";
 import { ApprovedText, TrialCopy } from "../src/Item";
 import { YouCard } from "../src/Settings";
 import { fakeApi } from "./fake-api";
@@ -154,5 +155,69 @@ describe("who approved and who paused", () => {
     rerender(<PausedBanner />);
     expect(container.textContent).toContain("Nothing goes out until you resume.");
     expect(container.textContent).not.toContain("Paused by");
+  });
+});
+
+describe("scheduling a draft to several accounts (#30)", () => {
+  const answer: DraftsAnswer = {
+    accounts: ["demo_travel", "demo_bsky"],
+    accountInfo: { demo_travel: { platform: "instagram" }, demo_bsky: { platform: "bluesky" } },
+    drafts: [
+      {
+        id: "d_x",
+        kind: "photo",
+        account: "demo_travel",
+        source: "pwa",
+        created_by: "owner",
+        created_at: "2026-10-19 10:00",
+        // the payload type is a string record with media beside it: a literal needs the cast
+        payload: {
+          name: "photo",
+          folder: "20261020_DEMO",
+          caption: "Hello",
+          media: ["m1"],
+        } as unknown as DraftsAnswer["drafts"][number]["payload"],
+      },
+    ],
+  };
+  const page = () =>
+    render(
+      <SharedCtx.Provider
+        value={{ drafts: { data: answer, error: null, reload: () => {}, stale: null, at: null } } as unknown as Shared}
+      >
+        <DraftsPage />
+      </SharedCtx.Provider>,
+    );
+  const keys = ["post:20261020_DEMO/photo.demo_travel", "post:20261020_DEMO/photo.demo_bsky"];
+
+  it("sends every account picked, then opens the item whose caption was shortened", async () => {
+    const calls = fakeApi({
+      "GET uploads/enabled": { body: { enabled: false, stores: [] } },
+      "POST drafts/d_x/schedule": { body: { key: keys[0], keys, shortened: ["demo_bsky"] } },
+    });
+    page();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Schedule…" }));
+    const picks = screen.getByRole("group", { name: "Accounts" });
+    expect(within(picks).getByRole("button", { name: "@demo_travel" }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText(/Each account gets its own item/)).toBeNull();
+    await user.click(within(picks).getByRole("button", { name: "@demo_bsky" }));
+    expect(screen.getByText(/Each account gets its own item/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Schedule" }));
+    await waitFor(() => expect(location.hash).toBe(`#/item/${encodeURIComponent(keys[1])}`));
+    const sent = calls.find((c) => c.path === "drafts/d_x/schedule")?.body as Record<string, unknown>;
+    expect(sent.accounts).toEqual(["demo_travel", "demo_bsky"]);
+    expect(sent.account).toBeUndefined();
+  });
+
+  it("asks for an account when none is picked, and sends nothing", async () => {
+    const calls = fakeApi({ "GET uploads/enabled": { body: { enabled: false, stores: [] } } });
+    page();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Schedule…" }));
+    await user.click(screen.getByRole("button", { name: "@demo_travel" }));
+    await user.click(screen.getByRole("button", { name: "Schedule" }));
+    expect(await screen.findByText("Pick at least one account.")).toBeTruthy();
+    expect(calls.some((c) => c.path.startsWith("drafts/"))).toBe(false);
   });
 });

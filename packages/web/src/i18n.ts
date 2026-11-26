@@ -462,7 +462,10 @@ export const en = {
   "schedule.schedule": "Schedule",
   "schedule.publishAs": "Publish as",
   "schedule.reel": "Reel",
-  "schedule.account": "Account",
+  "schedule.accounts": "Accounts",
+  "schedule.pickAccount": "Pick at least one account.",
+  "schedule.crossHint":
+    "Each account gets its own item to approve. A caption over a network's limit is shortened for it: check it on the item.",
   "common.timeIn": "Time ({zone})",
   "schedule.itemKey": "(item key: {key})",
 

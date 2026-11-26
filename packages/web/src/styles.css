@@ -536,6 +536,23 @@ h3 {
   color: var(--fg);
   font-weight: 700;
 }
+/* accounts to pick, several at once (scheduling a draft) */
+.picks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.picks > .muted {
+  flex-basis: 100%;
+}
+.picks button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--card));
+  border-color: var(--accent);
+  color: var(--fg);
+  font-weight: 700;
+}
 .segmented button[aria-pressed="true"] .muted {
   color: var(--fg);
   font-weight: 400;
