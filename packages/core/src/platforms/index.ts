@@ -2,6 +2,7 @@
 // core names a platform. docs/platforms.md: how to add one.
 import { bluesky } from "./bluesky";
 import { instagram } from "./instagram";
+import { threads } from "./threads";
 import type { Platform } from "./types";
 import { youtube } from "./youtube";
 
@@ -9,6 +10,7 @@ const registry = new Map<string, Platform>([
   [instagram.id, instagram],
   [youtube.id, youtube],
   [bluesky.id, bluesky],
+  [threads.id, threads],
 ]);
 
 /** Adds (or replaces) a platform: a deployment's own network, or a test's fake one. */

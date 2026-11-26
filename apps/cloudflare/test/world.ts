@@ -223,6 +223,23 @@ export class World {
   /** The next createRecord writes the record but answers 502 (the answer is lost). */
   bskyLoseAnswer = false;
 
+  /** Threads (graph.threads.net): containers by id (their query parameters), the posts published from them, and the
+   *  switches a test flips. */
+  /** The OAuth token requests (their form fields). */
+  threadsCodes: Record<string, string>[] = [];
+  threadsContainers = new Map<string, { params: Record<string, string>; status: string; post?: string }>();
+  threadsPosts: { id: string; container: string; params: Record<string, string> }[] = [];
+  /** Containers stay IN_PROGRESS for this many status reads. */
+  threadsProcessing = 0;
+  /** Every container ends in ERROR with this message. */
+  threadsError: string | null = null;
+  /** The token was revoked: every call answers code 190. */
+  threadsRevoked = false;
+  /** The next threads_publish publishes but answers 502 (the answer is lost). */
+  threadsLoseAnswer = false;
+  /** Replies from other people, by the post they answer. */
+  threadsOthersReplies = new Map<string, { id: string; text: string; username: string; timestamp: string }[]>();
+
   fetch: typeof fetch = async (input, init) => {
     const req = new Request(input as RequestInfo, init);
     const url = new URL(req.url);
@@ -766,6 +783,95 @@ export class World {
       return new Response(
         `: connected\n\nevent: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text }] } })}\n\n`,
       );
+    }
+    if (url.hostname === "graph.threads.net") {
+      const q = Object.fromEntries(url.searchParams);
+      const token = q.access_token;
+      const p = url.pathname;
+      if (p === "/oauth/access_token") {
+        const b = await req.formData();
+        this.threadsCodes.push(Object.fromEntries(b) as Record<string, string>);
+        if (b.get("code") !== "th-code" || b.get("client_secret") !== "threads-secret")
+          return json({ error: { message: "Invalid verification code format.", code: 100 } }, 400);
+        return json({ access_token: "th-short", user_id: "th_user_1" });
+      }
+      if (this.threadsRevoked)
+        return json(
+          { error: { message: "Error validating access token: the session was invalidated", code: 190 } },
+          400,
+        );
+      if (p === "/access_token") {
+        if (token !== "th-short" || q.grant_type !== "th_exchange_token")
+          return json({ error: { message: "bad exchange", code: 100 } }, 400);
+        return json({ access_token: "th-token", token_type: "bearer", expires_in: 5184000 });
+      }
+      if (p === "/refresh_access_token") {
+        if (q.grant_type !== "th_refresh_token") return json({ error: { message: "bad refresh", code: 100 } }, 400);
+        return json({ access_token: "th-token-2", token_type: "bearer", expires_in: 5184000 });
+      }
+      if (token !== "th-token" && token !== "th-token-2")
+        return json({ error: { message: "Invalid OAuth access token", code: 190 } }, 400);
+      const path = p.replace(/^\/v1\.0\//, "");
+      const { access_token: _t, ...params } = q;
+      if (path === "me") return json({ id: "th_user_1", username: "demo_travel" });
+      if (req.method === "POST" && path === "th_user_1/threads") {
+        const id = `th_c${this.threadsContainers.size + 1}`;
+        this.threadsContainers.set(id, { params, status: "IN_PROGRESS" });
+        return json({ id });
+      }
+      if (req.method === "POST" && path === "th_user_1/threads_publish") {
+        const c = this.threadsContainers.get(params.creation_id);
+        if (!c) return json({ error: { message: "The requested resource does not exist", code: 24 } }, 400);
+        if (c.post) return json({ error: { message: "The media has already been published", code: 10 } }, 400);
+        // a reply is published at once; a post only once its container is processed
+        if (c.status !== "FINISHED" && !c.params.reply_to_id)
+          return json({ error: { message: "The media is not ready to be published", code: 24 } }, 400);
+        const id = `th_p${this.threadsPosts.length + 1}`;
+        c.post = id;
+        this.threadsPosts.push({ id, container: params.creation_id, params: c.params });
+        if (this.threadsLoseAnswer) {
+          this.threadsLoseAnswer = false;
+          return json({ error: { message: "Service temporarily unavailable" } }, 502);
+        }
+        return json({ id });
+      }
+      const [id, edge] = path.split("/");
+      const c = this.threadsContainers.get(id);
+      if (c && !edge) {
+        if (this.threadsError) c.status = "ERROR";
+        else if (c.status === "IN_PROGRESS" && this.threadsProcessing-- <= 0) c.status = "FINISHED";
+        return json({ id, status: c.status, ...(this.threadsError ? { error_message: this.threadsError } : {}) });
+      }
+      const post = this.threadsPosts.find((x) => x.id === id);
+      if (post && !edge)
+        return json({
+          id,
+          permalink: `https://www.threads.net/@demo_travel/post/${id}`,
+          timestamp: "2026-10-20T09:00:02+0000",
+        });
+      if (post && edge === "replies")
+        return json({
+          data: [
+            ...this.threadsPosts
+              .filter((x) => x.params.reply_to_id === id)
+              .map((x) => ({
+                id: x.id,
+                text: x.params.text,
+                username: "demo_travel",
+                timestamp: "2026-10-20T09:05:00+0000",
+              })),
+            ...(this.threadsOthersReplies.get(id) ?? []),
+          ],
+        });
+      if (post && edge === "insights") {
+        const values: Record<string, number> = { views: 120, likes: 9, replies: 2, reposts: 1, quotes: 0, shares: 3 };
+        return json({
+          data: params.metric
+            .split(",")
+            .map((name) => ({ name, period: "lifetime", values: [{ value: values[name] }] })),
+        });
+      }
+      return json({ error: { message: `fake Threads has no ${req.method} ${path}`, code: 100 } }, 400);
     }
     if (url.hostname === "bsky.social" && url.pathname.startsWith("/xrpc/")) {
       const method = url.pathname.slice("/xrpc/".length);

@@ -75,6 +75,7 @@ export interface StartedFlow {
 // ---- OAuth apps
 
 type AppScope = "workspace" | "instance";
+const APP_NAMES: Record<string, string> = { meta: "Meta", google: "Google", threads: "Threads" };
 
 /** The providers each OAuth app serves, with the redirect URLs to register in it. */
 function appProviders(publicUrl: string) {
@@ -211,9 +212,7 @@ export async function oauthApp(
   }
   if (!row) {
     if (o.scope) throw new ConnectError("the OAuth app changed: start again");
-    throw new ConnectError(
-      `add your ${appId === "meta" ? "Meta" : appId === "google" ? "Google" : appId} app first (OAuth apps)`,
-    );
+    throw new ConnectError(`add your ${APP_NAMES[appId] ?? appId} app first (OAuth apps)`);
   }
   return {
     clientId: row.client_id,

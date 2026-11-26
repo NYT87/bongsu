@@ -824,8 +824,9 @@ approvers creators, viewers editors. Deleting a workspace is left out; archiving
 
 New networks on the 2.10 interfaces: a platform file, a provider, its fake, a docs page each.
 
-- [ ] **Threads** (`threads-graph`): text, image, video and carousel posts, replies, insights; free API, same Meta app
-      model as Instagram.
+- [x] **Threads** (`threads-graph`): text, image, video and carousel posts, replies, insights; free API, same Meta app
+      model as Instagram. Done with Threads' own app id and secret (the "threads" OAuth app), a weekly token renewal,
+      500 graphemes and images up to 8 MB refused at approval; followers and reply controls are left out.
 - [x] **Bluesky** (`bluesky-atproto`): text and image posts (app password or OAuth); free, no review. Done with an app password, 300 graphemes, images up to 1 MB refused at approval; OAuth, video and an empty caption are left out.
 - [ ] **TikTok** (`tiktok-content`): video posts through the Content Posting API (upload → status → publish). Posts stay
       private until the app passes TikTok's audit; document it.

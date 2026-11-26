@@ -13,6 +13,13 @@ import { composioGrant } from "./instagram-composio";
 import { exchangeInstagramCode, instagramGrant, parseGraphCredentials, refreshGraphToken } from "./instagram-graph";
 import { InstagramProvider } from "./instagram-publish";
 import {
+  exchangeThreadsCode,
+  parseThreadsCredentials,
+  refreshThreadsToken,
+  ThreadsProvider,
+  threadsGrant,
+} from "./threads";
+import {
   ConnectionBroken,
   type ConnectSpec,
   type Grant,
@@ -182,6 +189,47 @@ registerProvider("bluesky-atproto", {
     if (!creds) throw new ConnectionBroken("no app password");
     await new BlueskyProvider(creds, fetcher).verify();
     return undefined;
+  },
+});
+
+registerProvider("threads", {
+  factory: async (env, fetcher, a) => {
+    if (a.platform !== "threads" || !a.externalId) return null;
+    const creds = parseThreadsCredentials(await connectionSecret(env, a.connection));
+    return creds ? new ThreadsProvider(creds.access_token, a.externalId, fetcher) : null;
+  },
+  connect: {
+    kind: "oauth2",
+    label: "Threads",
+    platform: "threads",
+    // the Threads use case of a Meta app has its own app id and secret, apart from Instagram's
+    app: "threads",
+    authorizeUrl: "https://threads.net/oauth/authorize",
+    tokenUrl: "https://graph.threads.net/oauth/access_token",
+    scopes: [
+      "threads_basic",
+      "threads_content_publish",
+      "threads_manage_replies",
+      "threads_read_replies",
+      "threads_manage_insights",
+    ],
+    scopeSeparator: ",",
+    pasteToken: true,
+    docs: "site/docs/threads.md",
+  },
+  exchange: (fetcher, app, code, _verifier, nowS) => exchangeThreadsCode(fetcher, app, code, nowS),
+  paste: (_env, fetcher, value) => {
+    const creds = parseThreadsCredentials(value);
+    if (!creds) throw new Error("paste the profile's long-lived Threads token");
+    return threadsGrant(fetcher, creds);
+  },
+  // as Instagram's: 60 days, renewable once a day old, the renewed token kept encrypted
+  keepAlive: async (env, fetcher, c, nowS) => {
+    const creds = parseThreadsCredentials(await connectionSecret(env, c));
+    if (!creds) throw new ConnectionBroken("no token");
+    if (!env.ENCRYPTION_KEY) throw new Error("ENCRYPTION_KEY isn't set, so a renewed token can't be stored");
+    const fresh = await refreshThreadsToken(fetcher, creds.access_token, nowS);
+    return { credentials: JSON.stringify(fresh), expiresAt: fresh.expires_at };
   },
 });
 

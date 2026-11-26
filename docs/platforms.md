@@ -87,6 +87,7 @@ The provider's step (`Step.data`) is kept with the job between runs, so a provid
 |---|---|---|
 | `instagram` | video (Reels), image, carousel, story | `instagram-graph` (Instagram's API, a token per account), `instagram-composio` |
 | `bluesky` | text, image (up to 4, with alt text; 1 MB each) | `bluesky-atproto` (AT Protocol, an app password per account) |
+| `threads` | text, image, video, carousel (2–20; alt text on images; 8 MB per image) | `threads-graph` (Threads' API, a token per profile, renewed weekly) |
 | `youtube` | none yet: comments on videos published elsewhere (the Shorts comments) | `youtube-data` (Data API, OAuth per channel) |
 
-Planned after v1 (roadmap, Phase 14): Threads, TikTok, X, LinkedIn, and YouTube uploads.
+Planned after v1 (roadmap, Phase 14): TikTok, X, LinkedIn, and YouTube uploads.
