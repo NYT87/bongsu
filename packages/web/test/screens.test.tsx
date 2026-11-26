@@ -3,7 +3,10 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApprovedText, type Me, PausedBanner, TrialCopy, WorkspaceSheet, YouCard } from "../src/App";
+import { PausedBanner, WorkspaceSheet } from "../src/App";
+import type { Me } from "../src/common";
+import { ApprovedText, TrialCopy } from "../src/Item";
+import { YouCard } from "../src/Settings";
 import { fakeApi } from "./fake-api";
 
 afterEach(() => {
