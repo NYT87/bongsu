@@ -79,6 +79,20 @@ describe("media store conformance: local (a directory)", () => {
     expect((await store.resolve("UPLOADS/_posted/a (2).mp4"))?.id).toBe(a);
     expect(await (await store.stream(a)).text()).toBe("one");
   });
+
+  it("keeps one checksum per file: a change replaces it, a deleted file's goes on the next walk (#98)", async () => {
+    const root = join(tmp, "store-sums");
+    const store = new LocalStore(root);
+    const sums = (store as unknown as { sums: Map<string, unknown> }).sums;
+    const a = await putFile(store, root, "a.mp4", "one");
+    const first = (await store.stat(a))!.checksum;
+    writeFileSync(join(root, "a.mp4"), "changed");
+    expect((await store.stat(a))!.checksum).not.toBe(first);
+    expect(sums.size).toBe(1);
+    rmSync(join(root, "a.mp4"));
+    expect(await store.stat(a)).toBeNull(); // a walk looks for it
+    expect(sums.size).toBe(0);
+  });
 });
 
 describe("the built app, served like Workers assets", () => {

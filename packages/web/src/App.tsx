@@ -859,6 +859,33 @@ export function ApprovedText({ approved }: { approved: NonNullable<Item["approve
   return <>{approved.by ? t("item.approvedByAt", { name: approved.by, when }) : t("item.approvedAt", { when })}</>;
 }
 
+/** A published Reel's Trial Reel copy: posting, shown, or not posted and why. A copy closed without going out (its
+ *  switch turned off before it posted, a dry run) is `done` with no post: not posted, though nothing went wrong (#99). */
+export function TrialCopy({ trial }: { trial: NonNullable<Item["trial"]> }) {
+  const bad = ["failed", "refused", "held"].includes(trial.state);
+  return (
+    <div className="card published">
+      <p className="small">
+        <span className={`pill${trial.state === "published" ? " ok" : bad ? " bad" : ""}`}>{t("results.trial")}</span>{" "}
+        {trial.state === "published"
+          ? t("item.trialShown", { when: trial.at ? when(trial.at) : t("item.published") })
+          : bad || trial.state === "done"
+            ? trial.error
+              ? t("item.trialNotPostedError", { error: trial.error })
+              : t("item.trialNotPosted")
+            : t("item.trialPosting")}
+      </p>
+      {trial.results && <ResultsLine r={trial.results} vs={t("results.vsRegular")} />}
+      {trial.permalink && (
+        <a className="button-link with-icon" href={trial.permalink} target="_blank" rel="noopener">
+          {ICON.external}
+          {t("item.openTrial")}
+        </a>
+      )}
+    </div>
+  );
+}
+
 /** The banner under the header while the scheduler is paused: who paused it, when the workspace names them. */
 export function PausedBanner({ pausedBy }: { pausedBy?: string | null }) {
   return (
@@ -1927,29 +1954,7 @@ function ItemPage({
       )}
       {!item.published && item.progress && <UploadLine p={item.progress} again={!!item.failed?.again} />}
       {item.trial && item.published && (item.trial.on || item.trial.state !== "planned") && (
-        <div className="card published">
-          <p className="small">
-            <span
-              className={`pill${item.trial.state === "published" ? " ok" : ["failed", "refused", "held"].includes(item.trial.state) ? " bad" : ""}`}
-            >
-              {t("results.trial")}
-            </span>{" "}
-            {item.trial.state === "published"
-              ? t("item.trialShown", { when: item.trial.at ? when(item.trial.at) : t("item.published") })
-              : ["failed", "refused", "held"].includes(item.trial.state)
-                ? item.trial.error
-                  ? t("item.trialNotPostedError", { error: item.trial.error })
-                  : t("item.trialNotPosted")
-                : t("item.trialPosting")}
-          </p>
-          {item.trial.results && <ResultsLine r={item.trial.results} vs={t("results.vsRegular")} />}
-          {item.trial.permalink && (
-            <a className="button-link with-icon" href={item.trial.permalink} target="_blank" rel="noopener">
-              {ICON.external}
-              {t("item.openTrial")}
-            </a>
-          )}
-        </div>
+        <TrialCopy trial={item.trial} />
       )}
 
       {item.format === "story" ? (

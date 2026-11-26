@@ -30,8 +30,9 @@ export class LocalStore implements MediaStore {
   private readonly root: string;
   /** inode → path relative to the root; checked on use, rebuilt by a walk when stale. */
   private paths = new Map<string, string>();
-  /** "path:size:mtime" → sha256, so an unchanged file isn't hashed again. */
-  private sums = new Map<string, string>();
+  /** inode → its sha256 and the "path:size:mtime" it was taken at, so an unchanged file isn't hashed again. One entry
+   *  per file: a change replaces it, and a walk drops the files that are gone (#98). */
+  private sums = new Map<string, { stamp: string; sum: string }>();
 
   constructor(
     root: string,
@@ -74,7 +75,7 @@ export class LocalStore implements MediaStore {
         name: basename(rel),
         mime: folder ? "folder" : mimeOf(rel),
         size: folder ? 0 : s.size,
-        checksum: folder ? "" : await this.sum(rel, s.size, s.mtimeMs),
+        checksum: folder ? "" : await this.sum(id, rel, s.size, s.mtimeMs),
         modifiedAt: s.mtime.toISOString(),
         folder,
         parent,
@@ -85,16 +86,15 @@ export class LocalStore implements MediaStore {
     }
   }
 
-  private async sum(rel: string, size: number, mtime: number) {
-    const key = `${rel}:${size}:${mtime}`;
-    let s = this.sums.get(key);
-    if (!s) {
-      const h = createHash("sha256");
-      for await (const chunk of createReadStream(await this.real(rel))) h.update(chunk as Buffer);
-      s = h.digest("hex");
-      this.sums.set(key, s);
-    }
-    return s;
+  private async sum(id: string, rel: string, size: number, mtime: number) {
+    const stamp = `${rel}:${size}:${mtime}`;
+    const known = this.sums.get(id);
+    if (known?.stamp === stamp) return known.sum;
+    const h = createHash("sha256");
+    for await (const chunk of createReadStream(await this.real(rel))) h.update(chunk as Buffer);
+    const sum = h.digest("hex");
+    this.sums.set(id, { stamp, sum });
+    return sum;
   }
 
   /** The path of an id: the cached one when it still has that inode, else found by walking the folder. */
@@ -116,6 +116,7 @@ export class LocalStore implements MediaStore {
       }
     };
     await walk("");
+    for (const known of this.sums.keys()) if (!this.paths.has(known)) this.sums.delete(known);
     return this.paths.get(id) ?? null;
   }
 
