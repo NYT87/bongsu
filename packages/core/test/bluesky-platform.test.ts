@@ -28,8 +28,15 @@ describe("bluesky platform", () => {
   it("counts a family emoji as one character", () => {
     expect(
       bluesky()
-        .lint("👨‍👩‍👧".repeat(300))
+        .lint("👨‍👩‍👧".repeat(100))
         .some((c) => c.status === "FAIL"),
     ).toBe(false);
+  });
+
+  it("fails a text over 3000 UTF-8 bytes even when it is under 300 characters", () => {
+    const fail = bluesky()
+      .lint("👨‍👩‍👧".repeat(300))
+      .find((c) => c.status === "FAIL");
+    expect(fail?.detail).toMatch(/3000 bytes/);
   });
 });

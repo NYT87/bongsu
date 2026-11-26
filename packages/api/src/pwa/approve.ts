@@ -226,13 +226,16 @@ export async function resolveItem(
   if (files.some((f) => !f.checksum))
     problems.push("the store hasn't finished processing a file: try again in a minute");
   const imageCount = files.filter((f) => !isVideo(f)).length;
+  // a network that takes no video (videoSecondsMax 0) refuses one at approval: dropping it would post less than approved
+  if (plat && plat.limits.videoSecondsMax === 0)
+    for (const f of files) if (isVideo(f)) problems.push(`${plat.name} can't post video: remove ${f.name}`);
   // some networks cap an image's bytes (Bluesky's blob limit): refuse it now, since nothing resizes it later
   const imageBytesMax = plat?.limits.imageBytesMax;
   if (plat && imageBytesMax !== undefined)
     for (const f of files)
       if (!isVideo(f) && f.size > imageBytesMax)
         problems.push(
-          `${f.name} is ${(f.size / 1e6).toFixed(1)} MB; ${plat.name} takes images up to ${imageBytesMax / 1e6} MB`,
+          `${f.name} is ${(Math.ceil(f.size / 1e4) / 100).toFixed(2)} MB; ${plat.name} takes images up to ${imageBytesMax / 1e6} MB`,
         );
   if (alt && altLines(alt).length > imageCount)
     problems.push(`alt.txt has ${altLines(alt).length} lines for ${imageCount} images`);

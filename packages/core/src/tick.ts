@@ -1034,8 +1034,10 @@ function postOptions(p: Payload, format: Format): Record<string, unknown> {
   return o;
 }
 
-/** The job's earlier step, when it left a private video on the platform (a job reopened by a new approval). */
-const previousUpload = (p: Payload): Step | undefined => (p.step?.data.videoId ? p.step : undefined);
+/** The job's earlier step, when it left a private video on the platform (a job reopened by a new approval), or when
+ *  its publishing call was made (a retry must finish what was prepared, not prepare it again). */
+const previousUpload = (p: Payload): Step | undefined =>
+  p.step?.data.videoId || (p.publishing && p.step) ? p.step : undefined;
 
 /** The provider's first step; its state goes with the job (payload.step) for check and finish on the next runs. */
 async function startPublishing(c: Ctx, job: JobRow, p: Payload, post: OutgoingPost) {

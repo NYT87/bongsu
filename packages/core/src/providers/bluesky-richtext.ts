@@ -1,10 +1,7 @@
 // Bluesky's rich text: a post is plain text plus facets, which point at byte ranges (UTF-8) of links and hashtags.
 // Without facets a link is not clickable, so the provider sends them with every post and reply.
 
-const graphemes = new Intl.Segmenter();
-
-/** Bluesky's 300 limit counts what a reader sees as one character, not UTF-16 units. */
-export const graphemeCount = (s: string): number => [...graphemes.segment(s)].length;
+export { graphemeCount } from "../formats/graphemes";
 
 export type Facet = {
   index: { byteStart: number; byteEnd: number };

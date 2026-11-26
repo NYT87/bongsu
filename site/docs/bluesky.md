@@ -32,8 +32,9 @@ the connection shows as broken and you get a note, and you reconnect with a new 
 
 ## Limits
 
-- **300 characters**, counted the way people see them (an emoji or a family emoji counts as one). A longer text can't
-  be approved.
+- **300 characters**, counted the way people see them (an emoji or a family emoji counts as one). The text also can't be over 3,000 bytes (a few hundred emoji). A longer text can't be
+  approved.
 - **1 MB per image.** Bluesky refuses a bigger image and Bongsu doesn't resize your files, so approval stops and tells
   you which image is too large: export a smaller one and approve again.
-- Videos aren't supported yet.
+- A post needs a caption, as everywhere in Bongsu.
+- Videos aren't supported yet: an item with a video can't be approved.

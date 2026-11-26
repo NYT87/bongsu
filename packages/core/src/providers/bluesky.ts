@@ -70,6 +70,20 @@ async function signIn(fetcher: typeof fetch, c: BlueskyCredentials): Promise<Ses
   }
 }
 
+/** A record key in TID form (13 base32-sortable characters: the time, then random bits), as Bluesky's own clients make. */
+function tid(): string {
+  const alphabet = "234567abcdefghijklmnopqrstuvwxyz";
+  let n = BigInt(Date.now()) * 1000n;
+  const rnd = crypto.getRandomValues(new Uint8Array(2));
+  n = (n << 10n) | BigInt(((rnd[0] << 8) | rnd[1]) & 0x3ff);
+  let out = "";
+  for (let i = 0; i < 13; i++) {
+    out = alphabet[Number(n & 31n)] + out;
+    n >>= 5n;
+  }
+  return out;
+}
+
 const rkeyOf = (uri: string) => uri.slice(uri.lastIndexOf("/") + 1);
 
 export class BlueskyProvider implements Provider {
@@ -102,21 +116,28 @@ export class BlueskyProvider implements Provider {
     return j.blob;
   }
 
-  async start(post: OutgoingPost): Promise<Step> {
+  /** Uploads the images and prepares the record, but writes nothing: the post goes live in `finish`, which the tick
+   *  guards (the publishing flag, the run's call budget, `retry`). The record's key is chosen here, so a retry can
+   *  tell whether an earlier call already created it. */
+  async start(post: OutgoingPost, previous?: Step): Promise<Step> {
+    // a retry after the publishing call: keep the record and its key, so `finish` can find what an earlier call made
+    if (previous?.data.rkey && previous.data.record) return previous;
+    if (post.media.some((m) => m.video))
+      return { state: "failed", data: {}, error: "Bluesky can't post video: remove it and approve again" };
     const s = await signIn(this.fetcher, this.creds);
     try {
       const images = [];
-      for (const [i, m] of post.media.filter((m) => !m.video).entries())
+      for (const [i, m] of post.media.entries())
         images.push({ alt: post.alts[i] ?? "", image: await this.blob(s, m.url) });
       const facets = facetsOf(post.caption);
-      const r = await this.record(s, {
+      const record = {
         $type: POST,
         text: post.caption,
         createdAt: new Date().toISOString(),
         ...(facets.length ? { facets } : {}),
         ...(images.length ? { embed: { $type: "app.bsky.embed.images", images } } : {}),
-      });
-      return { state: "ready", data: { uri: r.uri, cid: r.cid } };
+      };
+      return { state: "ready", data: { rkey: tid(), record } };
     } catch (e) {
       if (e instanceof BlueskyError && !transient(e.status)) return { state: "failed", data: {}, error: e.message };
       throw e;
@@ -127,13 +148,35 @@ export class BlueskyProvider implements Provider {
     return step;
   }
 
-  async finish(step: Step): Promise<Published> {
-    const uri = String(step.data.uri);
-    return {
-      mediaId: uri,
-      permalink: `https://bsky.app/profile/${this.creds.handle}/post/${rkeyOf(uri)}`,
-      publishedAt: null,
-    };
+  async finish(step: Step, retry = false): Promise<Published> {
+    const rkey = String(step.data.rkey);
+    const s = await signIn(this.fetcher, this.creds);
+    const uri = `at://${s.did}/${POST}/${rkey}`;
+    // an earlier call may have created it and lost its answer: look before writing again
+    const exists =
+      retry &&
+      (await xrpc(
+        this.fetcher,
+        `com.atproto.repo.getRecord?repo=${encodeURIComponent(s.did)}&collection=${POST}&rkey=${rkey}`,
+        {
+          method: "GET",
+          jwt: s.jwt,
+        },
+      ).then(
+        () => true,
+        (e) => {
+          if (e instanceof BlueskyError && e.status === 400) return false; // RecordNotFound
+          throw e;
+        },
+      ));
+    if (!exists)
+      await xrpc(this.fetcher, "com.atproto.repo.createRecord", {
+        method: "POST",
+        jwt: s.jwt,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ repo: s.did, collection: POST, rkey, record: step.data.record }),
+      });
+    return { mediaId: uri, permalink: `https://bsky.app/profile/${s.did}/post/${rkey}`, publishedAt: null };
   }
 
   async comment(mediaId: string, text: string): Promise<string> {

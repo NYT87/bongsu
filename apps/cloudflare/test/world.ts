@@ -219,6 +219,8 @@ export class World {
   bskyReject: string | null = null;
   /** The app password was revoked: createSession answers 401. */
   bskyRevoked = false;
+  /** The next createRecord writes the record but answers 502 (the answer is lost). */
+  bskyLoseAnswer = false;
 
   fetch: typeof fetch = async (input, init) => {
     const req = new Request(input as RequestInfo, init);
@@ -791,9 +793,15 @@ export class World {
         if (this.bskyReject !== null) return json({ error: "InvalidRequest", message: this.bskyReject }, 400);
         // biome-ignore lint/suspicious/noExplicitAny: the fake records whatever the provider sends
         const body = (await req.json()) as Record<string, any>;
-        const rkey = `3k${String(this.bskyRecords.length + 1).padStart(4, "0")}`;
+        const rkey = (body.rkey as string | undefined) ?? `3k${String(this.bskyRecords.length + 1).padStart(4, "0")}`;
+        if (this.bskyRecords.some((x) => x.rkey === rkey))
+          return json({ error: "InvalidRequest", message: "Record already exists" }, 400);
         const cid = `bafyrec${this.bskyRecords.length + 1}`;
         this.bskyRecords.push({ rkey, cid, body });
+        if (this.bskyLoseAnswer) {
+          this.bskyLoseAnswer = false;
+          return json({ error: "UpstreamFailure", message: "Bad Gateway" }, 502);
+        }
         return json({ uri: `at://${did}/app.bsky.feed.post/${rkey}`, cid });
       }
       if (method === "com.atproto.repo.getRecord") {

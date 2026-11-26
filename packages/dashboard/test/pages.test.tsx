@@ -155,3 +155,44 @@ describe("Members: Edit name", () => {
     expect(calls.filter((c) => c.path === "state")).toHaveLength(1); // nothing changed: no refresh
   });
 });
+
+describe("Connections: a Bluesky app password", () => {
+  it("asks for the handle and an app password, not a token", async () => {
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET connections": () => ({
+        body: {
+          connections: [],
+          appsReady: [],
+          kinds: [
+            {
+              provider: "bluesky-atproto",
+              kind: "token",
+              label: "Bluesky (app password)",
+              platform: "bluesky",
+              pasteToken: true,
+              docs: "site/docs/bluesky.md",
+              canPaste: true,
+            },
+          ],
+        },
+      }),
+      "POST connect/bluesky-atproto/paste": () => ({
+        body: { label: "@demo_travel.bsky.social", accounts: [{ id: "demo_travel-bsky-social", created: true }] },
+      }),
+    });
+    open("connections");
+    const user = userEvent.setup();
+    expect(await screen.findByText("Paste the handle and an app password.")).toBeTruthy();
+    expect(screen.queryByText("Sign in with the account and allow access.")).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Paste the app password" }));
+    const field = screen.getByLabelText(/handle:app-password/);
+    expect(screen.queryByText(/60 days/)).toBeNull();
+    await user.type(field, "demo_travel.bsky.social:aaaa-bbbb-cccc-dddd");
+    await user.click(screen.getByRole("button", { name: "Connect" }));
+    expect(await screen.findByText(/Connected @demo_travel.bsky.social/)).toBeTruthy();
+    expect(calls.find((c) => c.method === "POST")?.body).toEqual({
+      value: "demo_travel.bsky.social:aaaa-bbbb-cccc-dddd",
+    });
+  });
+});

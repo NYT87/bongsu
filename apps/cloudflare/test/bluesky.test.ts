@@ -71,7 +71,7 @@ describe("bluesky approval", () => {
   it("refuses an image over 1 MB", async () => {
     const w = new World();
     await seedImagePost(w, 1_000_001);
-    expect(await problems(w)).toContain("photo.jpg is 1.0 MB; Bluesky takes images up to 1 MB");
+    expect(await problems(w)).toContain("photo.jpg is 1.01 MB; Bluesky takes images up to 1 MB");
   });
 });
 
@@ -158,8 +158,8 @@ describe("bluesky provider", () => {
     expect(await jobRow()).toMatchObject({ state: "published" });
     const job = await env.DB.prepare("SELECT permalink, media_id FROM jobs WHERE item_key = ?1").bind(KEY).first();
     expect(job).toEqual({
-      permalink: "https://bsky.app/profile/demo_travel.bsky.social/post/3k0001",
-      media_id: "at://did:plc:demotravel0000000000000/app.bsky.feed.post/3k0001",
+      permalink: "https://bsky.app/profile/did:plc:demotravel0000000000000/post/" + w.bskyRecords[0].rkey,
+      media_id: "at://did:plc:demotravel0000000000000/app.bsky.feed.post/" + w.bskyRecords[0].rkey,
     });
   });
 
@@ -254,5 +254,64 @@ describe("bluesky provider", () => {
       (await listAccounts(env.DB, { workspaceId: "default", all: true })).some((a) => a.platform === "bluesky"),
     ).toBe(true);
     expect(await listAccounts(env.DB, { workspaceId: "other-workspace", all: true })).toEqual([]);
+  });
+
+  it("posts once when createRecord's answer is lost", async () => {
+    await publish({ caption: "Answer lost" });
+    w.bskyLoseAnswer = true;
+    await run(0, 5, 10);
+    expect(w.bskyRecords).toHaveLength(1);
+    expect(["published", "done"]).toContain((await jobRow())?.state);
+  });
+
+  it("creates nothing while the post is only started (the write belongs to the guarded publishing call)", async () => {
+    const { BlueskyProvider } = await import("@bongsu/core/providers/bluesky");
+    const pr = new BlueskyProvider({ handle: "demo_travel.bsky.social", password: "aaaa-bbbb-cccc-dddd" }, w.fetch);
+    const step = await pr.start({ format: "text", caption: "hi", alts: [], media: [], options: {} });
+    expect(step.state).toBe("ready");
+    expect(w.bskyRecords).toHaveLength(0);
+  });
+
+  it("refuses a video instead of dropping it", async () => {
+    const { BlueskyProvider } = await import("@bongsu/core/providers/bluesky");
+    const pr = new BlueskyProvider({ handle: "demo_travel.bsky.social", password: "aaaa-bbbb-cccc-dddd" }, w.fetch);
+    const step = await pr.start({
+      format: "image",
+      caption: "hi",
+      alts: [],
+      media: [{ id: "v", url: "https://x.test/v", video: true, name: "clip.mp4", checksum: "c" }],
+      options: {},
+    });
+    expect(step.state).toBe("failed");
+  });
+
+  it("takes a caption of 40 family emoji (320 UTF-16 units, 40 characters) from the agent write path", async () => {
+    const { writeTexts } = await import("@bongsu/core/data");
+    await publish({ caption: "x" });
+    await writeTexts(env.DB, { item_key: KEY, format: "image" }, { caption: "👨‍👩‍👧".repeat(40) }, "test", 0, 300);
+  });
+});
+
+describe("bluesky approval of videos", () => {
+  beforeEach(async () => {
+    await clearPlan();
+    await env.DB.batch(
+      [
+        "DELETE FROM accounts WHERE platform = 'bluesky'",
+        "DELETE FROM connections WHERE provider = 'bluesky-atproto'",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    await seedAccount();
+  });
+
+  it("refuses a video file", async () => {
+    const w = new World();
+    const id = w.drivePut("UPLOADS/_uploads/clip.mp4", { md5: "b".repeat(32), mimeType: "video/mp4", size: 10 });
+    await env.DB.prepare(
+      "INSERT INTO plan_items (item_key, format, account, folder, name, due_at, options, hold, sort, created_at, updated_at, workspace_id, content, media, caption) VALUES (?1, 'image', 'demo_bluesky', '20261020_DEMO', 'photo', ?2, '{}', 0, 1, 0, 0, 'default', 'db', ?3, 'A clip')",
+    )
+      .bind(KEY, await localToUnix("2026-10-20", "18:00"), JSON.stringify([{ store: "drive", id }]))
+      .run();
+    expect(await problems(w)).toContain("Bluesky can't post video: remove clip.mp4");
   });
 });
