@@ -636,11 +636,14 @@ async function advance(c: Ctx, job: JobRow): Promise<boolean> {
   return true;
 }
 
-/** A job that failed for good: a private video it uploaded is kept (never deleted on a failure), and the note says
- *  where it is. */
+/** A job that failed for good. Once its publishing call was made the post may be live (a lost answer, then "already
+ *  published" on the retries): the note says to check it there, never to publish it by hand, which would post it
+ *  twice. A private video it uploaded and never published is kept (never deleted on a failure), and the note says so. */
 async function failedNote(c: Ctx, job: JobRow, p: Payload, msg: string) {
-  if (!previousUpload(p)) return N.jobFailed(job.item_key, msg);
-  return N.providerFailed(job.item_key, await platformOf(c, p, job.workspace_id), msg, "kept");
+  if (mayBeLive(job, p)) return N.jobFailed(job.item_key, msg, await platformOf(c, p, job.workspace_id));
+  if (p.step?.data.videoId)
+    return N.providerFailed(job.item_key, await platformOf(c, p, job.workspace_id), msg, "kept");
+  return N.jobFailed(job.item_key, msg);
 }
 
 /** How long a day's quota-note marker is kept (a Pacific day, with room for the time zones). */
@@ -960,16 +963,18 @@ const isVideoRef = async (c: Ctx, m: MediaRef, workspaceId: string) =>
 
 async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   if (p.trial) return stepTrialPending(c, job, p);
+  // a job still pending after its publishing call (Bluesky's post is made in finish, its answer lost): it may be live
+  const live = mayBeLive(job, p) ? await platformOf(c, p, job.workspace_id) : undefined;
   if (c.nowS - job.due_at > CATCH_UP_S) {
     await c.setJob(job.id, { state: "held", last_error: "missed the catch-up window", notified: true });
-    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600), job.workspace_id);
+    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600, live), job.workspace_id);
     return;
   }
   const r = await recheck(c, job, p);
   if (r) return settle(c, job, p, r);
 
   const v = await verify(c, p, job.workspace_id, job.item_key);
-  if (v.problem) return refuse(c, job, v.problem);
+  if (v.problem) return refuse(c, job, v.problem, undefined, live);
   const media = p.approval!.media;
 
   if (c.dry) {

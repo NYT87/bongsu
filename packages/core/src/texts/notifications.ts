@@ -24,16 +24,19 @@ export const jobVerdict = (key: string, state: string, reason: string | null | u
   text: reason ?? "",
   target: key,
 });
-export const jobFailed = (key: string, message: string): Note => ({
-  group: "problems",
-  title: `${key}: failed`,
-  text: message,
-  target: key,
-});
+
 /** `live`: the platform's name when the post may already be public there (the publishing call was made): the job
  *  keeps it, never deleting or redoing it, so the owner has to look at it there. */
 const liveKept = (live?: string) =>
   live ? `\nIt may already be public on ${live}: it was kept, so check it there.` : "";
+/** `live`: as jobRefused's, when the publishing call was made: it may already be public, so it's checked there, never
+ *  published again by hand. */
+export const jobFailed = (key: string, message: string, live?: string): Note => ({
+  group: "problems",
+  title: `${key}: failed`,
+  text: `${message}${liveKept(live)}`,
+  target: key,
+});
 export const jobRefused = (key: string, reason: string, live?: string): Note => ({
   group: "problems",
   title: `${key}: refused`,
