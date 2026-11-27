@@ -66,7 +66,14 @@ const api = process.env.BONGSU_API ?? "http://localhost:8787";
 export default defineConfig({
   plugins: [react(), versionFile, brandFiles, iconCheck],
   define: { __APP_VERSION__: JSON.stringify(version), __APP_BRAND__: JSON.stringify(appBrand) },
-  build: { outDir: "dist", emptyOutDir: true, sourcemap: false },
+  // privacy/index.html: the instance's privacy page (<PUBLIC_URL>/privacy/, the link Google's consent screen asks for),
+  // built beside the app so it takes the app's name and colour too
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    sourcemap: false,
+    rollupOptions: { input: { app: "index.html", privacy: "privacy/index.html" } },
+  },
   server: { proxy: { "/app-api": api, "/m": api } },
   // Vitest blanks CSS imports by default; test/styles.test.ts reads the stylesheet's rules.
   test: { css: { include: [/styles\.css/] } },

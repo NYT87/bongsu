@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#131f2a" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Bongsu</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ink: #1b2530;
+        --muted: #55606b;
+        --paper: #fbfaf7;
+        --rule: #d9dde1;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: #e6e9ec;
+          --muted: #9aa5af;
+          --paper: #131f2a;
+          --rule: #2b3946;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 42rem;
+        margin: 0 auto;
+        padding: 2.5rem 1rem 4rem;
+      }
+      h1 {
+        font-size: 1.75rem;
+        line-height: 1.25;
+        margin: 0 0 0.5rem;
+      }
+      h2 {
+        font-size: 1.1rem;
+        margin: 2rem 0 0.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--rule);
+      }
+      p,
+      li {
+        margin: 0.5rem 0;
+      }
+      .lead {
+        color: var(--muted);
+      }
+      a {
+        color: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Privacy policy</h1>
+      <p class="lead">
+        This site runs Bongsu, open-source software that publishes posts and videos on the dates its owners plan, once
+        a person has approved each one. It's run by its owner, not by the Bongsu project: questions about this
+        instance go to the person who gave you access to it.
+      </p>
+
+      <h2>What it keeps</h2>
+      <ul>
+        <li>
+          The plan: posts and videos, their captions, titles and comments, when they go out, and who approved them.
+        </li>
+        <li>
+          The accounts you connect (Instagram, YouTube, Threads and the like) and the access their sign-in grants, stored
+          encrypted in this instance's database.
+        </li>
+        <li>Your name, email, passkeys and the devices that receive its notifications.</li>
+        <li>Results of what it published: views, likes, comments and followers, as the platforms report them.</li>
+      </ul>
+      <p>The media itself stays where you keep it (your Google Drive or a storage bucket); the database only refers to it.</p>
+
+      <h2>Google user data</h2>
+      <p>When you connect a Google account, this instance asks for:</p>
+      <ul>
+        <li>
+          <strong>Google Drive</strong>: to read the files in its workspaces' folders, send them to the platforms you
+          publish to, make the folders it needs, take uploads from its app, and move published files to a
+          <code>_posted</code> folder. It never deletes or trashes a file.
+        </li>
+        <li>
+          <strong>YouTube</strong>: to upload the videos you approved, set their details, subtitles and thumbnails, make
+          them public at the planned time, and post, read and answer comments on your channel's videos.
+        </li>
+        <li><strong>YouTube Analytics</strong>, read only: the subscribers each video brought.</li>
+      </ul>
+      <p>
+        This data is used only to provide these features to you. It isn't sold, used for advertising, or shared with
+        anyone except the platforms you publish to and the tools this instance's admins connect with their own keys.
+        Its use and transfer of information received from Google APIs adheres to the
+        <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
+        including the Limited Use requirements.
+      </p>
+
+      <h2>Your choices</h2>
+      <ul>
+        <li>
+          Remove a connection or a storage from the dashboard, or withdraw this instance's access in your Google account
+          (<a href="https://myaccount.google.com/permissions">Third-party connections</a>) or in the platform's own
+          settings.
+        </li>
+        <li>Ask the person who runs this instance to export or delete what it keeps about you.</li>
+      </ul>
+    </main>
+  </body>
+</html>
