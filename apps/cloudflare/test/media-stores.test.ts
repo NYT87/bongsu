@@ -407,6 +407,29 @@ describe("stores scoped by workspace", () => {
     expect(await one.inside("other_inbox", "UPLOADS")).toBe(false);
   });
 
+  it("lists a folder over several Drive pages in full, and finds a folder past the first page instead of making it again", async () => {
+    for (let i = 1; i <= 5; i++) w.drivePut(`UPLOADS/inbox/demo_travel/${i}.mp4`, { md5: "m", mimeType: "video/mp4" });
+    // a subfolder listed last, which Drive's name search doesn't find yet (a folder made a moment ago)
+    w.drivePut("UPLOADS/inbox/demo_travel/later/1.txt", { md5: "m", mimeType: "text/plain" });
+    const later = [...w.drive.entries()].find(([, f]) => f.name === "later")?.[0] as string;
+    w.driveUnsearchable.add(later);
+    w.drivePage = 2;
+    const store = new DriveStore({ oauth: TEST_DRIVE_GRANT, fetch: w.fetch, id: "drive" });
+    clearFolderCache();
+    const folder = (await store.resolve("UPLOADS/inbox/demo_travel"))?.id as string;
+    expect((await store.list(folder)).map((e) => e.name).sort()).toEqual([
+      "1.mp4",
+      "2.mp4",
+      "3.mp4",
+      "4.mp4",
+      "5.mp4",
+      "later",
+    ]);
+    const folders = () => [...w.drive.values()].filter((f) => f.name === "later").length;
+    expect(await store.ensureFolder("UPLOADS/inbox/demo_travel/later")).toBe(later);
+    expect(folders()).toBe(1);
+  });
+
   it("checks a carousel's files with one stat each: their folders are walked once, and a file outside still fails", async () => {
     const ids = Array.from({ length: 10 }, (_, i) =>
       w.drivePut(`UPLOADS/inbox/demo_travel/post1/${String(i + 1).padStart(2, "0")}.jpg`, {

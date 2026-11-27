@@ -92,13 +92,22 @@ export class DriveStore implements MediaStore {
     return this.o.root ?? "root";
   }
 
+  /** Every file matching `q`, page after page: one page holds at most 1000, and a folder can hold more. */
   private async query(q: string): Promise<DriveFile[]> {
-    const r = await this.o.fetch(
-      `${API}?q=${encodeURIComponent(q)}&fields=${encodeURIComponent(`files(${FIELDS})`)}&pageSize=200`,
-      { headers: await this.auth() },
-    );
-    if (!r.ok) throw new Error(`drive list: ${r.status}`);
-    return ((await r.json()) as { files: DriveFile[] }).files;
+    const fields = encodeURIComponent(`nextPageToken,files(${FIELDS})`);
+    const out: DriveFile[] = [];
+    let token: string | undefined;
+    do {
+      const page = token ? `&pageToken=${encodeURIComponent(token)}` : "";
+      const r = await this.o.fetch(`${API}?q=${encodeURIComponent(q)}&fields=${fields}&pageSize=1000${page}`, {
+        headers: await this.auth(),
+      });
+      if (!r.ok) throw new Error(`drive list: ${r.status}`);
+      const body = (await r.json()) as { files: DriveFile[]; nextPageToken?: string };
+      out.push(...body.files);
+      token = body.nextPageToken;
+    } while (token);
+    return out;
   }
 
   async stat(id: string) {
