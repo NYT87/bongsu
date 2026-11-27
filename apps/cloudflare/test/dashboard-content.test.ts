@@ -3,7 +3,7 @@
 // editor plans but never approves, pauses or resumes; the app's own routes (sign-in, push, its settings) aren't there.
 import { env } from "cloudflare:workers";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
-import { appRoutes } from "@bongsu/api/pwa/routes";
+import { APP_ONLY, appRoutes, CONTENT_HOST } from "@bongsu/api/pwa/routes";
 import { createSession } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
@@ -155,5 +155,65 @@ describe("the dashboard's content routes", () => {
     const admin = await dashboard("admin");
     await env.DB.prepare("UPDATE workspaces SET archived_at = 1 WHERE id = 'default'").run();
     expect((await send("dashboard", admin, "/admin-api/content/queue")).status).toBe(403);
+  });
+
+  it("serves the content routes and declares every other route of the app's as app-only", async () => {
+    // The dashboard may serve these. A route added to the app must be put here or in APP_ONLY (pwa/routes.ts): one
+    // left out of both fails this test, so it can't reach the dashboard session unseen (both cookies travel together).
+    const CONTENT = [
+      "/approve/options",
+      "/approve/verify",
+      "/calendar",
+      "/comments",
+      "/comments/:id/reply",
+      "/comments/seen",
+      "/comments/unseen",
+      "/day",
+      "/drafts",
+      "/drafts/:id/refuse",
+      "/drafts/:id/schedule",
+      "/drafts/new",
+      "/item",
+      "/item/cover",
+      "/item/hold",
+      "/item/location",
+      "/item/metrics",
+      "/item/reschedule",
+      "/item/texts",
+      "/item/title",
+      "/item/trial",
+      "/item/youtube",
+      "/jobs",
+      "/me",
+      "/media-stores",
+      "/notifications",
+      "/pause",
+      "/platforms",
+      "/queue",
+      "/queue/groups",
+      "/resume/options",
+      "/resume/verify",
+      "/stats",
+      "/stats/channel",
+      "/status",
+      "/uploads/enabled",
+      "/uploads/start",
+      "/video/metrics",
+      "/youtube/release/options",
+      "/youtube/release/verify",
+    ];
+    const appOnly = (path: string) =>
+      APP_ONLY.some((p) => (p.endsWith("/*") ? path.startsWith(p.slice(0, -1)) : path === p));
+    const handlers = appRoutes(w.fetch, fake, CONTENT_HOST)
+      .routes.filter((r) => r.method !== "ALL") // middleware and the app-only 404s
+      .map((r) => r.path.slice(CONTENT_HOST.prefix.length));
+    const unsorted = [...new Set(handlers)].filter((path) => !CONTENT.includes(path) && !appOnly(path));
+    expect(unsorted, "routes neither content nor app-only").toEqual([]);
+    // and each app-only one answers 404 under the dashboard
+    const admin = await dashboard("admin");
+    for (const path of new Set(handlers.filter(appOnly)))
+      expect((await send("dashboard", admin, CONTENT_HOST.prefix + path.replace(/:\w+/g, "x"), {})).status, path).toBe(
+        404,
+      );
   });
 });

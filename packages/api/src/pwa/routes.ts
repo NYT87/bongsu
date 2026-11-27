@@ -129,7 +129,7 @@ export const CONTENT_HOST: AppHost = { prefix: "/admin-api/content", app: "dashb
 /** The app's own routes, under its host's prefix: signing in, invites, switching workspace, push, notification
  *  settings, its time zone and names, connecting accounts. The dashboard has its own for these, so its content host
  *  answers them with a 404. */
-const APP_ONLY = [
+export const APP_ONLY = [
   "/setup/*",
   "/login/*",
   "/logout",
@@ -373,7 +373,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   });
 
   app.post(`${P}/logout`, async (c) => {
-    await endSession(c.env.DB, readCookie(c.req.header("Cookie")));
+    await endSession(c.env.DB, readCookie(c.req.header("Cookie"), "pwa"));
     c.header("Set-Cookie", sessionCookie("x", 0));
     return c.json({ signedIn: false });
   });
@@ -1081,7 +1081,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     `${P}/session/workspace`,
     wrap(async (c) => {
       // the app's session only: the dashboard's keeps its own workspace
-      const token = readCookie(c.req.header("Cookie"));
+      const token = readCookie(c.req.header("Cookie"), "pwa");
       const id = String((await body(c)).id ?? "");
       // the session's user, with or without a workspace now: mayOpen decides where they may go
       const w = token && (await openWorkspace(c.env.DB, token, c.get("session").userId, id, nowS()));
@@ -1094,7 +1094,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   app.post(
     `${P}/session/leave`,
     wrap(async (c) => {
-      const token = readCookie(c.req.header("Cookie"));
+      const token = readCookie(c.req.header("Cookie"), "pwa");
       const id = me(c).workspaceId;
       if (!token) throw new ops.ApiError(401, "sign in");
       try {
