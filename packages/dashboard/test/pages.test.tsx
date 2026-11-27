@@ -244,10 +244,26 @@ describe("Media: Google Drive's root folder", () => {
       "POST media-stores/drive/start": { body: { url: "https://accounts.google.com/o/oauth2/v2/auth?x=1" } },
     });
     open("media");
-    await userEvent.type(await screen.findByLabelText("Root folder"), "bongsu-media");
+    await userEvent.type(await screen.findByLabelText(/^Root folder/), "bongsu-media");
     await userEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/v2/auth?x=1"));
     expect(calls.find((c) => c.path === "media-stores/drive/start")?.body).toEqual({ root: "bongsu-media" });
+  });
+
+  it("asks for the root folder before connecting: an empty field says why and sends nothing", async () => {
+    const calls = fakeApi({ "GET state": admin, "GET media-stores": stores() });
+    open("media");
+    const field = await screen.findByLabelText(/^Root folder \(required\)/);
+    expect(field.getAttribute("placeholder")).toBeNull(); // no grey example that reads like a value
+    const connect = screen.getByRole("button", { name: "Connect Google Drive" });
+    expect(connect.getAttribute("aria-disabled")).toBe("true");
+    await userEvent.click(connect);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/Type the root folder first/);
+    expect(calls.some((c) => c.path === "media-stores/drive/start")).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+    await userEvent.type(field, "bongsu-media");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(connect.getAttribute("aria-disabled")).toBe("false");
   });
 
   it("shows a connected Drive's root, saves another, and connects again keeping it", async () => {
@@ -258,7 +274,7 @@ describe("Media: Google Drive's root folder", () => {
       "POST media-stores/drive/start": { body: { url: "https://accounts.google.com/o/oauth2/v2/auth?x=2" } },
     });
     open("media");
-    const field = await screen.findByLabelText("Root folder");
+    const field = await screen.findByLabelText(/^Root folder/);
     expect(field).toHaveProperty("value", "bongsu-media");
     expect(screen.getByText(/each workspace's folder in bongsu-media/)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Connect again" }));

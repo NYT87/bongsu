@@ -127,7 +127,9 @@ Checklist:
 
 The `drive` store (`media/drive.ts`) does everything with one OAuth grant of the owner's, made by **Connect Google
 Drive** with the owner's Google app (`oauth_apps` id `google`, the one YouTube uses) and the scope `drive`: it sees the
-files the owner drops in by hand and can move them. Its settings hold an optional **root folder** (`{root: {id, name}}`),
+files the owner drops in by hand and can move them. Its settings hold its **root folder** (`{root: {id, name}}`), required
+since its first connect needs one (`rootInput` refuses an empty one; a store saved before root folders has none and
+keeps working, found by name anywhere, until one is saved),
 typed on the Media page (a name at the top of My Drive, or a folder's link or id) and found with the grant: at the start
 of Connect Google Drive it rides in `oauth_states.flow_settings` until the callback has the grant; `saveDriveRoot`
 changes it later. With a root, a workspace's folder is looked up and made only inside it; Connect again keeps it.

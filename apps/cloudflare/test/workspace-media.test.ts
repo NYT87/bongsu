@@ -67,8 +67,13 @@ const as = async (userId: string, role?: string): Promise<Call> => {
   return caller(token);
 };
 
+/** The Drive root folder the tests connect with: every connect names one. */
+const ROOT = "Bongsu media";
+
 beforeEach(async () => {
   w = new World();
+  // the root folder each Drive connect names (a root is required)
+  w.drive.set("root-default-id", { md5: "", mimeType: "application/vnd.google-apps.folder", name: ROOT });
   e = await testEnv(env, { PUBLIC_URL: "https://bongsu.test", RP_ID: "bongsu.test" } as Partial<Env>);
   await env.DB.batch(
     [
@@ -330,9 +335,9 @@ describe("a workspace's media settings", () => {
 
   it("a workspace's Connect Google Drive comes back to its Settings, audited in the workspace", async () => {
     const amy = await as("amy", "admin");
-    expect((await amy("/admin-api/settings/media/stores/drive/start", {})).status).toBe(400); // no Google app yet
+    expect((await amy("/admin-api/settings/media/stores/drive/start", { root: ROOT })).status).toBe(400); // no Google app yet
     await amy("/admin-api/settings/oauth-apps/google", { clientId: "own-g", clientSecret: "own-secret" });
-    const start = await amy("/admin-api/settings/media/stores/drive/start", {});
+    const start = await amy("/admin-api/settings/media/stores/drive/start", { root: ROOT });
     const flowCookie = start.setCookies.find((c) => c.startsWith("bongsu_oauth="))!.split(";")[0];
     const url = new URL(start.json.url as string);
     expect(url.searchParams.get("client_id")).toBe("own-g");

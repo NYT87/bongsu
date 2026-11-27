@@ -91,10 +91,15 @@ const driveCallback = (q: string, flowCookie: string = driveFlow) =>
 const AT = new Date("2026-10-20T00:00:00Z");
 const S3_FORM = { ...TEST_S3_SETTINGS, ...TEST_S3_KEYS };
 
+/** The Drive root folder the tests connect with: every connect names one. */
+const ROOT = "Bongsu media";
+
 beforeEach(async () => {
   cookie = "";
   driveFlow = "";
   w = new World();
+  // the root folder each Drive connect names (a root is required)
+  w.drive.set("root-default-id", { md5: "", mimeType: "application/vnd.google-apps.folder", name: ROOT });
   await env.DB.batch(
     [
       ...UNBOOTSTRAP,
@@ -426,7 +431,7 @@ describe("stores scoped by workspace", () => {
 describe("Connect Google Drive", () => {
   it("asks Google for the drive scope with PKCE, and saves the grant as the Drive store", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
-    expect((await call("/admin-api/media-stores/drive/start", {})).status).toBe(400); // no Google app yet
+    expect((await call("/admin-api/media-stores/drive/start", { root: ROOT })).status).toBe(400); // no Google app yet
     await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
     const apps = (await call("/admin-api/oauth-apps")).json.apps as {
       id: string;
@@ -435,7 +440,7 @@ describe("Connect Google Drive", () => {
     expect(apps.find((a) => a.id === "google")?.providers.map((p) => p.redirectUri)).toContain(
       "https://bongsu.test/admin-api/media-stores/drive/callback",
     );
-    const url = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
+    const url = new URL((await call("/admin-api/media-stores/drive/start", { root: ROOT })).json.url as string);
     expect(url.searchParams.get("scope")).toBe("https://www.googleapis.com/auth/drive");
     expect(url.searchParams.get("redirect_uri")).toBe("https://bongsu.test/admin-api/media-stores/drive/callback");
     w.googleChallenge = url.searchParams.get("code_challenge")!;
@@ -452,7 +457,7 @@ describe("Connect Google Drive", () => {
     );
     expect(new URL(wrong.location!).searchParams.get("error")).toMatch(/isn't valid/);
 
-    const url2 = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
+    const url2 = new URL((await call("/admin-api/media-stores/drive/start", { root: ROOT })).json.url as string);
     w.googleChallenge = url2.searchParams.get("code_challenge")!;
     const back = await driveCallback(`code=g-code&state=${url2.searchParams.get("state")}`);
     expect(back.location).toBe("https://bongsu.test/dashboard/admin/media?connected=drive");
@@ -530,18 +535,35 @@ describe("Connect Google Drive", () => {
     expect(await settings()).toEqual({ root: { id: "root-folder-id-2", name: "shared media" } });
   });
 
-  it("saves another root for a connected Drive, making the folders there; empty means the top of My Drive", async () => {
+  it("saves another root for a connected Drive, making the folders there, and refuses an empty one", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
-    await connectDrive(""); // no root: the workspaces' folders at the top, made when missing
-    for (const f of await activeFolders()) expect(folderIn(folderIn(undefined, f), "inbox"), f).toBeDefined();
+    await connectDrive(ROOT);
     w.drive.set("root-folder-id-3", { md5: "", mimeType: FOLDER, name: "later root" });
     expect((await call("/admin-api/media-stores/drive/root", { root: "later root" })).json).toEqual({
       saved: true,
       settings: { root: { id: "root-folder-id-3", name: "later root" } },
     });
     for (const f of await activeFolders()) expect(folderIn(folderIn("root-folder-id-3", f), "inbox"), f).toBeDefined();
-    expect((await call("/admin-api/media-stores/drive/root", { root: "" })).json.settings).toEqual({});
+    for (const root of ["", "  "]) {
+      const r = await call("/admin-api/media-stores/drive/root", { root });
+      expect([r.status, r.json.error]).toEqual([400, expect.stringMatching(/type the root folder/)]);
+    }
     expect((await call("/admin-api/media-stores/drive/root", { root: "nope" })).status).toBe(400);
+  });
+
+  it("refuses a first connect without a root; a Drive connected before root folders connects again as it is", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
+    for (const b of [{}, { root: "" }]) {
+      const r = await call("/admin-api/media-stores/drive/start", b);
+      expect([r.status, r.json.error], JSON.stringify(b)).toEqual([400, expect.stringMatching(/type the root folder/)]);
+    }
+    // a store saved before root folders: no root in its settings
+    await env.DB.prepare(
+      "INSERT INTO media_store (id, kind, is_default, settings, credentials, status, updated_at) VALUES ('drive', 'drive', 1, '{}', NULL, 'ok', 0)",
+    ).run();
+    expect((await call("/admin-api/media-stores/drive/start", {})).status).toBe(200);
+    expect((await call("/admin-api/media-stores/drive/start", { root: "" })).status).toBe(400);
   });
 
   it("makes each folder once when Drive's search lags the creates: connecting, then saving the root again", async () => {
@@ -564,7 +586,7 @@ describe("Connect Google Drive", () => {
 
   it("refuses a grant without access to Drive", async () => {
     await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
-    const url = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
+    const url = new URL((await call("/admin-api/media-stores/drive/start", { root: ROOT })).json.url as string);
     w.googleChallenge = url.searchParams.get("code_challenge")!;
     w.googleGrantScope = "https://www.googleapis.com/auth/drive.file";
     const back = await driveCallback(`code=g-code&state=${url.searchParams.get("state")}`);
@@ -574,9 +596,9 @@ describe("Connect Google Drive", () => {
   it("finishes only in the browser that started it: no cookie, another flow's or a forged one spends no code", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
     await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
-    const first = await call("/admin-api/media-stores/drive/start", {});
+    const first = await call("/admin-api/media-stores/drive/start", { root: ROOT });
     const firstCookie = driveFlow;
-    const start = await call("/admin-api/media-stores/drive/start", {});
+    const start = await call("/admin-api/media-stores/drive/start", { root: ROOT });
     const mine = driveFlow;
     expect(start.setCookies.find((x) => x.startsWith("bongsu_oauth="))).toMatch(
       /^bongsu_oauth=[A-Za-z0-9_-]{43}; Path=\/admin-api\/media-stores\/drive\/callback; HttpOnly; Secure; SameSite=Lax; Max-Age=900$/,
@@ -629,7 +651,7 @@ describe("Connect Google Drive for a workspace", () => {
     return id;
   }
   const start = async (userId: string, ws: string) => {
-    const flow = await startDriveConnect(e, userId, ws, Math.floor(Date.now() / 1000));
+    const flow = await startDriveConnect(e, userId, ws, Math.floor(Date.now() / 1000), ROOT);
     const url = new URL(flow.url);
     w.googleChallenge = url.searchParams.get("code_challenge")!;
     w.googleGrantScope = "https://www.googleapis.com/auth/drive";
@@ -697,7 +719,7 @@ describe("Connect Google Drive for a workspace", () => {
     const c3 = await driveCallback(`code=g-code&state=${creator.url.searchParams.get("state")}`, creator.cookie);
     expect(new URL(c3.location!).pathname).toBe("/dashboard/settings/media");
     // the instance's own flow stays on the Media page; so does a callback whose state is unknown
-    const url = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
+    const url = new URL((await call("/admin-api/media-stores/drive/start", { root: ROOT })).json.url as string);
     w.googleChallenge = "not-the-challenge";
     const inst = await driveCallback(`code=g-code&state=${url.searchParams.get("state")}`);
     expect(new URL(inst.location!).pathname).toBe("/dashboard/admin/media");

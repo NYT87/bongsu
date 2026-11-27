@@ -283,18 +283,18 @@ export async function removeStore(env: Env, scope: StoreScope, kind: StoreKind, 
 
 // ---- Connect Google Drive
 
-/** A root folder as typed in the dashboard (a name at the top of My Drive, a folder's link or id), trimmed; "" for
- *  none (the workspaces' folders at the top of My Drive). */
+/** A root folder as typed in the dashboard (a name at the top of My Drive, a folder's link or id), trimmed. Required:
+ *  without one, the workspaces' folders would land at the top of My Drive, among everything else there. */
 export function rootInput(v: unknown): string {
   const r = String(v ?? "").trim();
+  if (!r) throw new StoreError("type the root folder: a folder's name at the top of My Drive, or its link");
   if (r.length > 300 || [...r].some((ch) => ch < " "))
     throw new StoreError("the root folder: a folder's name or its link");
   return r;
 }
 
-/** Drive's settings for a root folder as typed, found with the grant: {} for none. */
+/** Drive's settings for a root folder as typed (rootInput), found with the grant. */
 async function driveSettings(env: Env, fetcher: typeof fetch, grant: string, root: string, id: string) {
-  if (!root) return {};
   const store = new DriveStore({ oauth: grant, fetch: fetcher, db: env.DB, id });
   try {
     return { root: await store.findRoot(root) };
@@ -305,7 +305,8 @@ async function driveSettings(env: Env, fetcher: typeof fetch, grant: string, roo
 
 /** Starts Connect Google Drive: the Google app YouTube uses (a workspace's own, else the instance's), scope drive, a
  *  refresh token. `workspaceId` null connects the instance's Drive store, a workspace's its own. `root` is the root
- *  folder as typed (rootInput); undefined keeps the store's (connecting again). */
+ *  folder as typed (rootInput); undefined keeps the store's, so only a Drive already connected can leave it out (one
+ *  connected before root folders keeps working without one until a root is saved). */
 export async function startDriveConnect(
   env: Env,
   userId: string,
@@ -314,6 +315,8 @@ export async function startDriveConnect(
   root?: string,
 ): Promise<StartedFlow> {
   if (!offeredKinds().includes("drive")) throw new StoreError("this server doesn't offer Google Drive");
+  if (root === undefined && !(await ownRows(env, { workspaceId })).some((r) => r.kind === "drive"))
+    throw new StoreError("type the root folder: a folder's name at the top of My Drive, or its link");
   const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL), { workspaceId });
   return authorizeUrl(
     env,
@@ -407,7 +410,7 @@ export async function finishDriveConnect(
   return { userId: st.userId, workspaceId: st.workspaceId };
 }
 
-/** Changes a connected Drive's root folder (rootInput; "" for none): found with the saved grant, then saved as any
+/** Changes a connected Drive's root folder (rootInput): found with the saved grant, then saved as any
  *  store is, after making every workspace folder it holds in the new root. Files already in the old root stay there. */
 export async function saveDriveRoot(
   env: Env,

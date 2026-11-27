@@ -74,8 +74,7 @@ again.
 
 You can set up several, one of each kind:
 
-- **Google Drive**: type the **Root folder** (a folder at the top of My Drive, or any folder's link; empty: the top of
-  My Drive), then **Connect Google Drive** signs in with your Google app (add it under OAuth apps first) and makes each
+- **Google Drive**: type the **Root folder** (required: a folder at the top of My Drive, or any folder's link), then **Connect Google Drive** signs in with your Google app (add it under OAuth apps first) and makes each
   workspace's folder with its inbox in the root. **Save the root folder** moves to another root later (the folders are
   made there; files already in the old one stay). See [Google Drive](drive.md).
 - **S3-compatible bucket**: **Add a bucket** takes the service (AWS S3, Cloudflare R2, Backblaze B2, MinIO or other),
