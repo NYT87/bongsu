@@ -24,6 +24,8 @@ interface Invite {
   email: string;
   role: string;
   expiresAt: number;
+  /** Its link can be copied again (kept encrypted; not for invites made before, or without ENCRYPTION_KEY). */
+  copyable: boolean;
 }
 
 const ROLES = ["admin", "editor", "creator"] as const;
@@ -38,7 +40,8 @@ export function Members({ state }: Props) {
   const [role, setRole] = useState<string>("editor");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [made, setMade] = useState<{ url: string; email: string; mailed: boolean } | null>(null);
+  // a link to copy: a new invite's (mailed: whether it was emailed too), or a pending one's again (mailed undefined)
+  const [made, setMade] = useState<{ url: string; email: string; mailed?: boolean } | null>(null);
   const { confirm, dialog } = useConfirm();
   const invite = async (e: FormEvent) => {
     e.preventDefault();
@@ -86,14 +89,16 @@ export function Members({ state }: Props) {
   return (
     <Page
       title="Members"
-      intro="The people who work in this workspace, and their roles. An invite is a link that works once, for 7 days."
+      intro="The people who work in this workspace, and their roles. An invite is a link that works once, for 7 days; Copy link shows a pending one's again."
     >
       {made && (
         <Card>
           <SecretOnce title={`Invite link for ${made.email}`} value={made.url} onDone={() => setMade(null)} />
-          <p className="muted small">
-            {made.mailed ? "It was emailed to them too." : "Send it to them yourself: email isn't set up here."}
-          </p>
+          {made.mailed !== undefined && (
+            <p className="muted small">
+              {made.mailed ? "It was emailed to them too." : "Send it to them yourself: email isn't set up here."}
+            </p>
+          )}
         </Card>
       )}
       {err && (
@@ -300,6 +305,26 @@ export function Members({ state }: Props) {
                       {when(i.expiresAt)}
                     </td>
                     <td className="right">
+                      {i.copyable && (
+                        <button
+                          type="button"
+                          className="link"
+                          onClick={async () => {
+                            setErr(null);
+                            try {
+                              const r = await withFreshCheck(() =>
+                                api<{ url: string }>(`invites/${encodeURIComponent(i.id)}/link`, {}),
+                              );
+                              setMade({ url: r.url, email: i.email });
+                              scrollTo(0, 0);
+                            } catch (e) {
+                              setErr(errorText(e));
+                            }
+                          }}
+                        >
+                          Copy link
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="link danger"

@@ -1813,6 +1813,10 @@
         },
         "revoked_at": {
           "type": "timestamp"
+        },
+        "token_enc": {
+          "type": "text",
+          "description": "the link's token, encrypted (core/crypto.ts); NULL: not kept"
         }
       },
       "indexes": [

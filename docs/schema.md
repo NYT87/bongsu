@@ -237,6 +237,7 @@ Invitations to a workspace: the link's token (its sha256), for one email and rol
 | `used_at` | timestamp | yes |  |  |
 | `used_by` | text | yes |  | users.id |
 | `revoked_at` | timestamp | yes |  |  |
+| `token_enc` | text | yes |  | the link's token, encrypted (core/crypto.ts); NULL: not kept |
 
 Index `invites_workspace`: (workspace_id).
 
