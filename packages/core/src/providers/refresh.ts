@@ -34,13 +34,14 @@ interface Row {
   status: Connection["status"];
   expires_at: number | null;
   last_checked_at: number | null;
+  updated_at: number;
 }
 
 export async function refreshConnections(env: Env, deps: StepDeps): Promise<{ renewed: string[]; failed: string[] }> {
   const nowS = Math.floor(deps.now.getTime() / 1000);
   const rows = await env.DB.prepare(
     `SELECT id, workspace_id, provider, kind, label, external_ref, credentials, secret_name, status, expires_at,
-       last_checked_at FROM connections WHERE status != 'broken'`,
+       last_checked_at, updated_at FROM connections WHERE status != 'broken'`,
   ).all<Row>();
   const out = { renewed: [] as string[], failed: [] as string[] };
   const problems: { workspaceId: string; text: string }[] = [];
@@ -71,11 +72,12 @@ export async function refreshConnections(env: Env, deps: StepDeps): Promise<{ re
     try {
       const kept = await reg.keepAlive(env, deps.fetch, c, nowS);
       const creds = kept?.credentials ? await encryptSecret(env.ENCRYPTION_KEY, kept.credentials) : null;
+      // only the row as it was read (?5): a reconnect while the renewal ran wrote a newer token, which stays
       await env.DB.prepare(
         `UPDATE connections SET credentials = COALESCE(?1, credentials), expires_at = COALESCE(?2, expires_at),
-           status = 'ok', last_error = NULL, last_checked_at = ?3, updated_at = ?3 WHERE id = ?4`,
+           status = 'ok', last_error = NULL, last_checked_at = ?3, updated_at = ?3 WHERE id = ?4 AND updated_at = ?5`,
       )
-        .bind(creds, kept?.expiresAt ?? null, nowS, r.id)
+        .bind(creds, kept?.expiresAt ?? null, nowS, r.id, r.updated_at)
         .run();
       out.renewed.push(r.id);
       continue;
@@ -87,11 +89,13 @@ export async function refreshConnections(env: Env, deps: StepDeps): Promise<{ re
     }
     const expired = r.expires_at !== null && r.expires_at <= nowS;
     const status = broken || expired ? "broken" : "expiring";
-    await env.DB.prepare(
-      "UPDATE connections SET status = ?1, last_error = ?2, last_checked_at = ?3, updated_at = ?3 WHERE id = ?4",
+    // the old token's failure says nothing about one reconnected meanwhile: nothing is marked, nobody is told
+    const marked = await env.DB.prepare(
+      "UPDATE connections SET status = ?1, last_error = ?2, last_checked_at = ?3, updated_at = ?3 WHERE id = ?4 AND updated_at = ?5 RETURNING id",
     )
-      .bind(status, error, nowS, r.id)
-      .run();
+      .bind(status, error, nowS, r.id, r.updated_at)
+      .first();
+    if (!marked) continue;
     out.failed.push(r.id);
     if (r.status !== status)
       problems.push({
