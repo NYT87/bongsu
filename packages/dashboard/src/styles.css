@@ -180,6 +180,15 @@ main[tabindex="-1"]:focus {
   color: var(--accent-ink);
   font-weight: 600;
 }
+/* the link between the workspace's dashboard and the admin one, kept at the bottom above who is signed in */
+.dash-switch {
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.sidebar .dash-switch + .user {
+  margin-top: 8px;
+}
 .sidebar .user {
   margin-top: auto;
   padding: 12px 0 0 8px;

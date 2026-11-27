@@ -1,7 +1,7 @@
 // The dashboard (DESIGN.md): signed out, the bootstrap or sign-in card; signed in, a sidebar of sections and the
 // page. Paths live under /dashboard/ (the Worker serves index.html for each).
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
-import { type FormEvent, useCallback, useEffect, useState } from "react";
+import { type FormEvent, type MouseEvent, useCallback, useEffect, useState } from "react";
 import { APP_ONLY, api, manages, NAVIGATED, STATE_STALE, switchWorkspace } from "./api";
 import { Guide, GuideLink } from "./docs";
 import { Accounts } from "./pages/Accounts";
@@ -25,7 +25,7 @@ export interface State {
   setupTokenSet: boolean;
   signedIn: boolean;
   user: { id: string; email: string | null; name: string | null } | null;
-  /** Instance admins also see the Instance group (Workspaces, Media, OAuth apps). */
+  /** Instance admins also get the admin dashboard (Workspaces, Media, OAuth apps). */
   instanceAdmin: boolean;
   /** The role in the workspace: admin, editor or creator (who uses the app instead). */
   role: string | null;
@@ -53,19 +53,21 @@ const SECTIONS = [
   ["audit", "Audit", Audit],
   ["settings", "Settings", Settings],
 ] as const;
-/** What's instance-wide: the sidebar's Instance group, an instance admin's only. */
+/** What's instance-wide: the admin dashboard's pages (/dashboard/admin/…), an instance admin's only. */
 const INSTANCE = [
-  ["workspaces", "Workspaces", Workspaces],
-  ["media", "Media", Media],
-  ["apps", "OAuth apps", OAuthApps],
+  ["admin/workspaces", "Workspaces", Workspaces],
+  ["admin/media", "Media", Media],
+  ["admin/apps", "OAuth apps", OAuthApps],
 ] as const;
+/** Where the admin pages were before the admin dashboard, still in links already sent (emails, bookmarks). */
+const MOVED: readonly string[] = ["workspaces", "media", "apps"];
 /** What an editor doesn't see (the server refuses them too): the workspace's connections, members and settings. */
 const ADMINS_ONLY: readonly string[] = ["connections", "members", "settings"];
-/** What an instance admin in no workspace has besides the Instance group: their own passkeys and devices, and the
+/** What an instance admin in no workspace has besides the admin pages: their own passkeys and devices, and the
  *  instance's audit. */
 const OUTSIDE: readonly string[] = ["devices", "audit"];
 /** Pages that belong to no workspace: switching workspaces stays on them. */
-const NO_WORKSPACE: readonly string[] = ["workspaces", "media", "apps", "devices"];
+const NO_WORKSPACE: readonly string[] = ["devices"];
 /** Pages reached from other pages, not the sidebar. */
 const HIDDEN = [["start", "Get started", GetStarted]] as const;
 
@@ -73,14 +75,21 @@ const HIDDEN = [["start", "Get started", GetStarted]] as const;
  *  the sidebar link). The first load leaves focus alone. */
 const focusHeading = () => requestAnimationFrame(() => document.querySelector<HTMLElement>("#main h1")?.focus());
 
-const sectionOf = () => location.pathname.replace(/^\/dashboard\/?/, "").split("/")[0] ?? "";
+/** The page: the path's first part, or `admin/<page>` in the admin dashboard. An old admin path moves to its new one. */
+const sectionOf = () => {
+  const [first = "", second = ""] = location.pathname.replace(/^\/dashboard\/?/, "").split("/");
+  if (first === "admin") return `admin/${second}`;
+  if (!MOVED.includes(first)) return first;
+  history.replaceState(null, "", `/dashboard/admin/${first}${location.search}`);
+  return `admin/${first}`;
+};
 
 export function App() {
   const [state, setState] = useState<State | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [section, setSection] = useState(sectionOf);
   // the first page once in a workspace: Get started; a workspace made for someone else waits on Workspaces
-  const toStart = (where: "start" | "workspaces" = "start") => {
+  const toStart = (where: "start" | "admin/workspaces" = "start") => {
     history.replaceState(null, "", `/dashboard/${where}`);
     setSection(where);
   };
@@ -100,6 +109,14 @@ export function App() {
       .catch((e: Error) => setError(e.message));
   }, []);
   useEffect(load, [load]);
+  // the admin dashboard is an instance admin's: anyone else who opens one of its paths goes back to their workspace
+  // (the server refuses its requests too)
+  const refused = !!state && section.startsWith("admin/") && !state.instanceAdmin;
+  useEffect(() => {
+    if (!refused) return;
+    history.replaceState(null, "", "/dashboard/");
+    setSection("");
+  }, [refused]);
   useEffect(() => {
     addEventListener(STATE_STALE, load);
     return () => removeEventListener(STATE_STALE, load);
@@ -153,13 +170,13 @@ export function App() {
       />
     );
   if (!state.signedIn) return <SignIn onDone={load} />;
-  // an instance admin in no workspace, on an instance that has some: the Instance pages (Shell), to open or restore one
+  // an instance admin in no workspace, on an instance that has some: the admin dashboard (Shell), to open or restore one
   if (state.noWorkspace && !(state.instanceAdmin && state.anyWorkspace))
     return (
       <FirstWorkspace
         state={state}
         onDone={(invited) => {
-          toStart(invited ? "workspaces" : "start");
+          toStart(invited ? "admin/workspaces" : "start");
           load();
         }}
         onSignOut={load}
@@ -194,28 +211,24 @@ function Shell({
 }) {
   const [open, setOpen] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
-  const instance = state.instanceAdmin ? INSTANCE : [];
-  // an instance admin in no workspace: nothing of a workspace's, so the Instance group is where they land
+  // an instance admin in no workspace: nothing of a workspace's, so the admin dashboard is where they are
   const outside = state.noWorkspace;
-  const sections = outside
-    ? SECTIONS.filter(([s]) => OUTSIDE.includes(s))
+  // the admin dashboard (App sends anyone else back), or the workspace's pages
+  const admin = state.instanceAdmin && (outside || section.startsWith("admin/"));
+  const sections = admin
+    ? [...INSTANCE, ...(outside ? SECTIONS.filter(([s]) => OUTSIDE.includes(s)) : [])]
     : manages(state)
       ? SECTIONS
       : SECTIONS.filter(([s]) => !ADMINS_ONLY.includes(s));
-  const hidden = manages(state) && !outside ? HIDDEN : [];
-  const current =
-    [...sections, ...instance, ...hidden].find(([s]) => s === section) ?? (outside ? INSTANCE[0] : SECTIONS[0]);
-  const link = ([s, label]: (typeof SECTIONS | typeof INSTANCE)[number]) => (
-    <a
-      key={s}
-      href={`/dashboard/${s}`}
-      aria-current={s === current[0] ? "page" : undefined}
-      onClick={(e) => {
-        e.preventDefault();
-        setOpen(false);
-        go(s);
-      }}
-    >
+  const hidden = manages(state) && !admin ? HIDDEN : [];
+  const current = [...sections, ...hidden].find(([s]) => s === section) ?? sections[0];
+  const nav = (s: string) => (e: MouseEvent) => {
+    e.preventDefault();
+    setOpen(false);
+    go(s);
+  };
+  const link = ([s, label]: (typeof sections)[number]) => (
+    <a key={s} href={`/dashboard/${s}`} aria-current={s === current[0] ? "page" : undefined} onClick={nav(s)}>
       {label}
     </a>
   );
@@ -237,41 +250,55 @@ function Shell({
       </a>
       <aside className={`sidebar${open ? " open" : ""}`}>
         <Brand />
-        {state.workspace && (
+        {admin ? (
           <div className="workspace">
-            {state.workspace.iconUrl && (
-              <img className="workspace-icon" src={state.workspace.iconUrl} alt="" width={20} height={20} />
-            )}
-            {state.workspaces.length > 1 ? (
-              <div>
-                <label htmlFor="workspace-switch">Workspace</label>
-                <select id="workspace-switch" value={state.workspace.id} onChange={(e) => switchTo(e.target.value)}>
-                  {state.workspaces.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.name} ({w.role})
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : (
-              <div className="workspace-name" title="Workspace">
-                {state.workspace.name}
-              </div>
-            )}
+            <div className="workspace-name">Instance admin</div>
           </div>
+        ) : (
+          state.workspace && (
+            <div className="workspace">
+              {state.workspace.iconUrl && (
+                <img className="workspace-icon" src={state.workspace.iconUrl} alt="" width={20} height={20} />
+              )}
+              {state.workspaces.length > 1 ? (
+                <div>
+                  <label htmlFor="workspace-switch">Workspace</label>
+                  <select id="workspace-switch" value={state.workspace.id} onChange={(e) => switchTo(e.target.value)}>
+                    {state.workspaces.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.name} ({w.role})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="workspace-name" title="Workspace">
+                  {state.workspace.name}
+                </div>
+              )}
+            </div>
+          )
         )}
         <button type="button" className="menu-btn" aria-expanded={open} onClick={() => setOpen(!open)}>
           Menu
         </button>
         <nav className="nav" aria-label="Sections">
           {sections.map(link)}
-          {instance.length > 0 && (
-            <>
-              <h2 className="nav-group">Instance</h2>
-              {instance.map(link)}
-            </>
-          )}
         </nav>
+        {/* the way between the two dashboards: an instance admin's into the admin one, and back to the workspace */}
+        {state.instanceAdmin && (admin ? state.workspace : true) && (
+          <nav className="nav dash-switch" aria-label="Dashboards">
+            {admin ? (
+              <a href="/dashboard/" onClick={nav("")}>
+                Back to {state.workspace?.name}
+              </a>
+            ) : (
+              <a href="/dashboard/admin/workspaces" onClick={nav("admin/workspaces")}>
+                Admin dashboard
+              </a>
+            )}
+          </nav>
+        )}
         {/* Who is signed in, and the way out: an icon button with its name for screen readers and as a tooltip. */}
         <div className="user">
           <div className="who">
@@ -317,7 +344,7 @@ function Shell({
               <span className="banner-more">
                 Every step runs and notifies instead (set <code>DRY_RUN = "0"</code> in the wrangler files to go live).
               </span>{" "}
-              {!outside && (
+              {!admin && (
                 <a
                   className="banner-short"
                   href="/dashboard/settings"

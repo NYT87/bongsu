@@ -201,7 +201,7 @@ export function Media({ go }: Props) {
                 connected={has("drive")}
                 root={driveRoot(data.stores.find((s) => s.kind === "drive") ?? { settings: {} })}
                 googleApp={data.googleApp}
-                onApps={() => go("apps")}
+                onApps={() => go("admin/apps")}
                 onSaved={() => {
                   toast({ ok: true, text: "The root folder is saved: each workspace's folder is in it now." });
                   reload();

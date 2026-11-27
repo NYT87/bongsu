@@ -619,7 +619,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   // who started it and the flow's cookie that it's back in the same browser.
   app.get("/admin-api/media-stores/drive/callback", async (c) => {
     const browser = readOauthCookie(c.req.header("Cookie"));
-    const back = (q: Record<string, string>, page = "media") =>
+    const back = (q: Record<string, string>, page = "admin/media") =>
       c.redirect(`${origin(c)}/dashboard/${page}?${new URLSearchParams(q)}`, 302);
     try {
       c.header("Set-Cookie", oauthCookie("x", callbackPath(driveRedirectUri(c.env.PUBLIC_URL)), 0));
@@ -638,12 +638,12 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // a workspace's own Drive is that workspace's row and comes back to its Settings, the instance's to the Media page
       if (r.workspaceId) await audit(c, "workspace_store_set", "drive", { connected: true }, r.userId, r.workspaceId);
       else await audit(c, "media_store_save", "drive", { connected: true }, r.userId, null);
-      return back({ connected: "drive" }, r.workspaceId ? "settings/media" : "media");
+      return back({ connected: "drive" }, r.workspaceId ? "settings/media" : "admin/media");
     } catch (e) {
       // a workspace's flow comes back to its Settings (the media page is the instance admins'); before the state is read
       // the flow is unknown and the error goes where it always went
       const workspaceId = (e as { workspaceId?: string | null }).workspaceId;
-      return back({ error: (e as Error).message.slice(0, 300) }, workspaceId ? "settings/media" : "media");
+      return back({ error: (e as Error).message.slice(0, 300) }, workspaceId ? "settings/media" : "admin/media");
     }
   });
 

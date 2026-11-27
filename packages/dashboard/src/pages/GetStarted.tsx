@@ -108,7 +108,7 @@ export function GetStarted({ state, go }: Props) {
             </p>
             {state.instanceAdmin ? (
               <div className="actions">
-                <button type="button" className={data.setup.oauthApp ? "" : "primary"} onClick={() => go("apps")}>
+                <button type="button" className={data.setup.oauthApp ? "" : "primary"} onClick={() => go("admin/apps")}>
                   Open OAuth apps
                 </button>
               </div>
@@ -126,7 +126,7 @@ export function GetStarted({ state, go }: Props) {
                 <button
                   type="button"
                   className={data.setup.oauthApp && !data.setup.mediaStore ? "primary" : ""}
-                  onClick={() => go("media")}
+                  onClick={() => go("admin/media")}
                 >
                   Open Media
                 </button>

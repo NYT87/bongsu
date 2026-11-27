@@ -277,7 +277,7 @@ describe("every builder has a group", () => {
   });
 
   it("sends a workspace's own broken store to Settings → Media, the instance's to Media", () => {
-    expect(N.mediaStoreProblem("x").mail?.page).toBe("/dashboard/media");
+    expect(N.mediaStoreProblem("x").mail?.page).toBe("/dashboard/admin/media");
     const own = N.mediaStoreProblem("x", true);
     expect(own.mail?.page).toBe("/dashboard/settings/media");
     expect(own.text).toContain("Settings → Media");

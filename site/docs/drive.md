@@ -3,7 +3,7 @@
 Your Reels and photos stay on your Google Drive. Bongsu reads them with your Google account's permission, streams them
 to Instagram through its signed links, picks up files dropped in an inbox folder, takes uploads from the app and moves
 posted media aside. Nothing is ever deleted. Drive is one of the media stores: you can use it alone or next to a bucket
-([S3-compatible buckets](s3.md)), and the dashboard's **Media** page sets each one up.
+([S3-compatible buckets](s3.md)), and the admin dashboard's **Media** page sets each one up.
 
 ## 1. The Google app
 
@@ -19,10 +19,10 @@ steps 2 and 4 are new.
    while it stays in *Testing*, Google expires its refresh tokens after 7 days. Google only lets you publish once the
    app's **Branding** page has a privacy policy link. An unverified app of your own works; Google shows an
    "unverified app" warning when you connect (Advanced → continue).
-4. **Credentials → your OAuth client → Authorized redirect URIs**: add the Drive URL the dashboard's **OAuth apps**
+4. **Credentials → your OAuth client → Authorized redirect URIs**: add the Drive URL the admin dashboard's **OAuth apps**
    page lists on the Google app card, `<PUBLIC_URL>/admin-api/media-stores/drive/callback` (exactly: `https`, no
    trailing slash), next to YouTube's.
-5. Dashboard → **OAuth apps** → Google app: paste the client id and secret if they aren't there yet (stored encrypted:
+5. Admin dashboard → **OAuth apps** → Google app: paste the client id and secret if they aren't there yet (stored encrypted:
    the instance needs `ENCRYPTION_KEY`, [Configuration](configuration.md)).
 
 ## 2. Pick a root folder and connect
@@ -30,7 +30,7 @@ steps 2 and 4 are new.
 Make a folder in your Drive for Bongsu, for example `bongsu` at the top of My Drive. Every workspace gets its own folder
 inside it, and Bongsu makes them: you don't create them by hand.
 
-Dashboard → **Media** → Google Drive: type the **Root folder** (its name, when it's at the top of My Drive, or paste
+Admin dashboard → **Media** → Google Drive: type the **Root folder** (its name, when it's at the top of My Drive, or paste
 the folder's link from Drive), then **Connect Google Drive**. Sign in with the Google account whose Drive holds the
 media and allow access; Google sends you back with Drive set up as a store (the first store you add is the default).
 Before saving it, Bongsu makes each workspace's folder with its `inbox` in the root, so reading and writing both work.

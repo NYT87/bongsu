@@ -39,7 +39,7 @@ Each channel is connected with your own Google OAuth app (one app for every chan
    ![OAuth consent screen: publishing status In production](assets/google/4-in-production.png) -->
 
 5. **Credentials → Create credentials → OAuth client ID**, type **Web application**. Under **Authorized redirect URIs**
-   add the URL the dashboard's **OAuth apps** page shows on the Google app card,
+   add the URL the admin dashboard's **OAuth apps** page shows on the Google app card,
    `<PUBLIC_URL>/admin-api/connect/youtube/callback` (exactly: `https`, no trailing slash). Create it and copy the
    client id and secret.
 
@@ -48,7 +48,7 @@ Each channel is connected with your own Google OAuth app (one app for every chan
 
 ## 2. Connect the channel from the dashboard
 
-1. Dashboard → **OAuth apps** → Google app: paste the client id and secret, **Save** (the secret is stored encrypted:
+1. Admin dashboard → **OAuth apps** → Google app: paste the client id and secret, **Save** (the secret is stored encrypted:
    the Worker needs `ENCRYPTION_KEY`, any long random string set once with `pnpm exec wrangler secret put
    ENCRYPTION_KEY`).
 2. **Connections** → YouTube channel → **Connect**. Sign in with the Google account that owns the channel (for a brand
