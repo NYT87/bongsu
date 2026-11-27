@@ -57,3 +57,29 @@ describe("htmlFor", () => {
     expect(htmlFor(html, DEFAULT_BRAND)).toBe(html);
   });
 });
+
+describe("the operator's details", () => {
+  const page = "<p>lead</p><!-- operator -->";
+  it("are read from BONGSU_OPERATOR_NAME and BONGSU_OPERATOR_CONTACT, and left out when unset", () => {
+    expect(
+      brand({ BONGSU_OPERATOR_NAME: " Demo Travel Ltd ", BONGSU_OPERATOR_CONTACT: "privacy@example.com" }).operator,
+    ).toEqual({ name: "Demo Travel Ltd", contact: "privacy@example.com" });
+    expect(brand({ BONGSU_OPERATOR_NAME: " " })).not.toHaveProperty("operator");
+  });
+
+  it("go on the pages that have a place for them, an email or a web address as a link", () => {
+    const op = (contact: string) => htmlFor(page, { ...custom, operator: { name: "Demo $& Co", contact } });
+    expect(op("privacy@example.com")).toContain(
+      'This instance is run by Demo $&amp; Co. Contact: <a href="mailto:privacy@example.com">privacy@example.com</a>.',
+    );
+    expect(op("https://example.com/contact")).toContain('<a href="https://example.com/contact">');
+    expect(op("<b>call us</b>")).toContain("Contact: &lt;b&gt;call us&lt;/b&gt;.");
+    expect(htmlFor(page, { ...custom, operator: { contact: "a@example.com" } })).toContain(
+      '<p class="operator">Contact: <a href="mailto:a@example.com">',
+    );
+  });
+
+  it("leave nothing behind when unset", () => {
+    expect(htmlFor(page, custom)).toBe("<p>lead</p>");
+  });
+});

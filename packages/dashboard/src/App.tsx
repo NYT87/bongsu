@@ -559,6 +559,9 @@ function SignIn({ onDone }: { onDone: () => void }) {
           </div>
         </form>
       </Card>
+      <p className="muted small">
+        <a href="/privacy/">Privacy</a> · <a href="/terms/">Terms</a>
+      </p>
     </main>
   );
 }

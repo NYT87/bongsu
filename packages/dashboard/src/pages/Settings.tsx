@@ -300,6 +300,10 @@ function GeneralSettings(_: Props) {
               <dd>
                 {data.server.version} <code>{data.server.commit ?? "unknown commit"}</code>
               </dd>
+              <dt>Policies</dt>
+              <dd>
+                <a href="/privacy/">Privacy</a> · <a href="/terms/">Terms</a>
+              </dd>
             </dl>
           </Card>
         </>

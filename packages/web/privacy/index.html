@@ -65,6 +65,7 @@
         a person has approved each one. It's run by its owner, not by the Bongsu project: questions about this
         instance go to the person who gave you access to it.
       </p>
+      <!-- operator -->
 
       <h2>What it keeps</h2>
       <ul>
@@ -79,6 +80,33 @@
         <li>Results of what it published: views, likes, comments and followers, as the platforms report them.</li>
       </ul>
       <p>The media itself stays where you keep it (your Google Drive or a storage bucket); the database only refers to it.</p>
+
+      <h2>Cookies and browser storage</h2>
+      <p>
+        Only what signing in and the app need, so there's nothing to consent to. No analytics, no ads, no third-party
+        trackers.
+      </p>
+      <ul>
+        <li><code>bongsu_session</code>: keeps you signed in to the app, for 30 days.</li>
+        <li><code>bongsu_admin</code>: keeps you signed in to the dashboard, for 12 hours.</li>
+        <li>
+          <code>bongsu_oauth</code>: ties a connection you start (Google, Instagram…) to your browser, for the few minutes
+          the sign-in there takes.
+        </li>
+        <li>
+          On your device only: the app keeps what it last loaded for a day (<code>localStorage</code>), so it opens
+          quickly, and its service worker caches the app's own files so it opens offline.
+        </li>
+      </ul>
+      <p>The cookies are sent only to this site, and scripts can't read them.</p>
+
+      <h2>How long it keeps things</h2>
+      <ul>
+        <li>The plan, its results and the accounts you connect: until they're removed.</li>
+        <li>The activity log (who approved, paused or changed what): 180 days.</li>
+        <li>Sign-ins: 30 days in the app, 12 hours in the dashboard. Invites: 7 days, unless accepted first.</li>
+        <li>The media: in your own storage, for as long as you keep it there.</li>
+      </ul>
 
       <h2>Google user data</h2>
       <p>When you connect a Google account, this instance asks for:</p>

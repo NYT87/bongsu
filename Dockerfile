@@ -12,9 +12,11 @@ COPY apps apps
 COPY site site
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter "@bongsu/node..." --filter "@bongsu/web" --filter "@bongsu/dashboard" \
  && pnpm rebuild better-sqlite3 esbuild
-# The app's name and theme colour are build inputs (site/docs/configuration.md, Branding).
+# The app's name and theme colour, and who runs the instance, are build inputs (site/docs/configuration.md, Branding).
 ARG BONGSU_APP_NAME
 ARG BONGSU_THEME_COLOR
+ARG BONGSU_OPERATOR_NAME
+ARG BONGSU_OPERATOR_CONTACT
 # The commit the image is built from (no .git in the context): shown in Settings, for the app and the server.
 ARG BONGSU_COMMIT
 RUN pnpm --filter @bongsu/web build \
