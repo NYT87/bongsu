@@ -63,24 +63,39 @@ that prefers SQL and secrets can still add the rows by hand: see
 pnpm exec wrangler d1 migrations apply bongsu --remote
 ```
 
-## 6. Set the secrets
+## 6. Deploy
 
-See [configuration.md](configuration.md#secrets) for the list. Each one goes to **both** Workers.
-
-The CLI generates and sets them all, `SETUP_TOKEN` included. If you'd rather choose `SETUP_TOKEN` yourself (a long
-random string, `openssl rand -hex 32`), set it in both Workers first, still in `apps/cloudflare`; the CLI then keeps
-it:
-
-```sh
-pnpm exec wrangler secret put SETUP_TOKEN
-pnpm exec wrangler secret put SETUP_TOKEN --config wrangler.cron.toml
-```
-
-Build the repository (that builds the CLI too), then run the CLI from the repository root:
+Build the repository (the phone app, the dashboard inside it, and the CLI), then deploy both Workers from
+`apps/cloudflare`. Keep `DRY_RUN = "1"` for now: without secrets the Workers can't do anything yet, but the secrets
+can only be set on Workers that exist.
 
 ```sh
 cd ../..
-pnpm build               # the phone app, the dashboard and the CLI
+pnpm build
+cd apps/cloudflare
+pnpm run deploy          # both Workers
+```
+
+To give the app your own name, colour and icons, set them before `pnpm build`: [configuration.md](configuration.md#branding).
+
+## 7. Set the secrets
+
+See [configuration.md](configuration.md#secrets) for the list. Each one goes to **both** Workers.
+
+**Keep a copy of `ENCRYPTION_KEY` first.** It encrypts your OAuth apps' secrets and the accounts' tokens in the
+database: without it they can't be read again, and the CLI below never prints it. Set your own before running it, and
+the CLI keeps it:
+
+```sh
+openssl rand -hex 32 > encryption-key.txt     # outside the repository; then into your password manager
+pnpm exec wrangler secret put ENCRYPTION_KEY < encryption-key.txt
+pnpm exec wrangler secret put ENCRYPTION_KEY --config wrangler.cron.toml < encryption-key.txt
+```
+
+The same works for `SETUP_TOKEN` if you'd rather choose it. Then, from the repository root:
+
+```sh
+cd ../..
 node packages/cli/dist/cli.mjs deploy-secrets
 ```
 
@@ -89,8 +104,7 @@ wrangler. It sets, in `wrangler.toml` and `wrangler.cron.toml`, through `wrangle
 
 - `SETUP_TOKEN`: lets the first person sign up in the dashboard, once. The command prints it (and only when it
   generated it now, not when it kept one already set): copy it for step 8.
-- `ENCRYPTION_KEY`: encrypts your OAuth apps' secrets and the accounts' tokens in the database. Keep a copy of it
-  elsewhere: without it the stored tokens can't be read, and `--rotate` replaces it.
+- `ENCRYPTION_KEY`: as above. `--rotate` replaces it, which makes everything already encrypted unreadable.
 - `MEDIA_SIGNING_KEY`: signs the media links.
 - `VAPID_PRIVATE_KEY`: the private half of the Web Push key pair.
 
@@ -103,41 +117,32 @@ is the `SETUP_TOKEN` it just generated, once. It also prints the public half of 
 VAPID_PUBLIC_KEY = "B…"
 ```
 
-Paste it over `REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY` in `[vars]` of **both** wrangler configs. Rotating
-`VAPID_PRIVATE_KEY` makes existing push subscriptions stop working until the app is opened again.
+Paste it over `REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY` in `[vars]` of **both** wrangler configs and deploy again
+(`pnpm run deploy` in `apps/cloudflare`). Rotating `VAPID_PRIVATE_KEY` makes existing push subscriptions stop working
+until the app is opened again.
 
-## 7. Deploy
-
-The app was built in step 6 (the phone app in `packages/web/dist`, the dashboard in `dashboard/` inside it). Deploy
-both Workers from `apps/cloudflare`:
-
-```sh
-cd apps/cloudflare
-pnpm run deploy          # both Workers
-```
-
-After a change to the app, run `pnpm build` again from the repository root first.
-
-To give the app your own name, colour and icons, set them before `pnpm build`: [configuration.md](configuration.md#branding).
-
-Check `https://<PUBLIC_URL>/health`: `ok: true`, all tables present, no missing secrets.
+Check `https://<PUBLIC_URL>/health`: all tables present and no missing secrets. It says `ok: false` until a media
+store is connected (step 8).
 
 ## 8. Sign up in the dashboard
 
-1. Open `https://<PUBLIC_URL>/dashboard` on your computer. The first visit asks for the `SETUP_TOKEN` from step 6
+1. Open `https://<PUBLIC_URL>/dashboard` on your computer. The first visit asks for the `SETUP_TOKEN` from step 7
    (printed by `deploy-secrets`, or the one you set), your name and email, and creates your passkey (the computer's
    fingerprint, face or PIN). Save the recovery codes it shows: one of them signs you in if you ever lose every passkey.
    You're the instance's admin; next the dashboard asks for your first workspace (a name, its time zone, and its first
    admin: you, preselected). Then **Get started** opens: a checklist of the steps below, each ticked as it's done (the
    overview links back to it until all four are).
 2. **Time zone** and the daily digest's hour, right on Get started (or later in **Settings**).
-3. **OAuth apps**: paste your Meta app (Instagram) and Google app (YouTube). Each card shows the redirect URL to
-   register in the app; the guides walk through making them: [instagram-graph.md](instagram-graph.md),
-   [youtube.md](youtube.md). Composio users skip this ([instagram-composio.md](instagram-composio.md)).
-4. **Connections** → **Connect** for each Instagram account and YouTube channel.
-5. **Devices & passkeys** → **Add a device**: scan the QR code with the phone or tablet, create its passkey, add the app to the
+3. **OAuth apps**: paste your Meta app (Instagram) and Google app (Drive and YouTube). Each card shows the redirect
+   URLs to register in the app; the guides walk through making them: [instagram-graph.md](instagram-graph.md),
+   [The Google app](google-app.md). Composio users skip the Meta app ([instagram-composio.md](instagram-composio.md)).
+4. **Media**: where the Reels and photos live. Google Drive: type its root folder and **Connect Google Drive**; Bongsu
+   makes each workspace's folder in it ([Google Drive](drive.md)). Or a bucket ([S3-compatible buckets](s3.md)).
+   `/health` says `ok: true` once one is connected.
+5. **Connections** → **Connect** for each Instagram account and YouTube channel.
+6. **Devices & passkeys** → **Add a device**: scan the QR code with the phone or tablet, create its passkey, add the app to the
    home screen and turn on notifications in its Settings. That device approves the posts.
-6. **Keys & tokens** → **Agent keys**, if an agent (Claude, a script) will plan posts: create a key with the scopes it needs.
+7. **Keys & tokens** → **Agent keys**, if an agent (Claude, a script) will plan posts: create a key with the scopes it needs.
 
 ## 9. Go live
 
@@ -150,6 +155,37 @@ limit, set `YOUTUBE_UPLOAD_MODE = "chunk"` on the cron Worker
 ## Updating
 
 Pull, apply the migrations, build and deploy both Workers again: [Updating](updating.md#on-cloudflare).
+
+## Deploy every release with GitHub Actions
+
+A fork on GitHub can deploy itself whenever its release workflow (`.github/workflows/release.yml`) publishes a new
+version of the app: the `deploy-cloudflare` job checks out the released commit, builds it, writes both wrangler
+configs from the templates with your values, applies the migrations, deploys `bongsu` and then `bongsu-cron`, and
+checks `/health`. It runs only where you turn it on; nothing of yours is in the repository.
+
+1. A Cloudflare API token (**My Profile → API Tokens → Create Token → Custom token**) with the account permissions
+   **Workers Scripts: Edit** and **D1: Edit**, for your account only.
+2. GitHub → your repository → **Settings → Environments → New environment** `production`. Add **Required reviewers**
+   (you) if each deploy should wait for your approval: the job then pauses until you approve it on the run's page.
+3. In that environment, **Environment secrets** (secrets, so their values show as `***` in the run's logs, which are
+   public on a public repository):
+
+   | Secret | Value |
+   |---|---|
+   | `CLOUDFLARE_API_TOKEN` | the token from step 1 |
+   | `CLOUDFLARE_ACCOUNT_ID` | your account id (`wrangler whoami`) |
+   | `D1_DATABASE_ID` | the database's id (step 2 above) |
+   | `PUBLIC_URL` | `https://…`, as in your wrangler files |
+   | `VAPID_PUBLIC_KEY` | as in your wrangler files |
+   | `VAPID_SUBJECT` | as in your wrangler files |
+
+   and the **environment variable** `DRY_RUN` (`1` or `0`).
+4. **Settings → Secrets and variables → Actions → Variables**: the repository variable `CLOUDFLARE_DEPLOY` = `true`
+   turns the job on.
+
+The Workers' own secrets (`ENCRYPTION_KEY` and the rest from step 7) stay in Cloudflare: a deploy keeps them. The job
+writes only the variables above; anything else you set in your wrangler files (the optional ones in step 3) needs a
+line in the job too. The database is named `bongsu`, as in step 2.
 
 ## Backups
 
