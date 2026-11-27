@@ -114,6 +114,15 @@ export async function setSessionWorkspace(db: Db, token: string, workspaceId: st
     .run();
 }
 
+/** Signs the person out everywhere but `keep` (a session token; none: everywhere), in both apps: after a passkey is
+ *  revoked or a recovery code is used, a lost or stolen device's session mustn't outlive the key it signed in with. */
+export async function endOtherSessions(db: Db, userId: string, keep?: string) {
+  await db
+    .prepare("DELETE FROM sessions WHERE user_id = ?1 AND token_hash <> ?2")
+    .bind(userId, keep ? await sha256Hex(keep) : "")
+    .run();
+}
+
 /** Switches the session to a workspace the user can open (core/workspaces.ts mayOpen; `notCreator`: the dashboard's):
  *  the dashboard's and the app's switch, and the Workspaces page's "open". An instance admin coming into one they
  *  aren't a member of leaves a `workspace_open` row in its audit, so its admins see it; a member moving between their
