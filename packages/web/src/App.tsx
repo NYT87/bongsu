@@ -3,66 +3,15 @@
 
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import { api, HttpError, type QueueItem, switchWorkspace } from "./api";
-import { CalendarPage } from "./Calendar";
-import { CommentsPage } from "./Comments";
-import {
-  BRAND,
-  cachePrune,
-  type DraftsAnswer,
-  dueDate,
-  dueTime,
-  ICON,
-  keyTitle,
-  LegalLinks,
-  type Me,
-  MeCtx,
-  needs,
-  type PlatformInfo,
-  type Shared,
-  SharedCtx,
-  type Status,
-  setLastList,
-  setPlatforms,
-  setZone,
-  useHash,
-  useLoad,
-  zoneClock,
-  zoneToday,
-} from "./common";
-import { DraftsPage } from "./Drafts";
-import { ItemPage, type ItemView } from "./Item";
-import { type Key, setLocale, t } from "./i18n";
-import { QueuePage } from "./Queue";
+import { api, HttpError, switchWorkspace } from "./api";
+import { BRAND, cachePrune, ICON, LegalLinks, type Me, type PlatformInfo, useHash } from "./common";
+import { applyContent, type ContentHost, ContentProviders, contentRoute, type Named, useSharedState } from "./content";
+import { type Key, t } from "./i18n";
 import { SettingsPage } from "./Settings";
-import { ChannelPage, StatsPage } from "./Stats";
-import { TodayPage } from "./Today";
-import { VideoPage } from "./Video";
 import { takeWorkspaceParam } from "./workspace-link";
 
-function useSharedState(): Shared {
-  const status = useLoad<Status>("status");
-  const queue = useLoad<{ items: QueueItem[] }>("queue?days=7");
-  const drafts = useLoad<DraftsAnswer>("drafts");
-  const items = queue.data?.items ?? [];
-  const today = zoneToday();
-  const now = `${today} ${zoneClock(Date.now())}`;
-  // Overdue: its time has passed (today included) and it hasn't gone out; held items are listed on their own.
-  const overdue = items.filter((i) => {
-    const d = dueDate(i.due);
-    return !i.hold && !!d && `${d} ${dueTime(i.due) ?? "23:59"}` < now;
-  });
-  const attention = items.filter((i) => needs(i) && !overdue.includes(i));
-  const held = items.filter((i) => i.hold);
-  const unseen = useLoad<{ n: number }>("comments/unseen");
-  const refresh = () => {
-    status.reload();
-    queue.reload();
-    drafts.reload();
-    unseen.reload();
-  };
-  return { status, attention, overdue, held, queue, drafts, unseen, refresh };
-}
+/** The app is the content screens' first host: its own API, the brand its build defines. */
+const APP_HOST: ContentHost = { apiBase: "/app-api" };
 
 /** The app's mark at 32 px: the small mark drawn for that size (public/favicon.svg, from mark-small.svg). */
 const LOGO = <img src="/favicon.svg" width={32} height={32} alt="" />;
@@ -113,9 +62,7 @@ export function App() {
     ])
       .then(([{ me: m, gone }, p]) => {
         if (m.signedIn) pending.current = null;
-        setZone(m.timezone);
-        setLocale(m.locale);
-        setPlatforms(p.platforms);
+        applyContent(APP_HOST, m, p.platforms);
         setGone(gone);
         setMe(m);
       })
@@ -214,154 +161,107 @@ function SignedIn({ me, hash, onRefresh }: { me: Me; hash: string; onRefresh: ()
     document.addEventListener("visibilitychange", back);
     return () => document.removeEventListener("visibilitychange", back);
   }, []);
-  const [named, setNamed] = useState<{ key: string; title: string | null } | null>(null); // the open item's display name
-  const onItem = route.startsWith("/item/");
-  const onVideo = route.startsWith("/video/");
-  if (!onItem && !onVideo && !route.startsWith("/setup") && !route.startsWith("/stats/")) setLastList(hash || "#/");
-  // #/item/<key>, or with the view it opens: #/item/<key>/results, #/item/<key>/post
-  const itemRoute = onItem ? /^\/item\/(.+?)(?:\/(results|post))?$/.exec(route) : null;
-  const itemKey = itemRoute ? decodeURIComponent(itemRoute[1]) : "";
-  const itemView = itemRoute?.[2] as ItemView | undefined;
-  const title = onItem
-    ? named?.key === itemKey && named.title
-      ? named.title
-      : keyTitle(itemKey)
-    : onVideo
-      ? t("title.video")
-      : route.startsWith("/calendar")
-        ? t("tabs.calendar")
-        : route.startsWith("/queue")
-          ? t("tabs.queue")
-          : route.startsWith("/drafts")
-            ? t("tabs.drafts")
-            : route.startsWith("/stats/")
-              ? t("title.channel")
-              : route.startsWith("/stats")
-                ? t("tabs.stats")
-                : route.startsWith("/settings")
-                  ? t("header.settings")
-                  : route.startsWith("/comments")
-                    ? t("header.comments")
-                    : t("tabs.today");
-  const page = onItem ? (
-    <ItemPage keyId={itemKey} view={itemView} onTitle={(t) => setNamed({ key: itemKey, title: t })} />
-  ) : onVideo ? (
-    <VideoPage route={route} />
-  ) : route.startsWith("/calendar") ? (
-    <CalendarPage />
-  ) : route.startsWith("/queue") ? (
-    <QueuePage days={60} filters />
-  ) : route.startsWith("/drafts") ? (
-    <DraftsPage />
-  ) : route.startsWith("/stats/") ? (
-    <ChannelPage route={route} />
-  ) : route.startsWith("/stats") ? (
-    <StatsPage />
-  ) : route.startsWith("/settings") ? (
-    <SettingsPage me={me} onSignOut={onRefresh} />
-  ) : route.startsWith("/comments") ? (
-    <CommentsPage />
-  ) : (
-    <TodayPage />
-  );
+  const [named, setNamed] = useState<Named>(null); // the open item's display name
+  // the content screens (content.tsx), else the app's own Settings
+  const content = contentRoute(route, named, setNamed);
+  const title = content?.title ?? t("header.settings");
+  const page = content?.page ?? <SettingsPage me={me} onSignOut={onRefresh} />;
   const [picking, setPicking] = useState(false);
   const several = (me.workspaces?.length ?? 0) > 1;
   const toApprove = shared.attention.length + shared.overdue.length;
   const openDrafts = shared.drafts.data?.drafts.length ?? 0;
   const badge: Record<string, number> = { "#/queue": toApprove, "#/drafts": openDrafts };
   return (
-    <MeCtx.Provider value={me}>
-      <SharedCtx.Provider value={shared}>
-        <div className="top">
-          <header>
-            <a href="#/" className="brand" aria-label={t("header.brandToday", { name: BRAND.name })}>
-              {LOGO}
+    <ContentProviders me={me} shared={shared}>
+      <div className="top">
+        <header>
+          <a href="#/" className="brand" aria-label={t("header.brandToday", { name: BRAND.name })}>
+            {LOGO}
+          </a>
+          <div className="head-title">
+            <h1 className="clip">
+              {title}
+              {me.dryRun && <span className="pill warn">{t("header.dryRun")}</span>}
+            </h1>
+            {me.workspace &&
+              (several ? (
+                <button
+                  type="button"
+                  className="ws-name"
+                  aria-haspopup="dialog"
+                  aria-label={`${t("workspace.switch")}: ${me.workspace.name}`}
+                  onClick={() => setPicking(true)}
+                >
+                  <WsIcon url={me.workspace.iconUrl} />
+                  <span className="clip">{me.workspace.name}</span>
+                  {ICON.chevD}
+                </button>
+              ) : (
+                <span className="ws-name">
+                  <WsIcon url={me.workspace.iconUrl} />
+                  <span className="clip">{me.workspace.name}</span>
+                </span>
+              ))}
+          </div>
+          <span className="head-icons">
+            <a
+              href="#/comments"
+              className={`icon${hash.startsWith("#/comments") ? " on" : ""}`}
+              aria-label={
+                shared.unseen.data?.n ? t("header.commentsNew", { n: shared.unseen.data.n }) : t("header.comments")
+              }
+              aria-current={hash.startsWith("#/comments") ? "page" : undefined}
+            >
+              <span className="tab-icon">
+                {ICON.comment}
+                {(shared.unseen.data?.n ?? 0) > 0 && (
+                  <span className="badge">{shared.unseen.data!.n > 9 ? "9+" : shared.unseen.data!.n}</span>
+                )}
+              </span>
             </a>
-            <div className="head-title">
-              <h1 className="clip">
-                {title}
-                {me.dryRun && <span className="pill warn">{t("header.dryRun")}</span>}
-              </h1>
-              {me.workspace &&
-                (several ? (
-                  <button
-                    type="button"
-                    className="ws-name"
-                    aria-haspopup="dialog"
-                    aria-label={`${t("workspace.switch")}: ${me.workspace.name}`}
-                    onClick={() => setPicking(true)}
-                  >
-                    <WsIcon url={me.workspace.iconUrl} />
-                    <span className="clip">{me.workspace.name}</span>
-                    {ICON.chevD}
-                  </button>
-                ) : (
-                  <span className="ws-name">
-                    <WsIcon url={me.workspace.iconUrl} />
-                    <span className="clip">{me.workspace.name}</span>
+            <a
+              href="#/settings"
+              className={`icon${hash.startsWith("#/settings") ? " on" : ""}`}
+              aria-label={t("header.settings")}
+              aria-current={hash.startsWith("#/settings") ? "page" : undefined}
+            >
+              {ICON.settings}
+            </a>
+          </span>
+        </header>
+        {shared.status.data?.paused && <PausedBanner pausedBy={shared.status.data.paused_by} />}
+      </div>
+      <main>{page}</main>
+      {picking && <WorkspaceSheet me={me} onClose={() => setPicking(false)} onSwitched={onRefresh} />}
+      <nav aria-label={t("tabs.nav")}>
+        {TABS.map(([h, key, icon]) => {
+          const label = t(key);
+          const on = h === "#/" ? hash === "#/" || hash === "" : hash.startsWith(h);
+          const n = badge[h] ?? 0;
+          return (
+            <a
+              key={h}
+              href={h}
+              className={on ? "on" : ""}
+              aria-current={on ? "page" : undefined}
+              aria-label={n ? t(h === "#/drafts" ? "tabs.badgeOpen" : "tabs.badgeApproval", { label, n }) : label}
+            >
+              <span className="tab-icon">
+                {icon}
+                {n > 0 && (
+                  <span className="badge" aria-hidden="true">
+                    {n > 9 ? "9+" : n}
                   </span>
-                ))}
-            </div>
-            <span className="head-icons">
-              <a
-                href="#/comments"
-                className={`icon${hash.startsWith("#/comments") ? " on" : ""}`}
-                aria-label={
-                  shared.unseen.data?.n ? t("header.commentsNew", { n: shared.unseen.data.n }) : t("header.comments")
-                }
-                aria-current={hash.startsWith("#/comments") ? "page" : undefined}
-              >
-                <span className="tab-icon">
-                  {ICON.comment}
-                  {(shared.unseen.data?.n ?? 0) > 0 && (
-                    <span className="badge">{shared.unseen.data!.n > 9 ? "9+" : shared.unseen.data!.n}</span>
-                  )}
-                </span>
-              </a>
-              <a
-                href="#/settings"
-                className={`icon${hash.startsWith("#/settings") ? " on" : ""}`}
-                aria-label={t("header.settings")}
-                aria-current={hash.startsWith("#/settings") ? "page" : undefined}
-              >
-                {ICON.settings}
-              </a>
-            </span>
-          </header>
-          {shared.status.data?.paused && <PausedBanner pausedBy={shared.status.data.paused_by} />}
-        </div>
-        <main>{page}</main>
-        {picking && <WorkspaceSheet me={me} onClose={() => setPicking(false)} onSwitched={onRefresh} />}
-        <nav aria-label={t("tabs.nav")}>
-          {TABS.map(([h, key, icon]) => {
-            const label = t(key);
-            const on = h === "#/" ? hash === "#/" || hash === "" : hash.startsWith(h);
-            const n = badge[h] ?? 0;
-            return (
-              <a
-                key={h}
-                href={h}
-                className={on ? "on" : ""}
-                aria-current={on ? "page" : undefined}
-                aria-label={n ? t(h === "#/drafts" ? "tabs.badgeOpen" : "tabs.badgeApproval", { label, n }) : label}
-              >
-                <span className="tab-icon">
-                  {icon}
-                  {n > 0 && (
-                    <span className="badge" aria-hidden="true">
-                      {n > 9 ? "9+" : n}
-                    </span>
-                  )}
-                </span>
-                <span className="tab-label" aria-hidden="true">
-                  {label}
-                </span>
-              </a>
-            );
-          })}
-        </nav>
-      </SharedCtx.Provider>
-    </MeCtx.Provider>
+                )}
+              </span>
+              <span className="tab-label" aria-hidden="true">
+                {label}
+              </span>
+            </a>
+          );
+        })}
+      </nav>
+    </ContentProviders>
   );
 }
 

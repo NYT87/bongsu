@@ -1,4 +1,5 @@
-// The app's only backend: /app-api on the same origin (the scheduler Worker), with the session cookie.
+// The app's only backend: /app-api on the same origin (the scheduler Worker), with the session cookie. Its screens
+// also run in the dashboard (#145), against /admin-api/content with the dashboard's session: the host sets the base.
 import type { YouTubeTexts } from "@bongsu/core/formats/youtube-texts";
 import type { YouTubeSettings } from "@bongsu/core/platforms/youtube";
 import type { UploadProgress } from "@bongsu/core/upload-progress";
@@ -15,12 +16,18 @@ export class HttpError extends Error {
   }
 }
 
+let API_BASE = "/app-api";
+/** Where every call goes: the app's /app-api, or the dashboard's /admin-api/content. */
+export function setApiBase(base: string) {
+  API_BASE = base;
+}
+
 export async function api<T = Record<string, unknown>>(
   path: string,
   body?: unknown,
   method: "GET" | "POST" | "PUT" = body === undefined ? "GET" : "POST",
 ): Promise<T> {
-  const r = await fetch(`/app-api/${path}`, {
+  const r = await fetch(`${API_BASE}/${path}`, {
     method,
     headers: { "Content-Type": "application/json" },
     credentials: "same-origin",
