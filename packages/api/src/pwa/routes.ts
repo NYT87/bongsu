@@ -14,6 +14,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { zoneDate, zoneStamp } from "@bongsu/core/formats/time";
 import { withIconUrls } from "@bongsu/core/icon";
+import { MemberError } from "@bongsu/core/invites";
 import { mediaUrl } from "@bongsu/core/media";
 import { defaultIds, mediaStores, storeRows } from "@bongsu/core/media/index";
 import { isVideo, type MediaStore } from "@bongsu/core/media/store";
@@ -55,6 +56,7 @@ import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
 import {
   createSession,
   endSession,
+  leaveWorkspace,
   oauthCookie,
   openWorkspace,
   readCookie,
@@ -1049,6 +1051,24 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       const w = token && (await openWorkspace(c.env.DB, token, c.get("session").userId, id, nowS()));
       if (!w) throw new ops.ApiError(403, "you can't open that workspace");
       return { ok: true, id: w.id };
+    }),
+  );
+  // Leaving the app's workspace (session.ts leaveWorkspace): refused for its last admin (409); written in the left
+  // workspace's audit before the membership goes.
+  app.post(
+    "/app-api/session/leave",
+    wrap(async (c) => {
+      const token = readCookie(c.req.header("Cookie"));
+      const id = me(c).workspaceId;
+      if (!token) throw new ops.ApiError(401, "sign in");
+      try {
+        await leaveWorkspace(c.env.DB, token, userOf(c), id, nowS());
+      } catch (e) {
+        if (e instanceof MemberError) throw new ops.ApiError(e.status, e.message);
+        throw e;
+      }
+      await audit(c, "member_leave", `user:${userOf(c)}`, {});
+      return { left: id };
     }),
   );
   // The signed-in user's own time zone (null: the workspace's). Only how times are shown and entered changes: the

@@ -101,6 +101,7 @@ import { AcceptError, DASHBOARD_ROLES, inviteOptions, invitePreview, inviteVerif
 import {
   createSession,
   endSession,
+  leaveWorkspace,
   markVerified,
   oauthCookie,
   openWorkspace,
@@ -1577,6 +1578,18 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const w = await open(c, String((await body(c)).id ?? ""));
       if (!w) throw new AdminError(403, "you can't open that workspace");
       return { ok: true, id: w.id };
+    }),
+  );
+  // Leaving the session's workspace (pwa/session.ts leaveWorkspace): refused for its last admin (409). The row goes in
+  // the left workspace's audit, where its admins see it.
+  app.post(
+    "/admin-api/session/leave",
+    wrap(async (c) => {
+      const id = ws(c);
+      const me = c.get("session").userId;
+      await leaveWorkspace(c.env.DB, c.get("token"), me, id, nowS());
+      await audit(c, "member_leave", `user:${me}`, {}, me, id);
+      return { left: id };
     }),
   );
   // The Workspaces page's "open", from before the switcher: an alias of the switch above, with its own answers (404,

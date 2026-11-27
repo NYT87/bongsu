@@ -141,6 +141,9 @@ export const en = {
   "settings.unblockHelp":
     "Notifications are blocked for this site on this device. {steps}{brave} Then tap the button again.",
   "settings.thisDevice": "This device",
+  "settings.leaveLabel": "Leave {name}",
+  "settings.leaveConfirm": "Leave {name}?",
+  "settings.leaveDetail": "You stop seeing its posts and notifications at once. An admin can invite you again.",
   "settings.signOut": "Sign out",
   "settings.version": "Version",
   "settings.media": "Media stores",

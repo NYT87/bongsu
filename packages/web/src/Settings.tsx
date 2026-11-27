@@ -346,6 +346,38 @@ export function YouCard({ me, onRefresh }: { me: Me; onRefresh: () => void }) {
   );
 }
 
+/** Leaving the workspace the app works in (the last admin is refused, and told so here). */
+export function LeaveCard({ me, onLeft }: { me: Me; onLeft: () => void }) {
+  const [err, setErr] = useState<string | null>(null);
+  if (!me.workspace) return null;
+  const name = me.workspace.name;
+  return (
+    <div className="card">
+      <ConfirmButton
+        full
+        label={t("settings.leaveLabel", { name })}
+        confirm={t("settings.leaveConfirm", { name })}
+        detail={t("settings.leaveDetail")}
+        onConfirm={() =>
+          api("session/leave", {})
+            .then(() => {
+              // the next workspace (or none) starts on Today, its cache gone
+              cachePrune(true);
+              location.hash = "#/";
+              onLeft();
+            })
+            .catch((e: Error) => setErr(e.message))
+        }
+      />
+      {err && (
+        <p className="notice small bad" role="status">
+          {err}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void }) {
   const { status, refresh } = useShared();
   const [msg, setMsg] = useState<{ card: string; text: string; ok: boolean } | null>(null);
@@ -463,6 +495,7 @@ export function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void 
       <TimeZoneCard me={me} />
       <MediaStoresCard />
       <VersionInfo me={me} />
+      <LeaveCard me={me} onLeft={onSignOut} />
       <div className="card">
         <h2>{t("settings.thisDevice")}</h2>
         <button

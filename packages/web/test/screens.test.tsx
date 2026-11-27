@@ -7,7 +7,7 @@ import { PausedBanner, WorkspaceSheet } from "../src/App";
 import { type DraftsAnswer, type Me, type Shared, SharedCtx } from "../src/common";
 import { DraftsPage } from "../src/Drafts";
 import { ApprovedText, TrialCopy } from "../src/Item";
-import { VersionInfo, YouCard } from "../src/Settings";
+import { LeaveCard, VersionInfo, YouCard } from "../src/Settings";
 import { fakeApi } from "./fake-api";
 
 afterEach(() => {
@@ -239,5 +239,37 @@ describe("scheduling a draft to several accounts (#30)", () => {
     await user.click(screen.getByRole("button", { name: "Schedule" }));
     expect(await screen.findByText("Pick at least one account.")).toBeTruthy();
     expect(calls.some((c) => c.path.startsWith("drafts/"))).toBe(false);
+  });
+});
+
+describe("leaving the workspace", () => {
+  it("asks first, then leaves, goes to Today and refreshes", async () => {
+    location.hash = "#/settings";
+    const calls = fakeApi({ "POST session/leave": { body: { left: "w1" } } });
+    const onLeft = vi.fn();
+    render(<LeaveCard me={base} onLeft={onLeft} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Leave Demo Travel" }));
+    const ask = screen.getByRole("alertdialog", { name: "Leave Demo Travel?" });
+    await user.click(within(ask).getByRole("button", { name: "Leave Demo Travel" }));
+    await waitFor(() => expect(onLeft).toHaveBeenCalledOnce());
+    expect(calls).toEqual([{ method: "POST", path: "session/leave", body: {} }]);
+    expect(location.hash).toBe("#/");
+  });
+
+  it("says why when the last admin can't leave, and stays", async () => {
+    fakeApi({
+      "POST session/leave": {
+        status: 409,
+        body: { error: "a workspace keeps one admin: make someone else admin first" },
+      },
+    });
+    const onLeft = vi.fn();
+    render(<LeaveCard me={base} onLeft={onLeft} />);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Leave Demo Travel" }));
+    await user.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Leave Demo Travel" }));
+    expect((await screen.findByRole("status")).textContent).toMatch(/make someone else admin first/);
+    expect(onLeft).not.toHaveBeenCalled();
   });
 });
