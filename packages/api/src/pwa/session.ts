@@ -147,19 +147,20 @@ export async function endSession(db: Db, token: string | null) {
       .run();
 }
 
-/** The person leaves a workspace themselves (core/invites.ts removeMember: cut off at once, the last admin kept, even
- *  an instance admin's own membership). Their session moves out of it first, so the removal's sign-out of that
- *  workspace's sessions spares this one: with no workspace set, the next request works in their first other workspace
- *  (sessionWorkspace), or none. Refused, the session goes back where it was. */
+/** The person leaves one of their workspaces themselves (core/invites.ts removeMember: cut off at once, the last admin
+ *  kept, even an instance admin's own membership). When this session works in it, the session moves out first, so the
+ *  removal's sign-out of that workspace's sessions spares this one: with no workspace set, the next request works in
+ *  their first other workspace (sessionWorkspace), or none. Leaving another of their workspaces leaves the session
+ *  where it is. Refused, a moved session goes back. */
 export async function leaveWorkspace(db: Db, token: string, userId: string, workspaceId: string, nowS: number) {
-  await db
-    .prepare("UPDATE sessions SET workspace_id = NULL WHERE token_hash = ?1")
-    .bind(await sha256Hex(token))
-    .run();
+  const moved = await db
+    .prepare("UPDATE sessions SET workspace_id = NULL WHERE token_hash = ?1 AND workspace_id = ?2 RETURNING token_hash")
+    .bind(await sha256Hex(token), workspaceId)
+    .first();
   try {
     await removeMember(db, workspaceId, userId, { instanceAdmin: false }, nowS);
   } catch (e) {
-    await setSessionWorkspace(db, token, workspaceId);
+    if (moved) await setSessionWorkspace(db, token, workspaceId);
     throw e;
   }
 }

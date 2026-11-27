@@ -120,6 +120,15 @@ then **Save**. It moves the release time only; it never makes a video public.
 
 ![Videos](assets/app/videos-light.png)
 
+## You
+
+Click your name at the bottom of the sidebar for your own page. **Your name** is how the people you work with see you
+(each workspace can also give you another name, on its Members page). **Your workspaces** lists each workspace you
+belong to with your role there. **Leave** (with a confirm) takes you out of one, in the dashboard and the app at once:
+its pages and notifications, and your CLI tokens for it. Leaving the one you work in reloads the dashboard in your next
+workspace, if you have one. A workspace's last admin can't leave: make someone else admin first. An admin can invite
+you again. Leaving is in that workspace's audit log.
+
 ## Devices & passkeys
 
 Your devices approve posts in the app; your passkeys sign you in here and there.
@@ -138,11 +147,6 @@ two passkeys and at least three codes.
 **Alert emails** (when the instance sends email): a connection or a media store that broke is emailed to the admins
 who look after it, ending with why they got it and a link here. Untick **Email me these alerts** to stop them, for
 every workspace and the instance at once; the notice still shows in the dashboard and in the app's notifications.
-
-**Leave this workspace** (at the bottom, with a confirm) takes you out of the workspace you work in, in the dashboard
-and the app at once: its pages and notifications, and your CLI tokens for it. The dashboard reloads in your next
-workspace, if you have one. A workspace's last admin can't leave: make someone else admin first. An admin can invite
-you again. It's in the workspace's audit log.
 
 ## Keys & tokens
 

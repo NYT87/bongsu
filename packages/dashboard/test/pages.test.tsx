@@ -785,11 +785,20 @@ describe("Settings → Media: the workspace's folder", () => {
   });
 });
 
-describe("Devices & passkeys: leaving the workspace", () => {
-  const routes = (leave: { status?: number; body: unknown }) => ({
+describe("You: the person's own page", () => {
+  const me = {
+    email: "ada@example.com",
+    name: "Ada",
+    workspaces: [
+      { id: "w1", name: "Demo Travel", role: "admin" },
+      { id: "w2", name: "Demo Running", role: "editor" },
+    ],
+  };
+  const routes = (more: object = {}) => ({
     "GET state": () => ({ body: state() }),
-    "GET passkeys": { body: { passkeys: [], devices: [] } },
-    "POST session/leave": leave,
+    "GET overview": { status: 500, body: { error: "not needed here" } },
+    "GET me": { body: me },
+    ...more,
   });
   const assign = vi.fn();
   beforeEach(() => {
@@ -797,24 +806,84 @@ describe("Devices & passkeys: leaving the workspace", () => {
     vi.spyOn(window.location, "assign").mockImplementation(assign);
   });
 
-  it("asks first, then leaves and reloads in the next workspace", async () => {
-    const calls = fakeApi(routes({ body: { left: "w1" } }));
-    open("devices");
+  it("opens from the name at the bottom of the sidebar, listing each workspace with the role there", async () => {
+    fakeApi(routes());
+    open("");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Leave this workspace" }));
-    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Leave" }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
-    expect(calls.find((c) => c.method === "POST")?.path).toBe("session/leave");
+    await screen.findByRole("heading", { level: 1, name: "Overview" });
+    await user.click(within(sidebar()).getByRole("link", { name: /ada@example.com/ }));
+    expect(await screen.findByRole("heading", { level: 1, name: "You" })).toBeTruthy();
+    expect(location.pathname).toBe("/dashboard/me");
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(rows.map((r) => r.textContent)).toEqual([
+      "Demo Travel (working in it now)AdminLeave",
+      "Demo RunningEditorLeave",
+    ]);
   });
 
-  it("shows why the last admin can't, and stays", async () => {
-    fakeApi(routes({ status: 409, body: { error: "a workspace keeps one admin: make someone else admin first" } }));
-    open("devices");
+  it("leaves another workspace and stays; leaving the current one reloads in the next", async () => {
+    const calls = fakeApi(
+      routes({
+        "POST me/workspaces/w2/leave": { body: { left: "w2" } },
+        "POST me/workspaces/w1/leave": { body: { left: "w1" } },
+      }),
+    );
+    open("me");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: "Leave this workspace" }));
+    const row = (name: string) => screen.getByText(name, { selector: "td" }).closest("tr") as HTMLElement;
+    await screen.findByText("Demo Running", { selector: "td" });
+    await user.click(within(row("Demo Running")).getByRole("button", { name: "Leave" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Leave" }));
+    expect(await screen.findByText("You left Demo Running.")).toBeTruthy();
+    expect(assign).not.toHaveBeenCalled();
+    await user.click(within(row("Demo Travel")).getByRole("button", { name: "Leave" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Leave" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual([
+      "me/workspaces/w2/leave",
+      "me/workspaces/w1/leave",
+    ]);
+  });
+
+  it("shows why the last admin can't leave, and stays", async () => {
+    fakeApi(
+      routes({
+        "POST me/workspaces/w1/leave": {
+          status: 409,
+          body: { error: "a workspace keeps one admin: make someone else admin first" },
+        },
+      }),
+    );
+    open("me");
+    const user = userEvent.setup();
+    await user.click(
+      within((await screen.findByText("Demo Travel", { selector: "td" })).closest("tr") as HTMLElement).getByRole(
+        "button",
+        {
+          name: "Leave",
+        },
+      ),
+    );
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Leave" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/make someone else admin first/);
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("saves the person's name", async () => {
+    const calls = fakeApi(routes({ "POST me/name": { body: { name: "Ada L" } } }));
+    open("me");
+    const user = userEvent.setup();
+    const field = await screen.findByLabelText("Name");
+    await waitFor(() => expect(field).toHaveProperty("value", "Ada"));
+    await user.clear(field);
+    await user.type(field, "Ada L");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Your name is saved.")).toBeTruthy();
+    expect(calls.find((c) => c.method === "POST")).toEqual({
+      method: "POST",
+      path: "me/name",
+      body: { name: "Ada L" },
+    });
   });
 });
 

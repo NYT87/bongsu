@@ -320,6 +320,17 @@ button.ws-token[aria-expanded="true"] {
 .user .who {
   flex: 1;
   min-width: 0;
+  /* a link to the person's own page (Me.tsx), looking like the name it was */
+  display: block;
+  margin: -6px 0 -6px -8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  color: var(--fg);
+  text-decoration: none;
+}
+.user .who:hover,
+.user .who[aria-current="page"] {
+  background: color-mix(in srgb, var(--line) 50%, transparent);
 }
 .user .who > div {
   overflow: hidden;
