@@ -180,9 +180,11 @@ workspace in its **Workspace** list to read that workspace's log instead, as its
 
 ## Switching workspaces
 
-Someone who can open more than one workspace sees a switcher at the top of the sidebar, naming the one they work in:
-choose another and the dashboard reloads there, with the role they have in it. It shows for people who are members of
-several workspaces and for instance admins, who can open all of them. A person in a single workspace sees no switcher.
+The top of the sidebar shows the workspace you work in: its icon (a coloured placeholder until it has one), its name and
+your role there. Someone who can open more than one workspace also sees an up-and-down arrow there: it opens the list
+of their workspaces, the current one checked; choose another and the dashboard reloads there, with the role they have
+in it. The arrow shows for people who are members of several workspaces and for instance admins, who can open all of
+them; a person in a single workspace sees only its name.
 
 ## Workspaces
 
@@ -216,8 +218,9 @@ Settings has three tabs: **General**, **Media** and **OAuth apps** (`/dashboard/
 `/settings/apps`).
 
 **Media** (admins) sets the workspace's **media folder** (the workspace's id unless another name was given when it was
-made, so a rename never changes it; `UPLOADS` for a workspace kept from before folders had names; Bongsu makes the new
-folder with its inbox in each store but never moves files, so move them yourself when you change it) and its own S3
+made, so a rename never changes it; `UPLOADS` for a workspace kept from before folders had names). A new name renames
+the folder in place in Google Drive and on the server's disk, files and all; a bucket gets a new folder and its files
+stay in the old one. A name a store already has a folder for is refused: folders are never merged. It also sets its own S3
 bucket or Google Drive (with a root folder of its own). A workspace's default store is its own if it has one, else the instance's. A file must be in the
 workspace's own store or inside its folder in an instance store, or it's refused with "not in this workspace's media".
 The inbox scans `<folder>/inbox` in each of the workspace's stores, a few workspaces per run in turn.

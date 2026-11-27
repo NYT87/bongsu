@@ -18,6 +18,7 @@ import { Overview } from "./pages/Overview";
 import { Settings } from "./pages/Settings";
 import { Videos } from "./pages/Videos";
 import { Workspaces } from "./pages/Workspaces";
+import { Switcher } from "./Switcher";
 import { Brand, Card, Field, Loading, SecretOnce, Toasts } from "./ui";
 
 export interface State {
@@ -249,35 +250,18 @@ function Shell({
         Skip to content
       </a>
       <aside className={`sidebar${open ? " open" : ""}`}>
-        <Brand />
-        {admin ? (
-          <div className="workspace">
-            <div className="workspace-name">Instance admin</div>
-          </div>
+        {/* the admin dashboard is the instance's (the brand); the workspace's pages show the workspace's token */}
+        {admin || !state.workspace ? (
+          <>
+            <Brand />
+            {admin && (
+              <div className="workspace">
+                <div className="workspace-name">Instance admin</div>
+              </div>
+            )}
+          </>
         ) : (
-          state.workspace && (
-            <div className="workspace">
-              {state.workspace.iconUrl && (
-                <img className="workspace-icon" src={state.workspace.iconUrl} alt="" width={20} height={20} />
-              )}
-              {state.workspaces.length > 1 ? (
-                <div>
-                  <label htmlFor="workspace-switch">Workspace</label>
-                  <select id="workspace-switch" value={state.workspace.id} onChange={(e) => switchTo(e.target.value)}>
-                    {state.workspaces.map((w) => (
-                      <option key={w.id} value={w.id}>
-                        {w.name} ({w.role})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : (
-                <div className="workspace-name" title="Workspace">
-                  {state.workspace.name}
-                </div>
-              )}
-            </div>
-          )
+          <Switcher state={state} onSwitch={switchTo} />
         )}
         <button type="button" className="menu-btn" aria-expanded={open} onClick={() => setOpen(!open)}>
           Menu

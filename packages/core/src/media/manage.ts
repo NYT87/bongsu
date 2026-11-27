@@ -18,9 +18,9 @@ import { decryptSecret, encryptSecret } from "../crypto";
 import type { Env } from "../env";
 import { notifier, notifyInstanceAdmins } from "../notify";
 import { mediaStoreProblem } from "../texts/notifications";
-import { sessionWorkspace, workspaceSettings } from "../workspaces";
+import { sessionWorkspace, setMediaFolder, workspaceSettings } from "../workspaces";
 import { DRIVE_SCOPE, DriveStore } from "./drive";
-import { mediaPath } from "./folders";
+import { checkFolderName, FolderError, folderTaken, mediaPath } from "./folders";
 import { buildStore, offeredKinds, type StoreKind, type StoreScope, storeId, storeRows } from "./index";
 import type { S3Settings } from "./s3";
 import type { MediaStore } from "./store";
@@ -165,6 +165,58 @@ export async function savedCredentials(env: Env, scope: StoreScope, kind: StoreK
   const row = (await storeRows(env.DB)).find((r) => r.id === id);
   return row?.credentials ? decryptSecret(env.ENCRYPTION_KEY, row.credentials) : null;
 }
+
+/** Changes a workspace's media folder, renaming it in place in each store it uses that can (Drive, a disk: the folder
+ *  and its files keep their ids, so approvals, drafts and the inbox carry on) and making the new one in the others (a
+ *  bucket, where the old folder's files stay). Only to a name no store has yet: a folder of that name is never merged
+ *  into. Checked in every store before anything changes; a rename that fails puts the ones done back. */
+export async function renameWorkspaceFolder(
+  env: Env,
+  fetcher: typeof fetch,
+  workspaceId: string,
+  name: string,
+  nowS: number,
+): Promise<{ folder: string; renamed: string[]; made: string[]; failed: string[] }> {
+  const folder = checkFolderName(name);
+  if (await folderTaken(env.DB, folder, workspaceId)) throw new FolderError(`another workspace uses ${folder}`);
+  const old = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
+  if (folder === old) return { folder, renamed: [], made: [], failed: [] };
+  const stores: { kind: string; store: MediaStore; current: { id: string } | null }[] = [];
+  for (const r of await storeRows(env.DB, { workspaceId })) {
+    const creds = r.credentials ? await decryptSecret(env.ENCRYPTION_KEY, r.credentials) : null;
+    const store = buildStore(env, fetcher, r.kind, r.settings, creds, r.id);
+    const current = await store.resolve(old);
+    const taken = await store.resolve(folder);
+    // the same folder (a change of case on a store that ignores it) is a rename, not a clash
+    if (taken && taken.id !== current?.id)
+      throw new FolderError(
+        `${STORE_LABEL[r.kind] ?? r.kind} already has a folder named ${folder}: pick a name it doesn't use`,
+      );
+    stores.push({ kind: r.kind, store, current });
+  }
+  const renamed: typeof stores = [];
+  try {
+    for (const s of stores)
+      if (s.current && s.store.renameFolder) {
+        await s.store.renameFolder(old, folder);
+        renamed.push(s);
+      }
+  } catch (e) {
+    for (const s of renamed) await s.store.renameFolder?.(folder, old).catch(() => {});
+    throw new FolderError(`couldn't rename the folder: ${(e as Error).message.slice(0, 200)}`);
+  }
+  await setMediaFolder(env.DB, workspaceId, folder, nowS);
+  const { failed } = await makeWorkspaceFolders(env, fetcher, workspaceId);
+  return {
+    folder,
+    renamed: renamed.map((s) => s.kind),
+    made: stores.filter((s) => !renamed.includes(s)).map((s) => s.kind),
+    failed,
+  };
+}
+
+/** How the stores are named in a message. */
+const STORE_LABEL: Record<string, string> = { drive: "Google Drive", s3: "The bucket", local: "This server's disk" };
 
 /** The saved settings of a store ({} when it isn't set up): Drive's root folder, a bucket's endpoint. */
 export async function savedSettings(env: Env, scope: StoreScope, kind: StoreKind): Promise<Record<string, unknown>> {

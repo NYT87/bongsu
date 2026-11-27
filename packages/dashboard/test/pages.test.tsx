@@ -77,12 +77,10 @@ describe("Settings: the Icon card", () => {
     open("settings");
     const user = userEvent.setup();
     expect(await screen.findByText("No icon: the app's own is used.")).toBeTruthy();
-    expect(sidebar().querySelector("img.workspace-icon")).toBeNull();
+    expect(sidebar().querySelector("img.ws-avatar")).toBeNull();
     await user.upload(screen.getByLabelText("Upload an icon"), png());
     expect(await screen.findByText("Icon saved.")).toBeTruthy();
-    await waitFor(() =>
-      expect(sidebar().querySelector("img.workspace-icon")?.getAttribute("src")).toBe("/icons/w1.png"),
-    );
+    await waitFor(() => expect(sidebar().querySelector("img.ws-avatar")?.getAttribute("src")).toBe("/icons/w1.png"));
     expect(document.querySelector("img.icon-preview")?.getAttribute("src")).toBe("/icons/w1.png");
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ type: "image/png", name: "mark.png" });
   });
@@ -98,7 +96,7 @@ describe("Settings: the Icon card", () => {
     const card = (await screen.findByText("The icon must be square.")).closest(".card") as HTMLElement;
     expect(within(card).getByRole("heading", { name: "Icon" })).toBeTruthy();
     expect(screen.queryByText("Icon saved.")).toBeNull();
-    expect(sidebar().querySelector("img.workspace-icon")).toBeNull();
+    expect(sidebar().querySelector("img.ws-avatar")).toBeNull();
   });
 
   it("removes the icon, and the sidebar drops it", async () => {
@@ -112,10 +110,10 @@ describe("Settings: the Icon card", () => {
       },
     });
     open("settings");
-    await waitFor(() => expect(sidebar().querySelector("img.workspace-icon")).not.toBeNull());
+    await waitFor(() => expect(sidebar().querySelector("img.ws-avatar")).not.toBeNull());
     await userEvent.setup().click(await screen.findByRole("button", { name: "Remove" }));
     expect(await screen.findByText("Icon removed.")).toBeTruthy();
-    await waitFor(() => expect(sidebar().querySelector("img.workspace-icon")).toBeNull());
+    await waitFor(() => expect(sidebar().querySelector("img.ws-avatar")).toBeNull());
     expect(calls.some((c) => c.method === "DELETE" && c.path === "settings/icon")).toBe(true);
   });
 });
@@ -405,6 +403,83 @@ describe("the admin dashboard", () => {
   });
 });
 
+describe("the workspace switcher", () => {
+  const two = () => ({
+    ...state(),
+    workspaces: [
+      { id: "w1", name: ws.name, role: "admin", iconUrl: null },
+      { id: "w2", name: "Demo Running", role: "editor", iconUrl: "/icons/w2.png" },
+    ],
+  });
+  const routes = (s: object) => ({
+    "GET state": { body: s },
+    "GET overview": { status: 500, body: { error: "not needed here" } },
+    "POST session/workspace": { body: { id: "w2" } },
+  });
+  const assign = vi.fn();
+  beforeEach(() => {
+    assign.mockReset();
+    vi.spyOn(window.location, "assign").mockImplementation(assign);
+  });
+
+  it("with one workspace, is its token: a placeholder image (not the app's mark), the name and the role, no menu", async () => {
+    fakeApi(routes(state()));
+    open("");
+    const token = (await screen.findByText("Demo Travel", { selector: ".ws-name" })).closest(
+      ".ws-token",
+    ) as HTMLElement;
+    expect(token.tagName).toBe("DIV");
+    expect(within(token).getByText("admin")).toBeTruthy();
+    expect(token.querySelector("span.ws-avatar")).not.toBeNull();
+    expect(sidebar().querySelector("img[src='/favicon.svg']")).toBeNull();
+    expect(token.querySelector(".ws-chevrons")).toBeNull();
+  });
+
+  it("with several, opens a menu that checks the current one, and picking another switches to it", async () => {
+    const calls = fakeApi(routes(two()));
+    open("");
+    const user = userEvent.setup();
+    const token = await screen.findByRole("button", { name: "Workspace: Demo Travel. Switch workspace" });
+    expect(token.getAttribute("aria-expanded")).toBe("false");
+    await user.click(token);
+    const menu = screen.getByRole("menu", { name: "Workspaces" });
+    const items = within(menu).getAllByRole("menuitemradio");
+    expect(items.map((i) => [i.textContent, i.getAttribute("aria-checked")])).toEqual([
+      ["Demo Traveladmin", "true"],
+      ["Demo Runningeditor", "false"],
+    ]);
+    // the keyboard starts on the current one
+    expect(document.activeElement).toBe(items[0]);
+    expect(items[1].querySelector("img.ws-avatar")?.getAttribute("src")).toBe("/icons/w2.png");
+    await user.click(items[1]);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.find((c) => c.method === "POST")).toEqual({
+      method: "POST",
+      path: "session/workspace",
+      body: { id: "w2" },
+    });
+  });
+
+  it("moves with the arrow keys, and Escape closes it and goes back to the token", async () => {
+    fakeApi(routes(two()));
+    open("");
+    const user = userEvent.setup();
+    const token = await screen.findByRole("button", { name: /Switch workspace/ });
+    token.focus();
+    await user.keyboard("{ArrowDown}");
+    const items = within(screen.getByRole("menu")).getAllByRole("menuitemradio");
+    await waitFor(() => expect(document.activeElement).toBe(items[0]));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(items[1]);
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(items[0]);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(token);
+    expect(assign).not.toHaveBeenCalled();
+  });
+});
+
 describe("Audit", () => {
   const entry = (id: number, action: string) => ({
     id,
@@ -479,5 +554,84 @@ describe("Members: a pending invite's link", () => {
     // not a new invite: nothing said about email
     expect(screen.queryByText(/emailed to them/)).toBeNull();
     expect(calls.find((c) => c.method === "POST")?.path).toBe("invites/aaaa/link");
+  });
+});
+
+describe("Settings → Media: the workspace's folder", () => {
+  const media = (folder: string) => ({
+    body: {
+      folder,
+      stores: [
+        {
+          id: "drive",
+          kind: "drive",
+          own: false,
+          default: true,
+          status: "ok",
+          lastError: null,
+          lastCheckedAt: null,
+          settings: {},
+          waitingApprovals: 0,
+        },
+        {
+          id: "s3",
+          kind: "s3",
+          own: false,
+          default: false,
+          status: "ok",
+          lastError: null,
+          lastCheckedAt: null,
+          settings: {},
+          waitingApprovals: 0,
+        },
+      ],
+      offered: ["drive", "s3"],
+      googleApp: true,
+      encryptionKeySet: true,
+    },
+  });
+
+  it("renames it, and says where it was renamed and where a new one was made", async () => {
+    let folder = "demo-travel";
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET settings/media": () => media(folder),
+      "PUT settings/media/folder": (b) => {
+        folder = (b as { folder: string }).folder;
+        return { body: { folder, renamed: ["drive"], made: ["s3"], failed: [] } };
+      },
+    });
+    open("settings/media");
+    const field = await screen.findByLabelText("Folder");
+    await waitFor(() => expect(field).toHaveProperty("value", "demo-travel")); // the saved name, filled in
+    expect(screen.getByText(/renames the folder in Google Drive/)).toBeTruthy();
+    await userEvent.clear(field);
+    await userEvent.type(field, "demo-trips");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      await screen.findByText(
+        "The media folder is demo-trips. Renamed in Google Drive: its files stay in it. Made new in S3-compatible bucket: files in the old folder stay there.",
+      ),
+    ).toBeTruthy();
+    expect(calls.find((c) => c.path === "settings/media/folder")?.body).toEqual({ folder: "demo-trips" });
+  });
+
+  it("shows the refusal of a name a store already has, and keeps the field", async () => {
+    fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET settings/media": () => media("demo-travel"),
+      "PUT settings/media/folder": {
+        status: 400,
+        body: { error: "Google Drive already has a folder named taken: pick a name it doesn't use" },
+      },
+    });
+    open("settings/media");
+    const field = await screen.findByLabelText("Folder");
+    await waitFor(() => expect(field).toHaveProperty("value", "demo-travel"));
+    await userEvent.clear(field);
+    await userEvent.type(field, "taken");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/already has a folder named taken/);
+    expect(field).toHaveProperty("value", "taken");
   });
 });

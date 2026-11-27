@@ -426,8 +426,22 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
     if (folder.trim() === data?.folder) return; // aria-disabled doesn't stop a submit
     setFolderErr(null);
     try {
-      const r = await api<{ folder: string }>("settings/media/folder", { folder: folder.trim() }, "PUT");
-      toast({ ok: true, text: `The media folder is ${r.folder}.` });
+      const r = await api<{ folder: string; renamed: string[]; made: string[] }>(
+        "settings/media/folder",
+        { folder: folder.trim() },
+        "PUT",
+      );
+      const names = (kinds: string[]) => kinds.map((k) => STORE_NAME[k] ?? k).join(", ");
+      toast({
+        ok: true,
+        text: [
+          `The media folder is ${r.folder}.`,
+          r.renamed.length ? `Renamed in ${names(r.renamed)}: its files stay in it.` : "",
+          r.made.length ? `Made new in ${names(r.made)}: files in the old folder stay there.` : "",
+        ]
+          .filter(Boolean)
+          .join(" "),
+      });
       reload();
     } catch (e) {
       setFolderErr(errorText(e));
@@ -460,7 +474,7 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
             <form onSubmit={saveFolder}>
               <Field
                 label="Folder"
-                help="The one folder of the store this workspace's files live in: its inbox, uploads and posted files. Bongsu doesn't move files: move them yourself."
+                help="The one folder of the store this workspace's files live in: its inbox, uploads and posted files. A new name renames the folder in Google Drive and on the server's disk, files and all; a bucket gets a new folder and its files stay in the old one. The name must not be used by a folder already there."
                 error={folderErr}
               >
                 {(p) => (
