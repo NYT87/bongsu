@@ -12,6 +12,8 @@ export type Me = {
   setupNeeded: boolean;
   vapidPublicKey: string;
   dryRun: boolean;
+  /** The running server's version (signed in only), shown beside the app's own. */
+  server?: { version: string; commit: string | null } | null;
   /** The zone the app shows and takes times in: the user's own, else the workspace's. */
   timezone?: string;
   workspaceTimezone?: string;

@@ -10,7 +10,7 @@ const b64ToBytes = (s: string) =>
   Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
 
 /** This app's version, and whether the deployed one is newer (an installed PWA can run an older copy). */
-function VersionInfo() {
+export function VersionInfo({ me }: { me: Me }) {
   const [live, setLive] = useState<{ commit: string; built: string } | null>(null);
   useEffect(() => {
     fetch("/version.json", { cache: "no-store" })
@@ -24,10 +24,15 @@ function VersionInfo() {
     <div className="card">
       <h2>{t("settings.version")}</h2>
       <p className="small">
-        {t("settings.app")} <code>{v.commit}</code>
+        {t("settings.app")} {v.version} <code>{v.commit}</code>
         {t("settings.built", { built: v.built })}
         {live && !behind && <span className="muted"> {t("settings.upToDate")}</span>}
       </p>
+      {me.server && (
+        <p className="small">
+          {t("settings.server")} {me.server.version} <code>{me.server.commit ?? t("settings.unknownCommit")}</code>
+        </p>
+      )}
       {behind && (
         <p className="small warn">
           {t("settings.newer")}
@@ -457,7 +462,7 @@ export function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void 
       {me.connects && <ConnectCard />}
       <TimeZoneCard me={me} />
       <MediaStoresCard />
-      <VersionInfo />
+      <VersionInfo me={me} />
       <div className="card">
         <h2>{t("settings.thisDevice")}</h2>
         <button

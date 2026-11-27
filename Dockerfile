@@ -15,6 +15,8 @@ RUN pnpm install --frozen-lockfile --ignore-scripts --filter "@bongsu/node..." -
 # The app's name and theme colour are build inputs (site/docs/configuration.md, Branding).
 ARG BONGSU_APP_NAME
 ARG BONGSU_THEME_COLOR
+# The commit the image is built from (no .git in the context): shown in Settings, for the app and the server.
+ARG BONGSU_COMMIT
 RUN pnpm --filter @bongsu/web build \
  && pnpm --filter @bongsu/dashboard build \
  && pnpm --filter @bongsu/node build
@@ -25,7 +27,9 @@ RUN mkdir /out && cd /out \
 
 # ---- runtime
 FROM node:22.23.5-bookworm-slim
-ENV NODE_ENV=production \
+ARG BONGSU_COMMIT
+ENV BONGSU_COMMIT=$BONGSU_COMMIT \
+    NODE_ENV=production \
     PORT=8787 \
     DATABASE_PATH=/data/bongsu.db \
     MIGRATIONS_DIR=/app/migrations \

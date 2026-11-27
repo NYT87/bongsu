@@ -93,6 +93,8 @@ dashboard's mark.
   also in CI's variables if CI deploys.
 - **Docker:** put both in `.env` (`docker compose` passes them as build arguments), or
   `docker build --build-arg BONGSU_APP_NAME="Lighthouse" --build-arg BONGSU_THEME_COLOR="#112233" .`; rebuild the image to apply.
+  Add `--build-arg BONGSU_COMMIT=$(git rev-parse --short HEAD)` so Settings shows the commit the image was built from
+  (the published images carry theirs).
 
 ## Variables (wrangler files)
 

@@ -52,7 +52,17 @@ describe("Settings: the Icon card", () => {
       ntfy: { set: false, host: null },
       encryptionKeySet: true,
       iconUrl: ws.iconUrl,
+      server: { version: "0.7.0", commit: null },
     },
+  });
+
+  it("shows the app's version and commit beside the server's", async () => {
+    fakeApi({ "GET state": () => ({ body: state() }), "GET settings": settings });
+    open("settings");
+    const card = (await screen.findByRole("heading", { name: "Version" })).closest(".card") as HTMLElement;
+    expect(within(card).getByText(__APP_VERSION__.commit)).toBeTruthy();
+    expect(within(card).getByText("unknown commit")).toBeTruthy();
+    expect(card.textContent).toContain("0.7.0");
   });
 
   it("uploads a PNG, then the card and the sidebar both show the new icon", async () => {

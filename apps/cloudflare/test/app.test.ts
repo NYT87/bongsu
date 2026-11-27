@@ -83,10 +83,19 @@ beforeEach(async () => {
 
 describe("owner sign-in", () => {
   it("needs setup first, and only a valid one-time code starts it", async () => {
-    expect(await (await call("/app-api/me")).json()).toMatchObject({ signedIn: false, setupNeeded: true });
+    // the server's version only to someone signed in
+    expect(await (await call("/app-api/me")).json()).toMatchObject({
+      signedIn: false,
+      setupNeeded: true,
+      server: null,
+    });
     expect((await post("/app-api/setup/options", { code: "WRONG" })).status).toBe(403);
     expect((await signUp()).status).toBe(200);
-    expect(await (await call("/app-api/me")).json()).toMatchObject({ signedIn: true, setupNeeded: false });
+    expect(await (await call("/app-api/me")).json()).toMatchObject({
+      signedIn: true,
+      setupNeeded: false,
+      server: { version: expect.stringMatching(/^\d+\.\d+\.\d+/), commit: null },
+    });
     cookie = "";
     expect((await post("/app-api/setup/options", { code: "CODE-1234" })).status).toBe(403); // used up
   });

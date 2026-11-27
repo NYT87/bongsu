@@ -40,6 +40,7 @@ export function nodeEnv(vars: Vars, db: Db, assets?: Env["ASSETS"]): Env {
     "MEDIA_DIR",
     "ENCRYPTION_KEY",
     "SETUP_TOKEN",
+    "BONGSU_COMMIT",
     "MAILER",
     "MAIL_FROM",
     "RESEND_API_KEY",
