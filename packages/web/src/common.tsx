@@ -105,7 +105,14 @@ export function useHash(): string {
 // Each entry keeps the time it was fetched, so a page can say how old it is when the refresh fails.
 const CACHE = "bongsu-cache:";
 
-const cacheKey = (path: string) => `${CACHE}${zoneShift(0)}:${path}`;
+let CACHE_SCOPE = "";
+/** Whose answers the cache holds: the host's API and the workspace (`/app-api|w_…`), so the app and the dashboard, or
+ *  two workspaces, never read each other's in the same browser. Pruning is by day, before the scope. */
+export function setCacheScope(scope: string) {
+  CACHE_SCOPE = scope;
+}
+
+const cacheKey = (path: string) => `${CACHE}${zoneShift(0)}:${CACHE_SCOPE}:${path}`;
 
 type Cached<T> = { at: number; data: T };
 
@@ -511,7 +518,12 @@ export const ICON = {
 };
 
 /** The instance's name (build input BONGSU_APP_NAME, site/docs/configuration.md). */
-export const BRAND = __APP_BRAND__;
+/** The app's name and colour: the app's build sets them (__APP_BRAND__); another host passes its own (setBrand). */
+export let BRAND: { name: string; themeColor: string } =
+  typeof __APP_BRAND__ === "undefined" ? { name: "Bongsu", themeColor: "#131f2a" } : __APP_BRAND__;
+export function setBrand(b: { name: string; themeColor: string }) {
+  BRAND = b;
+}
 
 /** The instance's privacy policy and terms (privacy/, terms/: pages of their own, outside the app's hash routes). */
 export const LegalLinks = () => (
