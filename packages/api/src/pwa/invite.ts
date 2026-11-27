@@ -85,8 +85,8 @@ export async function inviteOptions(env: Env, token: string, name: unknown, nowS
     { invite, userId: id, name: display } satisfies Data,
     { id, email: i.email, name: display },
   );
-  // "\u0000" is no one's id: no passkey listed, the browser offers the person's own for this site
-  const signIn = await authenticationOptions(env.DB, env.RP_ID, "login", { invite } satisfies Data, nowS, "\u0000");
+  // no user: no passkey listed, the browser offers the person's own for this site
+  const signIn = await authenticationOptions(env.DB, env.RP_ID, "login", { invite } satisfies Data, nowS);
   return { register, signIn };
 }
 

@@ -313,6 +313,22 @@ describe("a passkey confirms only its own user's action", () => {
   const offered = (o: Record<string, unknown>) =>
     ((o.options as { allowCredentials?: { id: string }[] }).allowCredentials ?? []).map((c) => c.id);
 
+  it("the app's signed-out sign-in lists no passkey, so a stranger learns nobody's (#175); approving lists your own", async () => {
+    const call = await setup();
+    const signedOut = await appRoutes(w.fetch, fake).request(
+      "https://bongsu.test/app-api/login/options",
+      { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" },
+      e,
+    );
+    expect(signedOut.status).toBe(200);
+    expect(offered((await signedOut.json()) as Record<string, unknown>)).toEqual([]);
+    // a signed-in action still names the person's own passkey (and only theirs)
+    await shortsAdd(opctx(), { video_id: "vidPUBLIC02", channel: "main", text: "Agent text", label: "s2" });
+    expect(offered((await call("/app-api/approve/options", { key: "comment:vidPUBLIC02" })).json)).toEqual([
+      "cred-owner",
+    ]);
+  });
+
   it("refuses another member's passkey for an approval", async () => {
     await shortsAdd(opctx(), { video_id: "vidPUBLIC01", channel: "main", text: "Agent text", label: "s1" });
     const call = await setup();
