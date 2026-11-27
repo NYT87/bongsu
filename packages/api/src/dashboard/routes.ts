@@ -154,6 +154,7 @@ const AREAS: Record<string, Area> = {
   "oauth-apps": { instance: true },
   scheduler: { instance: true },
   "instance-admins": { instance: true },
+  users: { instance: true },
   verify: { noWorkspace: true },
   passkeys: { noWorkspace: true },
   devices: { noWorkspace: true },
@@ -1434,7 +1435,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     if (!name) throw new AdminError(400, `name the workspace (at most ${NAME_MAX} characters)`);
     return name;
   };
-  // A new workspace and its first admin: "me" (the instance admin, who then works in it), or an email to invite.
+  // A new workspace and its one admin, chosen by the instance admin: "me" (who then works in it), an account already on
+  // the instance (by its email: it becomes the admin right away), or a new person's email, who gets an invite.
   app.post(
     "/admin-api/workspaces",
     wrap(async (c) => {
@@ -1451,23 +1453,25 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const me = c.get("session").userId;
       // optional: the folder of the media store its files live in (else the workspace's id)
       const folder = typeof b.folder === "string" && b.folder.trim() ? b.folder : undefined;
+      const user =
+        admin === "me"
+          ? me
+          : (await c.env.DB.prepare("SELECT id FROM users WHERE email = ?1").bind(admin).first<{ id: string }>())?.id;
       const id = await createWorkspace(c.env.DB, { name, timezone, createdBy: me, mediaFolder: folder }, nowS());
       // its folder in the instance's stores, so files can be dropped in right away (best effort: made on first use)
       await makeWorkspaceFolders(c.env, fetcher, id);
-      const invite =
-        admin === "me"
-          ? null
-          : await createInvite(c.env, fetcher, { workspaceId: id, email: admin, role: "admin", invitedBy: me }, nowS());
+      const invite = user
+        ? null
+        : await createInvite(c.env, fetcher, { workspaceId: id, email: admin, role: "admin", invitedBy: me }, nowS());
+      if (user) await addMember(c.env.DB, id, user, "admin", nowS());
       // its admin being "me", the creator works in it from the next request on; one made for someone else waits on the
       // Workspaces page (spec section 0.4), where "open" goes into it
-      if (!invite) {
-        await addMember(c.env.DB, id, me, "admin", nowS());
-        await setSessionWorkspace(c.env.DB, c.get("token"), id);
-      }
+      if (user === me) await setSessionWorkspace(c.env.DB, c.get("token"), id);
       // the instance's row: the request may have no workspace, and the new one isn't where it was made
       await audit(c, "workspace_create", id, { name, timezone, admin }, me, null);
       if (invite) await audit(c, "invite_create", admin, { role: "admin", mailed: invite.mailed }, me, id);
-      return invite ? { id, invite } : { id };
+      else if (user !== me) await audit(c, "member_role", `user:${user}`, { role: "admin" }, me, id);
+      return invite ? { id, invite } : user === me ? { id } : { id, admin: user };
     }),
   );
   app.get(
@@ -1589,6 +1593,19 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (!(await open(c, id))) throw new AdminError(403, "you can't open that workspace");
       return { id };
     }),
+  );
+  // The instance's accounts: who a new workspace's admin can be, picked instead of typed.
+  app.get(
+    "/admin-api/users",
+    wrap(async (c) => ({
+      users: (
+        await c.env.DB.prepare("SELECT id, email, name FROM users ORDER BY COALESCE(name, email), email").all<{
+          id: string;
+          email: string;
+          name: string | null;
+        }>()
+      ).results,
+    })),
   );
   app.post(
     "/admin-api/instance-admins",

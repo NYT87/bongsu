@@ -3,7 +3,7 @@
 import { type FormEvent, useState } from "react";
 import { api, switchWorkspace, when, withFreshCheck } from "../api";
 import { Card, Field, Loading, Page, Pill, SecretOnce, useConfirm, useLoad, useToast } from "../ui";
-import { errorText, type Props } from "./common";
+import { AdminPicker, adminOf, errorText, type Props } from "./common";
 import { SchedulerCard } from "./Settings";
 
 // ---- Workspaces (instance admins)
@@ -21,7 +21,7 @@ interface WorkspaceRow {
 const workIn = (section = "") => location.assign(`/dashboard/${section}`);
 
 /** Every workspace of the instance: create, rename, add an admin, archive or restore, and open one to work in it. */
-export function Workspaces(_: Props) {
+export function Workspaces({ state }: Props) {
   const toast = useToast();
   const { data, error, reload } = useLoad<{ workspaces: WorkspaceRow[] }>("workspaces");
   const { confirm, dialog } = useConfirm();
@@ -31,7 +31,8 @@ export function Workspaces(_: Props) {
   // empty: the server names the folder after the workspace's id
   const [folder, setFolder] = useState("");
   const [tz, setTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
-  const [adminIsMe, setAdminIsMe] = useState(true);
+  // "me", an account's email, or someone new (common.tsx)
+  const [adminChoice, setAdminChoice] = useState("me");
   const [email, setEmail] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -44,7 +45,7 @@ export function Workspaces(_: Props) {
     setName(f && f.kind === "rename" ? f.w.name : "");
     setFolder("");
     setEmail("");
-    setAdminIsMe(true);
+    setAdminChoice("me");
   };
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -54,17 +55,19 @@ export function Workspaces(_: Props) {
     try {
       const to = email.trim().toLowerCase();
       if (form.kind === "create") {
+        const admin = adminOf(adminChoice, email);
         const r = await withFreshCheck(() =>
-          api<{ invite?: { url: string } }>("workspaces", {
+          api<{ invite?: { url: string }; admin?: string }>("workspaces", {
             name,
             timezone: tz,
             // empty: the server picks, numbering it (demo-studio-2) when another workspace has the name's slug
             folder: folder.trim(),
-            admin: adminIsMe ? "me" : to,
+            admin,
           }),
         );
         // with "me" as its admin, the session now works in it; one made for someone else waits in this list
-        if (r.invite) setMade({ url: r.invite.url, email: to });
+        if (r.invite) setMade({ url: r.invite.url, email: admin });
+        else if (r.admin) toast({ ok: true, text: `${name.trim()} is ready: ${admin} is its admin.` });
         else workIn("start");
       } else if (form.kind === "rename") {
         await api(`workspaces/${encodeURIComponent(form.w.id)}`, { name });
@@ -159,26 +162,17 @@ export function Workspaces(_: Props) {
                     </select>
                   )}
                 </Field>
-                <fieldset>
-                  <legend>Its first admin</legend>
-                  <label className="check">
-                    <input type="radio" name="admin" checked={adminIsMe} onChange={() => setAdminIsMe(true)} />
-                    <span>Me</span>
-                  </label>
-                  <label className="check">
-                    <input type="radio" name="admin" checked={!adminIsMe} onChange={() => setAdminIsMe(false)} />
-                    <span>
-                      Someone else <span className="muted">who gets an invite link</span>
-                    </span>
-                  </label>
-                </fieldset>
+                <AdminPicker
+                  myEmail={state.user?.email ?? null}
+                  choice={adminChoice}
+                  onChoice={setAdminChoice}
+                  email={email}
+                  onEmail={setEmail}
+                />
               </>
             )}
-            {(form.kind === "admin" || (form.kind === "create" && !adminIsMe)) && (
-              <Field
-                label={form.kind === "admin" ? `Email of ${form.w.name}'s new admin` : "Their email"}
-                help="They get an invite link, to join as an admin."
-              >
+            {form.kind === "admin" && (
+              <Field label={`Email of ${form.w.name}'s new admin`} help="They get an invite link, to join as an admin.">
                 {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
               </Field>
             )}

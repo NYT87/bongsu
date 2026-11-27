@@ -629,6 +629,8 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     ] as const)
       expect((await send("bea", "dashboard", path, body)).status, path).toBe(403);
     expect((await as("bea", "dashboard", "/admin-api/workspaces")).status).toBe(403);
+    // nor the instance's accounts, which the create form picks its admin from
+    expect((await as("bea", "dashboard", "/admin-api/users")).status).toBe(403);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces WHERE name = 'Mine'").first("n")).toBe(0);
     expect(
       await env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = 'default'").first("archived_at"),

@@ -560,7 +560,9 @@ select {
   background: var(--bg);
   color: var(--fg);
 }
-input[type="checkbox"] {
+/* a box or a dot keeps its own size: the full-width field rule above would stretch it across its label's row */
+input[type="checkbox"],
+input[type="radio"] {
   width: 18px;
   height: 18px;
   min-height: 0;
