@@ -1,5 +1,18 @@
 # @bongsu/schema
 
+## 0.5.2
+
+### Patch Changes
+
+- Updated dependencies [ee96ff0]
+- Updated dependencies [da9d415]
+- Updated dependencies [50efcdf]
+- Updated dependencies [ef27c6f]
+- Updated dependencies [1eb0dca]
+- Updated dependencies [233aa37]
+- Updated dependencies [19db664]
+  - @bongsu/core@0.8.0
+
 ## 0.5.1
 
 ### Patch Changes

@@ -1,5 +1,33 @@
 # @bongsu/web
 
+## 0.8.0
+
+### Minor Changes
+
+- bd3b3b9: A member can leave a workspace themselves: **Leave this workspace** on the dashboard's Devices & passkeys page, and **Settings → Leave <workspace>** in the app. They're cut off from it at once and stay signed in, in their next workspace. A workspace's last admin can't leave.
+- 407cb62: Every instance serves a privacy page at `/privacy/`, in the app's name and colour: the privacy policy link Google asks for before a Google app with Drive or YouTube access can be published. It says what the instance keeps, what it does with Google user data, and how to withdraw access.
+- e853642: Every instance serves a terms of service page at `/terms/`, in the app's name and colour, for the Google consent screen's terms link: how the instance is used, that connected accounts follow their platform's terms (with the YouTube Terms of Service and the Google Privacy Policy linked, as YouTube's API Services ask), and the software's lack of warranty. The privacy page links it and the Google Privacy Policy.
+- ad92046: Settings shows the version: the dashboard's Settings page gets a Version card with the app's release and commit beside the server's, and the app's Settings adds the server's line under its own. `pnpm run deploy` and the Docker image pass the commit (`BONGSU_COMMIT`).
+
+### Patch Changes
+
+- 6a411ef: The workspace switcher's role pill and the dashboard's filled red buttons (in dark mode) now reach WCAG AA contrast. In
+  the app, a button that asks before it acts moves the focus to Cancel when it asks and back to itself after, so the
+  keyboard doesn't lose its place.
+- c2bcd19: The privacy policy lists the cookies and browser storage the instance uses (only what signing in and the app need, no
+  trackers) and how long it keeps things. `BONGSU_OPERATOR_NAME` and `BONGSU_OPERATOR_CONTACT` (build inputs) put who
+  runs the instance and how to reach them on the privacy and terms pages. Both pages are linked from the sign-in screens
+  and Settings, in the app and the dashboard, and the project site's footer says where an instance's policy lives.
+- 094b577: Switching workspace in the app now opens the new workspace on Today, its home, instead of the Queue.
+- Updated dependencies [ee96ff0]
+- Updated dependencies [da9d415]
+- Updated dependencies [50efcdf]
+- Updated dependencies [ef27c6f]
+- Updated dependencies [1eb0dca]
+- Updated dependencies [233aa37]
+- Updated dependencies [19db664]
+  - @bongsu/core@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

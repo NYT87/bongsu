@@ -1,5 +1,36 @@
 # @bongsu/api
 
+## 0.8.0
+
+### Minor Changes
+
+- 37cba23: The admin dashboard gets an Audit page: the instance's own log by default, or any workspace's, picked from a list. The workspace's Audit page shows only that workspace's log (its instance switch moved there).
+- ee96ff0: The instance settings move to an admin dashboard (`/dashboard/admin/`): Workspaces, Media and OAuth apps leave the workspace sidebar, and instance admins reach them from an **Admin dashboard** link at the bottom of it, with a link back to the workspace. Anyone else who opens an admin page is sent back to their workspace. Old links (`/dashboard/media`, `/dashboard/apps`, `/dashboard/workspaces`) still work.
+- da9d415: Emails say why they were sent. An alert email (a connection or a media store that broke) ends with the role that brought
+  it and a link to turn these emails off; an invite ends with who sent it and that ignoring it does nothing (the link
+  expires in 7 days). Each person turns alert emails off in the dashboard (Devices & passkeys → Alert emails, new
+  `users.alert_mail` column, on by default); the push and the dashboard notice still go out.
+- 50efcdf: The audit log no longer stores emails: invites are named `invite:<id>` and people `user:<id>`, the Audit page shows their name or email from the live rows, and every audit write masks anything shaped like an email. Migration 0028 rewrites the old rows.
+- ef27c6f: Google Drive gets a root folder: type a folder's name or paste its link on the Media page (or a workspace's Settings → Media) before Connect Google Drive, and every workspace's folder, with its inbox, is made inside it; Save the root folder moves to another later. Bongsu now makes a workspace's folder itself in each store when the store is connected, the workspace is made or its folder changes, instead of failing when it's missing. A new workspace's folder is named after its id, so renaming the workspace never changes it. Run the migrations (0026 adds `oauth_states.flow_settings`).
+- 233aa37: A pending invite's link can be copied again from Members (**Copy link**) until it's used, expires or is revoked. The link is kept encrypted with `ENCRYPTION_KEY` (migration 0027 adds `invites.token_enc`); invites made before, or without the key, still show their link once.
+- bd3b3b9: A member can leave a workspace themselves: **Leave this workspace** on the dashboard's Devices & passkeys page, and **Settings → Leave <workspace>** in the app. They're cut off from it at once and stay signed in, in their next workspace. A workspace's last admin can't leave.
+- 19db664: Changing a workspace's media folder renames it in place in Google Drive and on the server's disk, files and all, instead of starting an empty folder beside the old one: the files keep their ids, so approved posts, drafts and the inbox carry on. A name a store already has a folder for is refused (folders are never merged), and a rename that fails in one store is put back in the others. A bucket still gets a new folder, and the dashboard says so.
+- d3de96e: A page of your own in the dashboard: click your name at the bottom of the sidebar to change your name and see every workspace you belong to with your role there, and leave any of them (the last admin can't). It replaces the Leave card on Devices & passkeys.
+- ad92046: Settings shows the version: the dashboard's Settings page gets a Version card with the app's release and commit beside the server's, and the app's Settings adds the server's line under its own. `pnpm run deploy` and the Docker image pass the commit (`BONGSU_COMMIT`).
+- 0d0f8b1: Creating a workspace picks its admin from a list: you, an account already on the instance (its admin right away, no invite), or someone new invited by email. The misaligned "Me / Someone else" radios are gone.
+- 6a4a95f: A workspace's own Google Drive now needs the workspace's own Google app (set once in Settings → OAuth apps): until it has one, Settings → Media points there instead of offering **Add Google Drive**. Drives already connected keep working. The Connections page sends a workspace admin to the workspace's own OAuth apps, not the admin dashboard.
+
+### Patch Changes
+
+- Updated dependencies [ee96ff0]
+- Updated dependencies [da9d415]
+- Updated dependencies [50efcdf]
+- Updated dependencies [ef27c6f]
+- Updated dependencies [1eb0dca]
+- Updated dependencies [233aa37]
+- Updated dependencies [19db664]
+  - @bongsu/core@0.8.0
+
 ## 0.7.0
 
 ### Minor Changes

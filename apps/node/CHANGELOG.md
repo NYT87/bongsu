@@ -1,5 +1,30 @@
 # @bongsu/node
 
+## 0.6.0
+
+### Minor Changes
+
+- 19db664: Changing a workspace's media folder renames it in place in Google Drive and on the server's disk, files and all, instead of starting an empty folder beside the old one: the files keep their ids, so approved posts, drafts and the inbox carry on. A name a store already has a folder for is refused (folders are never merged), and a rename that fails in one store is put back in the others. A bucket still gets a new folder, and the dashboard says so.
+
+### Patch Changes
+
+- Updated dependencies [37cba23]
+- Updated dependencies [ee96ff0]
+- Updated dependencies [da9d415]
+- Updated dependencies [50efcdf]
+- Updated dependencies [ef27c6f]
+- Updated dependencies [1eb0dca]
+- Updated dependencies [233aa37]
+- Updated dependencies [bd3b3b9]
+- Updated dependencies [19db664]
+- Updated dependencies [d3de96e]
+- Updated dependencies [ad92046]
+- Updated dependencies [0d0f8b1]
+- Updated dependencies [6a4a95f]
+  - @bongsu/api@0.8.0
+  - @bongsu/core@0.8.0
+  - @bongsu/schema@0.5.2
+
 ## 0.5.1
 
 ### Patch Changes

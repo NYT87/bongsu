@@ -1,5 +1,23 @@
 # @bongsu/core
 
+## 0.8.0
+
+### Minor Changes
+
+- ee96ff0: The instance settings move to an admin dashboard (`/dashboard/admin/`): Workspaces, Media and OAuth apps leave the workspace sidebar, and instance admins reach them from an **Admin dashboard** link at the bottom of it, with a link back to the workspace. Anyone else who opens an admin page is sent back to their workspace. Old links (`/dashboard/media`, `/dashboard/apps`, `/dashboard/workspaces`) still work.
+- da9d415: Emails say why they were sent. An alert email (a connection or a media store that broke) ends with the role that brought
+  it and a link to turn these emails off; an invite ends with who sent it and that ignoring it does nothing (the link
+  expires in 7 days). Each person turns alert emails off in the dashboard (Devices & passkeys → Alert emails, new
+  `users.alert_mail` column, on by default); the push and the dashboard notice still go out.
+- 50efcdf: The audit log no longer stores emails: invites are named `invite:<id>` and people `user:<id>`, the Audit page shows their name or email from the live rows, and every audit write masks anything shaped like an email. Migration 0028 rewrites the old rows.
+- ef27c6f: Google Drive gets a root folder: type a folder's name or paste its link on the Media page (or a workspace's Settings → Media) before Connect Google Drive, and every workspace's folder, with its inbox, is made inside it; Save the root folder moves to another later. Bongsu now makes a workspace's folder itself in each store when the store is connected, the workspace is made or its folder changes, instead of failing when it's missing. A new workspace's folder is named after its id, so renaming the workspace never changes it. Run the migrations (0026 adds `oauth_states.flow_settings`).
+- 233aa37: A pending invite's link can be copied again from Members (**Copy link**) until it's used, expires or is revoked. The link is kept encrypted with `ENCRYPTION_KEY` (migration 0027 adds `invites.token_enc`); invites made before, or without the key, still show their link once.
+- 19db664: Changing a workspace's media folder renames it in place in Google Drive and on the server's disk, files and all, instead of starting an empty folder beside the old one: the files keep their ids, so approved posts, drafts and the inbox carry on. A name a store already has a folder for is refused (folders are never merged), and a rename that fails in one store is put back in the others. A bucket still gets a new folder, and the dashboard says so.
+
+### Patch Changes
+
+- 1eb0dca: Google Drive's root folder is required: Connect Google Drive and Save the root folder say what's missing instead of putting the workspaces' folders at the top of My Drive. A Drive connected before root folders keeps working until one is saved. The dashboard's placeholders are muted and italic, so an empty field no longer reads as a filled one.
+
 ## 0.7.0
 
 ### Minor Changes
