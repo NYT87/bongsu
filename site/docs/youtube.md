@@ -17,7 +17,7 @@ the scopes `https://www.googleapis.com/auth/youtube.force-ssl` (uploads, details
 
 ## 2. Connect the channel from the dashboard
 
-1. Dashboard → **OAuth apps** → Google app: paste the client id and secret, **Save** (the secret is stored encrypted
+1. Admin dashboard → **OAuth apps** → Google app: paste the client id and secret, **Save** (the secret is stored encrypted
    with the instance's `ENCRYPTION_KEY`, [Configuration](configuration.md#secrets)).
 2. **Connections** → YouTube channel → **Connect**. Sign in with the Google account that owns the channel (for a brand
    channel, pick it when Google asks) and allow access. Google sends you back with the channel connected.

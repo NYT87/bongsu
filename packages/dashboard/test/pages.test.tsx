@@ -327,3 +327,64 @@ describe("Workspaces: a new workspace's admin", () => {
     expect(calls.find((c) => c.method === "POST")?.body).toMatchObject({ admin: "new@example.com" });
   });
 });
+
+describe("the admin dashboard", () => {
+  const routes = (s: object) => ({
+    "GET state": { body: { ...state(), ...s } },
+    "GET overview": { status: 500, body: { error: "not needed here" } },
+    "GET workspaces": { body: { workspaces: [] } },
+    "GET scheduler": { status: 500, body: { error: "not needed here" } },
+    "GET oauth-apps": { body: { apps: [], encryptionKeySet: true } },
+  });
+  const nav = () => within(sidebar().querySelector("nav[aria-label='Sections']") as HTMLElement);
+  const heading = (name: string) => screen.findByRole("heading", { level: 1, name });
+
+  it("is a link at the bottom of an instance admin's sidebar, and the way back returns to the workspace", async () => {
+    fakeApi(routes({ instanceAdmin: true }));
+    open("");
+    const user = userEvent.setup();
+    await heading("Overview");
+    // the workspace's sidebar has none of the instance's pages
+    expect(nav().queryByRole("link", { name: "Workspaces" })).toBeNull();
+    expect(nav().queryByRole("link", { name: "OAuth apps" })).toBeNull();
+    await user.click(within(sidebar()).getByRole("link", { name: "Admin dashboard" }));
+    await heading("Workspaces");
+    expect(location.pathname).toBe("/dashboard/admin/workspaces");
+    expect(
+      nav()
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Workspaces", "Media", "OAuth apps"]);
+    await user.click(within(sidebar()).getByRole("link", { name: "Back to Demo Travel" }));
+    await heading("Overview");
+    expect(location.pathname).toBe("/dashboard/");
+  });
+
+  it("sends anyone else who opens one of its pages back to their workspace, with no link to it", async () => {
+    fakeApi(routes({ instanceAdmin: false }));
+    open("admin/workspaces");
+    await heading("Overview");
+    expect(location.pathname).toBe("/dashboard/");
+    expect(within(sidebar()).queryByRole("link", { name: "Admin dashboard" })).toBeNull();
+  });
+
+  it("moves a page's old path (a link already sent) to the admin dashboard's", async () => {
+    fakeApi(routes({ instanceAdmin: true }));
+    open("apps");
+    await heading("OAuth apps");
+    expect(location.pathname).toBe("/dashboard/admin/apps");
+  });
+
+  it("is where an instance admin in no workspace is, with their devices and the instance's audit", async () => {
+    fakeApi(routes({ instanceAdmin: true, noWorkspace: true, workspace: null, workspaces: [], role: null }));
+    open("");
+    await heading("Workspaces");
+    expect(
+      nav()
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["Workspaces", "Media", "OAuth apps", "Devices & passkeys", "Audit"]);
+    // no workspace to go back to
+    expect(within(sidebar()).queryByRole("navigation", { name: "Dashboards" })).toBeNull();
+  });
+});

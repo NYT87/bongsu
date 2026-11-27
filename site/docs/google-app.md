@@ -97,7 +97,7 @@ your accounts, and Google shows an "unverified app" warning when you connect (**
 - **Application type**: Web application
 - **Name**: `Bongsu` (only you see it)
 - **Authorized JavaScript origins**: none
-- **Authorized redirect URIs** → **Add URI**, once per URL, exactly (`https`, no trailing slash). The dashboard's
+- **Authorized redirect URIs** → **Add URI**, once per URL, exactly (`https`, no trailing slash). The admin dashboard's
   **OAuth apps** page lists them on the Google app card:
   - `<PUBLIC_URL>/admin-api/media-stores/drive/callback` for Drive
   - `<PUBLIC_URL>/admin-api/connect/youtube/callback` for YouTube
@@ -110,7 +110,7 @@ out of any repository and delete it once the secret is saved below.
 
 ## 8. Into Bongsu
 
-Dashboard → **OAuth apps** → **Google app**: paste the client id and secret, **Save**. The secret is stored encrypted
+Admin dashboard → **OAuth apps** → **Google app**: paste the client id and secret, **Save**. The secret is stored encrypted
 with the instance's `ENCRYPTION_KEY` ([Configuration](configuration.md#secrets)).
 
 Then connect what you'll use: [Google Drive](drive.md#2-pick-a-root-folder-and-connect) and the

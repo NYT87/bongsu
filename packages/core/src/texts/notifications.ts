@@ -210,11 +210,11 @@ export const connectionMailSubject = "Bongsu: a connection needs attention";
 export const mediaStoreProblem = (text: string, own = false): Note => ({
   group: "problems",
   title: "A media store needs attention",
-  text: `${text}\nIts files can't be read until it's fixed: check it in the dashboard (${own ? "Settings → Media" : "Media"}).`,
+  text: `${text}\nIts files can't be read until it's fixed: check it in the dashboard (${own ? "Settings → Media" : "Admin dashboard → Media"}).`,
   target: "media_stores",
   mail: {
     subject: "Bongsu: a media store needs attention",
-    page: own ? "/dashboard/settings/media" : "/dashboard/media",
+    page: own ? "/dashboard/settings/media" : "/dashboard/admin/media",
   },
 });
 export const releaseMoved = (title: string, from: string, to: string, by: string): Note => ({

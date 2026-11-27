@@ -43,7 +43,7 @@ a few channels stay far below it; it resets daily ([YouTube](youtube.md#quota)).
 
 ## "No media in the store yet: it can't be approved until the file is there."
 
-The item's files aren't where its path says, in the default media store (the dashboard's **Media** page shows which
+The item's files aren't where its path says, in the default media store (the admin dashboard's **Media** page shows which
 one that is). On Drive, check the folder names against [Google Drive](drive.md) (a renamed folder loses its items'
 media); in a bucket, the keys ([S3-compatible buckets](s3.md)); on the server's disk, the files must be under
 `MEDIA_DIR` at the same paths (the `bongsu-media` volume on Docker). A replaced file changes its checksum and needs

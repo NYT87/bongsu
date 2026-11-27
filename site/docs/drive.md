@@ -3,7 +3,7 @@
 Your Reels and photos stay on your Google Drive. Bongsu reads them with your Google account's permission, streams them
 to Instagram through its signed links, picks up files dropped in an inbox folder, takes uploads from the app and moves
 posted media aside. Nothing is ever deleted. Drive is one of the media stores: you can use it alone or next to a bucket
-([S3-compatible buckets](s3.md)), and the dashboard's **Media** page sets each one up.
+([S3-compatible buckets](s3.md)), and the admin dashboard's **Media** page sets each one up.
 
 ## 1. The Google app
 
@@ -17,7 +17,7 @@ to it (Library, Data Access, and the client's **Authorized redirect URIs**).
 Make a folder in your Drive for Bongsu, for example `bongsu` at the top of My Drive. Every workspace gets its own folder
 inside it, and Bongsu makes them: you don't create them by hand.
 
-Dashboard → **Media** → Google Drive: type the **Root folder** (its name, when it's at the top of My Drive, or paste
+Admin dashboard → **Media** → Google Drive: type the **Root folder** (its name, when it's at the top of My Drive, or paste
 the folder's link from Drive), then **Connect Google Drive**. Sign in with the Google account whose Drive holds the
 media and allow access; Google sends you back with Drive set up as a store (the first store you add is the default).
 Before saving it, Bongsu makes each workspace's folder with its `inbox` in the root, so reading and writing both work.

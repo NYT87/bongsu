@@ -9,8 +9,9 @@ older than 10 minutes. While the instance is in dry run, an amber banner says "D
 ![The overview](assets/app/overview-light.png)
 
 The sidebar lists, in order: Overview, Connections, Accounts, Videos, Devices & passkeys, Keys & tokens, Members, Audit
-and Settings, and for an instance admin an **Instance** group after them: Workspaces, Media and OAuth apps. This guide
-follows it, with the Instance group's pages at the end of their topics.
+and Settings. An instance admin also has an **Admin dashboard** link at the bottom of the sidebar: the instance's own
+pages (Workspaces, Media and OAuth apps), with a link back to the workspace. This guide follows the sidebar, with the
+admin dashboard's pages at the end of their topics.
 
 ## People and roles
 
@@ -29,7 +30,7 @@ and email and a passkey; that makes you the instance admin, who belongs to no wo
 you to **Create your first workspace**: a name, its time zone and its admin: you (preselected), another account
 on the instance (its admin right away), or someone new by email (they get an invite link). Once you're its admin it opens on **Get started**; otherwise it waits on the
 **Workspaces** page. An instance admin who is a member of no workspace (the instance's workspaces are clients',
-say) signs in to the Instance pages, Devices & passkeys and the instance's Audit, and opens a workspace from
+say) signs in to the admin dashboard (with their Devices & passkeys and the instance's Audit), and opens a workspace from
 **Workspaces**.
 
 ## Overview and Get started
@@ -182,7 +183,8 @@ several workspaces and for instance admins, who can open all of them. A person i
 
 ## Workspaces
 
-Instance admins see an **Instance** group under the sidebar's sections: **Workspaces**, **Media** and **OAuth apps**.
+Instance admins open the **Admin dashboard** from the bottom of the sidebar (`/dashboard/admin/`): **Workspaces**,
+**Media** and **OAuth apps**. Anyone else who opens one of its pages is sent back to their workspace.
 **Workspaces** lists every workspace with its **Members**, **Accounts**, when it was **Created** and its **Status**.
 **Create a workspace** takes a name, a time zone and its admin: you, an account already on the instance
 (its admin right away), or someone new invited by email (copy their link). **Open** works in that workspace, as its admin, until you open another (the sidebar's switcher does the same).

@@ -128,7 +128,7 @@ Set on both Workers with `wrangler secret put` (never in the wrangler files).
 need. It also lists the media stores and their status, and isn't `ok` until at least one is set up and none is broken.
 
 The media stores themselves (Google Drive, an S3-compatible bucket, the server's disk) aren't configured here: they're
-set up in the dashboard's **Media** page and kept in the database, their keys and grants encrypted with
+set up in the admin dashboard's **Media** page and kept in the database, their keys and grants encrypted with
 `ENCRYPTION_KEY` ([Google Drive](drive.md), [S3-compatible buckets](s3.md)).
 
 ## On Node and Docker

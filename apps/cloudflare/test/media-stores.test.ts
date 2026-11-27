@@ -455,7 +455,7 @@ describe("Connect Google Drive", () => {
     const url2 = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
     w.googleChallenge = url2.searchParams.get("code_challenge")!;
     const back = await driveCallback(`code=g-code&state=${url2.searchParams.get("state")}`);
-    expect(back.location).toBe("https://bongsu.test/dashboard/media?connected=drive");
+    expect(back.location).toBe("https://bongsu.test/dashboard/admin/media?connected=drive");
     const stores = await mediaStores(e, w.fetch);
     expect(stores.default?.id).toBe("drive");
     expect(stores.errors.size).toBe(0);
@@ -487,7 +487,7 @@ describe("Connect Google Drive", () => {
     await env.DB.prepare("DELETE FROM media_store").run();
     w.drive.set("root-folder-id-1", { md5: "", mimeType: FOLDER, name: "bongsu-media" });
     const back = await connectDrive("bongsu-media");
-    expect(back.location).toBe("https://bongsu.test/dashboard/media?connected=drive");
+    expect(back.location).toBe("https://bongsu.test/dashboard/admin/media?connected=drive");
     const row = await env.DB.prepare("SELECT settings FROM media_store WHERE id = 'drive'").first<{
       settings: string;
     }>();
@@ -606,7 +606,7 @@ describe("Connect Google Drive", () => {
     expect(new URL(old.location!).searchParams.get("error")).toMatch(/isn't valid/);
     expect(w.googleCodes).toEqual([]);
     // the refusals didn't use the state up: in the browser that started it, the flow finishes
-    expect((await driveCallback(q, mine)).location).toBe("https://bongsu.test/dashboard/media?connected=drive");
+    expect((await driveCallback(q, mine)).location).toBe("https://bongsu.test/dashboard/admin/media?connected=drive");
     expect(w.googleCodes).toHaveLength(1);
   });
 });
@@ -700,9 +700,9 @@ describe("Connect Google Drive for a workspace", () => {
     const url = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);
     w.googleChallenge = "not-the-challenge";
     const inst = await driveCallback(`code=g-code&state=${url.searchParams.get("state")}`);
-    expect(new URL(inst.location!).pathname).toBe("/dashboard/media");
+    expect(new URL(inst.location!).pathname).toBe("/dashboard/admin/media");
     expect(new URL(inst.location!).searchParams.get("error")).toMatch(/Google refused the code/);
-    expect(new URL((await driveCallback("code=g-code&state=nope")).location!).pathname).toBe("/dashboard/media");
+    expect(new URL((await driveCallback("code=g-code&state=nope")).location!).pathname).toBe("/dashboard/admin/media");
   });
 });
 
@@ -783,7 +783,7 @@ describe("several stores side by side", () => {
         from: "Bongsu <bongsu@example.com>",
         to: ["owner@example.com"],
         subject: "Bongsu: a media store needs attention",
-        text: expect.stringMatching(/^drive: [\s\S]*\/dashboard\/media$/),
+        text: expect.stringMatching(/^drive: [\s\S]*\/dashboard\/admin\/media$/),
       }),
     ]);
   });

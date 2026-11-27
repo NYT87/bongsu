@@ -75,7 +75,7 @@ In development mode, only Instagram accounts with a role on the app can be conne
    <!-- screenshot: the Permissions list of the same use case with the four instagram_business_* permissions marked Ready for testing; nothing to blur
    ![The four instagram_business permissions](assets/meta/7-permissions.png) -->
 
-3. In Bongsu's dashboard, open **OAuth apps**: the Meta app card shows the redirect URL to register,
+3. In Bongsu's admin dashboard, open **OAuth apps**: the Meta app card shows the redirect URL to register,
    `<PUBLIC_URL>/admin-api/connect/instagram/callback`. Copy it.
 4. Back on the Meta page, **Set up Instagram business login** (step 3 of that page) → **Business login settings** →
    **OAuth redirect URIs**: paste the URL, **Save**. It must match exactly (`https`, no trailing slash).
