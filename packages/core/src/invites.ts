@@ -1,7 +1,9 @@
 // Members and invites (docs/superpowers/specs/2026-11-04-phase13-people-roles-design.md, section 3). An invite is a
-// one-time link for an email and a role, valid INVITE_S; only its token's sha256 is kept. Accepting it (api's
+// one-time link for an email and a role, valid INVITE_S; it's found by its token's sha256, and the token is also kept
+// encrypted (with ENCRYPTION_KEY, when set) so an admin can copy the link again while it's pending. Accepting it (api's
 // invite routes) makes the person a member; admins change roles and remove members, and a workspace always keeps one
 // admin unless an instance admin says otherwise.
+import { decryptSecret, encryptSecret } from "./crypto";
 import type { Db } from "./db";
 import type { Env } from "./env";
 import { sha256Hex } from "./formats/approved";
@@ -32,6 +34,12 @@ const token = () =>
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
+/** An invite's link: the dashboard for admins and editors, the app for creators. */
+const inviteUrl = (env: Env, role: string, t: string) => {
+  const base = env.PUBLIC_URL.replace(/\/$/, "");
+  return role === "creator" ? `${base}/#/invite/${t}` : `${base}/dashboard/invite/${t}`;
+};
+
 /** A new invite: its link (the dashboard for admins and editors, the app for creators), emailed when a Mailer is set.
  *  A mail that fails doesn't undo the invite: the link is shown to copy either way (`mailed` says which). */
 export async function createInvite(
@@ -42,14 +50,15 @@ export async function createInvite(
 ): Promise<{ url: string; mailed: boolean }> {
   const t = token();
   const email = o.email.trim().toLowerCase();
+  // without the key the link is shown once, as before: copying it again needs the token kept, encrypted
+  const kept = env.ENCRYPTION_KEY ? await encryptSecret(env.ENCRYPTION_KEY, t) : null;
   await env.DB.prepare(
-    `INSERT INTO invites (token_hash, workspace_id, email, role, invited_by, created_at, expires_at)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)`,
+    `INSERT INTO invites (token_hash, workspace_id, email, role, invited_by, created_at, expires_at, token_enc)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
   )
-    .bind(await sha256Hex(t), o.workspaceId, email, o.role, o.invitedBy, nowS, nowS + INVITE_S)
+    .bind(await sha256Hex(t), o.workspaceId, email, o.role, o.invitedBy, nowS, nowS + INVITE_S, kept)
     .run();
-  const base = env.PUBLIC_URL.replace(/\/$/, "");
-  const url = o.role === "creator" ? `${base}/#/invite/${t}` : `${base}/dashboard/invite/${t}`;
+  const url = inviteUrl(env, o.role, t);
   let mailed = false;
   try {
     const m = mailer(env, fetcher);
@@ -75,6 +84,12 @@ export async function createInvite(
     console.warn(`invite mail: ${(e as Error).message}`);
   }
   return { url, mailed };
+}
+
+/** A pending invite's link again, from its kept token: null when its token wasn't kept (made before, or without
+ *  ENCRYPTION_KEY). `stored` is the invite's token_enc. */
+export async function keptInviteUrl(env: Env, o: { role: string; stored: string | null }): Promise<string | null> {
+  return o.stored ? inviteUrl(env, o.role, await decryptSecret(env.ENCRYPTION_KEY, o.stored)) : null;
 }
 
 const USABLE = "i.used_at IS NULL AND i.revoked_at IS NULL AND i.expires_at > ?2 AND w.archived_at IS NULL";

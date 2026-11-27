@@ -20,6 +20,7 @@ import { steps as iconNames } from "./0023_icon_names";
 import { steps as youtubeTexts } from "./0024_youtube_texts";
 import { steps as approvalTrial } from "./0025_approval_trial";
 import { steps as oauthStateSettings } from "./0026_oauth_state_settings";
+import { steps as inviteLink } from "./0027_invite_link";
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -50,4 +51,5 @@ export const MIGRATIONS: Migration[] = [
   { name: "0024_youtube_texts", steps: youtubeTexts },
   { name: "0025_approval_trial", steps: approvalTrial },
   { name: "0026_oauth_state_settings", steps: oauthStateSettings },
+  { name: "0027_invite_link", steps: inviteLink },
 ];

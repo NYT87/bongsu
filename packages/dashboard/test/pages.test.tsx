@@ -531,6 +531,32 @@ describe("Audit", () => {
   });
 });
 
+describe("Members: a pending invite's link", () => {
+  const invites = [
+    { id: "aaaa", email: "later@example.com", role: "editor", expiresAt: 2_000_000_000, copyable: true },
+    { id: "bbbb", email: "once@example.com", role: "editor", expiresAt: 2_000_000_000, copyable: false },
+  ];
+
+  it("copies a kept link again, and offers nothing for one that wasn't kept", async () => {
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET members": () => ({ body: { members: people, invites } }),
+      "POST invites/aaaa/link": { body: { url: "https://bongsu.example.com/dashboard/invite/tok" } },
+    });
+    open("members");
+    const user = userEvent.setup();
+    const later = (await screen.findByText("later@example.com")).closest("tr") as HTMLElement;
+    const once = screen.getByText("once@example.com").closest("tr") as HTMLElement;
+    expect(within(once).queryByRole("button", { name: "Copy link" })).toBeNull();
+    await user.click(within(later).getByRole("button", { name: "Copy link" }));
+    const shown = await screen.findByRole("region", { name: "Invite link for later@example.com" });
+    expect(within(shown).getByText("https://bongsu.example.com/dashboard/invite/tok")).toBeTruthy();
+    // not a new invite: nothing said about email
+    expect(screen.queryByText(/emailed to them/)).toBeNull();
+    expect(calls.find((c) => c.method === "POST")?.path).toBe("invites/aaaa/link");
+  });
+});
+
 describe("Settings → Media: the workspace's folder", () => {
   const media = (folder: string) => ({
     body: {

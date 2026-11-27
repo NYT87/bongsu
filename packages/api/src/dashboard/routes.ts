@@ -40,7 +40,7 @@ import { sha256Hex } from "@bongsu/core/formats/approved";
 import type { LintRules } from "@bongsu/core/formats/caption-lint";
 import { isTimeZone, utcIso, zoneStamp } from "@bongsu/core/formats/time";
 import { ICON_MAX_BYTES, IconError, iconHashes, iconUrl, removeIcon, setIcon, withIconUrls } from "@bongsu/core/icon";
-import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
+import { createInvite, keptInviteUrl, MemberError, removeMember, setRole } from "@bongsu/core/invites";
 import { FolderError } from "@bongsu/core/media/folders";
 import { offeredKinds, STORE_KINDS, type StoreKind, storeRows } from "@bongsu/core/media/index";
 import {
@@ -936,7 +936,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   );
 
   // ---- members and invites (AREAS: managing, the workspace's admins and the instance admins)
-  /** An invite's id in the lists: the start of its token's hash (the token itself is shown once, when made). */
+  /** An invite's id in the lists: the start of its token's hash (the link itself comes from Copy link, below). */
   const INVITE_ID = "substr(token_hash, 1, 16)";
   app.get(
     "/admin-api/members",
@@ -955,11 +955,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // who's an instance admin: for the instance admins' "Make instance admin" control only
       const ia = c.get("instanceAdmin");
       const invites = await c.env.DB.prepare(
-        `SELECT ${INVITE_ID} AS id, email, role, expires_at FROM invites
+        `SELECT ${INVITE_ID} AS id, email, role, expires_at, token_enc IS NOT NULL AS kept FROM invites
          WHERE workspace_id = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2 ORDER BY created_at`,
       )
         .bind(ws(c), nowS())
-        .all<{ id: string; email: string; role: string; expires_at: number }>();
+        .all<{ id: string; email: string; role: string; expires_at: number; kept: number | boolean }>();
       return {
         members: members.results.map((m) => ({
           userId: m.id,
@@ -970,7 +970,14 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           role: m.role,
           ...(ia ? { instanceAdmin: Number(m.instance_admin) === 1 } : {}),
         })),
-        invites: invites.results.map((i) => ({ id: i.id, email: i.email, role: i.role, expiresAt: i.expires_at })),
+        invites: invites.results.map((i) => ({
+          id: i.id,
+          email: i.email,
+          role: i.role,
+          expiresAt: i.expires_at,
+          // its link can be copied again (a boolean on Postgres, 0/1 on SQLite)
+          copyable: Number(i.kept) === 1,
+        })),
       };
     }),
   );
@@ -1005,6 +1012,24 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       );
       await audit(c, "invite_create", email, { role, mailed: r.mailed });
       return r;
+    }),
+  );
+  // A pending invite's link again, to copy: like making one, a fresh passkey check, and in the audit.
+  app.post(
+    "/admin-api/invites/:id/link",
+    wrap(async (c) => {
+      fresh(c);
+      const r = await c.env.DB.prepare(
+        `SELECT email, role, token_enc FROM invites WHERE ${INVITE_ID} = ?1 AND workspace_id = ?2 AND used_at IS NULL
+           AND revoked_at IS NULL AND expires_at > ?3`,
+      )
+        .bind(c.req.param("id") ?? "", ws(c), nowS())
+        .first<{ email: string; role: string; token_enc: string | null }>();
+      if (!r) throw new AdminError(404, "no pending invite with that id");
+      const url = await keptInviteUrl(c.env, { role: r.role, stored: r.token_enc });
+      if (!url) throw new AdminError(409, "this invite's link wasn't kept: revoke it and invite them again");
+      await audit(c, "invite_link_copy", r.email, { role: r.role });
+      return { url };
     }),
   );
   app.post(

@@ -117,10 +117,16 @@ describe("invites", () => {
     expect(w.mails).toEqual([
       expect.objectContaining({ to: ["cleo@example.com"], text: expect.stringContaining(String(made.json.url)) }),
     ]);
-    // listed as pending; the token itself isn't kept
+    // listed as pending, its link copyable again (the token is kept only encrypted)
     const list = await ada("/admin-api/members");
     expect(list.json.invites).toEqual([
-      { id: expect.any(String), email: "cleo@example.com", role: "creator", expiresAt: expect.any(Number) },
+      {
+        id: expect.any(String),
+        email: "cleo@example.com",
+        role: "creator",
+        expiresAt: expect.any(Number),
+        copyable: true,
+      },
     ]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM invites WHERE token_hash = ?1").bind(token).first("n")).toBe(
       0,
@@ -332,6 +338,56 @@ describe("invites", () => {
     expect(
       await env.DB.prepare("SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = 'default'").first("n"),
     ).toBe(2);
+  });
+
+  it("copies a pending invite's link again, the same link, until it's used or revoked", async () => {
+    const ada = await dash("ada");
+    const made = await ada("/admin-api/invites", { email: "later@example.com", role: "editor" });
+    const pending = (await ada("/admin-api/members")).json.invites as { id: string; copyable: boolean }[];
+    expect(pending).toEqual([expect.objectContaining({ copyable: true })]);
+    const id = pending[0].id;
+    // the token is kept encrypted, never in the clear
+    const stored = await env.DB.prepare("SELECT token_enc FROM invites").first<string>("token_enc");
+    expect(stored).toMatch(/^v1:/);
+    expect(stored).not.toContain(tokenOf(made.json.url));
+    const again = await ada(`/admin-api/invites/${id}/link`, {});
+    expect(again.status).toBe(200);
+    expect(again.json).toEqual({ url: made.json.url });
+    expect(
+      await env.DB.prepare("SELECT target, workspace_id FROM audit WHERE action = 'invite_link_copy'").first(),
+    ).toEqual({ target: "later@example.com", workspace_id: "default" });
+    // revoked: gone; a used one too
+    expect((await ada(`/admin-api/invites/${id}/revoke`, {})).status).toBe(200);
+    expect((await ada(`/admin-api/invites/${id}/link`, {})).status).toBe(404);
+    const used = tokenOf((await ada("/admin-api/invites", { email: "used@example.com", role: "editor" })).json.url);
+    const usedId = ((await ada("/admin-api/members")).json.invites as { id: string }[])[0].id;
+    const site = out("dashboard");
+    const o = await site(`/admin-api/invite/${used}/options`, {});
+    await site(`/admin-api/invite/${used}/verify`, {
+      mode: "new",
+      challengeId: (o.json.register as { challengeId: string }).challengeId,
+      response: { id: "used-key" },
+    });
+    expect((await ada(`/admin-api/invites/${usedId}/link`, {})).status).toBe(404);
+  });
+
+  it("can't copy an invite's link again when its token wasn't kept (made without ENCRYPTION_KEY)", async () => {
+    await createInvite(
+      { ...e, ENCRYPTION_KEY: undefined },
+      w.fetch,
+      { workspaceId: "default", email: "once@example.com", role: "editor", invitedBy: "ada" },
+      nowS(),
+    );
+    const ada = await dash("ada");
+    const pending = (await ada("/admin-api/members")).json.invites as { id: string; copyable: boolean }[];
+    expect(pending).toEqual([expect.objectContaining({ copyable: false })]);
+    const r = await ada(`/admin-api/invites/${pending[0].id}/link`, {});
+    expect(r.status).toBe(409);
+    expect(
+      await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM audit WHERE action = 'invite_link_copy' AND target = 'once@example.com'",
+      ).first("n"),
+    ).toBe(0);
   });
 
   it("refuses an invite used, revoked or older than 7 days", async () => {
@@ -551,6 +607,7 @@ describe("members", () => {
       ["/admin-api/members", undefined],
       ["/admin-api/invites", { email: "x@example.com", role: "editor" }],
       ["/admin-api/invites/abcd/revoke", {}],
+      ["/admin-api/invites/abcd/link", {}],
       ["/admin-api/members/ada", { role: "editor" }],
       ["/admin-api/members/ada/remove", {}],
     ] as const)
@@ -577,6 +634,7 @@ describe("members", () => {
       ),
     ).toBe(0);
     expect((await bob(`/admin-api/invites/${id}/revoke`, {})).status).toBe(404);
+    expect((await bob(`/admin-api/invites/${id}/link`, {})).status).toBe(404);
     expect(await member("default", "eda")).toBe("editor");
     expect(await member("default", "ada")).toBe("admin");
     // inviting someone who's a member elsewhere is just an invite: nothing about the other workspace is said
@@ -590,6 +648,7 @@ describe("members", () => {
     for (const [path, body] of [
       ["/admin-api/invites", { email: "x@example.com", role: "editor" }],
       ["/admin-api/invites/abcd/revoke", {}],
+      ["/admin-api/invites/abcd/link", {}],
       ["/admin-api/members/eda", { role: "admin" }],
       ["/admin-api/members/eda/remove", {}],
     ] as const) {

@@ -152,10 +152,12 @@ shown once; copy it then. A key can't approve or resume, whatever its scopes, an
 ## Members
 
 The workspace's people and their roles, for its admins. **Invite someone** takes an email and a role (admin, editor
-or creator) and makes a link that works once, for 7 days: copy it then, it isn't shown again. With email set up
+or creator) and makes a link that works once, for 7 days. With email set up
 (`MAILER`, [Configuration](configuration.md)) it's also sent to them. Admins and editors join in the dashboard,
 creators in the app: someone new makes a passkey, someone with a Bongsu account signs in with theirs. Pending invites
-are listed with **Revoke**.
+are listed with **Copy link**, which shows the same link again until it's used, expires or is revoked (it asks for your
+passkey, and the audit log records it), and **Revoke**. Copy link needs `ENCRYPTION_KEY`: the link is kept encrypted
+with it. Invites made without it, or before this release, show their link only once.
 
 Each member is listed by the name this workspace shows for them, with their email. **Edit name** (admins) sets that name
 for this workspace only, up to 60 characters, and an empty one goes back to the person's own name; people can also set
