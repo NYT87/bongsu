@@ -125,7 +125,7 @@ then **Save**. It moves the release time only; it never makes a video public.
 Click your name at the bottom of the sidebar for your own page. **Your name** is how the people you work with see you
 (each workspace can also give you another name, on its Members page). **Your workspaces** lists each workspace you
 belong to with your role there. **Leave** (with a confirm) takes you out of one, in the dashboard and the app at once:
-its pages and notifications, and your CLI tokens for it. Leaving the one you work in reloads the dashboard in your next
+its pages and notifications, your CLI tokens for it and the agent keys you made there. Leaving the one you work in reloads the dashboard in your next
 workspace, if you have one. A workspace's last admin can't leave: make someone else admin first. An admin can invite
 you again. Leaving is in that workspace's audit log.
 
@@ -178,7 +178,7 @@ it themselves in the app's [Settings](the-app.md#your-name). The audit log and t
 paused or drafted something use the same name.
 
 Each member's role can be changed in place, and **Remove** takes them out of the workspace at once: signed out of
-it, their CLI tokens for it revoked, their devices no longer notified there. A workspace always keeps one admin: make
+it, their CLI tokens for it and the agent keys they made there revoked (still listed, marked revoked), their devices no longer notified there. A workspace always keeps one admin: make
 someone else admin before the last one steps down. An admin who's removed or no longer an admin loses the invites they
 sent. Each of these changes asks for your passkey. An instance admin also sees **Make instance admin** (or **Remove
 instance admin**) by each member; the instance always keeps one.

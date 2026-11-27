@@ -194,8 +194,8 @@ export async function setRole(
 
 /** Removes a member, cut off at once from this workspace: their sessions working in it and their notification
  *  settings there go (their devices stay theirs, and get no more of this workspace's notes: core/push.ts sends to
- *  members only), their CLI tokens for it and the invites they sent there are revoked (kept, marked, as the lists show
- *  them), with the membership (a session in no particular workspace stays, but no longer finds this one). The last
+ *  members only), their CLI tokens for it, the agent keys they made there and the invites they sent there are revoked
+ *  (kept, marked, as the lists show them), with the membership (a session in no particular workspace stays, but no longer finds this one). The last
  *  admin stays, unless an instance admin removes them. */
 export async function removeMember(
   db: Db,
@@ -214,7 +214,11 @@ export async function removeMember(
   await db.batch([
     db.prepare("DELETE FROM sessions WHERE workspace_id = ?1 AND user_id = ?2").bind(workspaceId, userId),
     db
-      .prepare("UPDATE api_keys SET revoked_at = ?3 WHERE workspace_id = ?1 AND user_id = ?2 AND revoked_at IS NULL")
+      // their CLI tokens, and the agent keys they made: a removed admin mustn't keep a copied key's reach
+      .prepare(
+        `UPDATE api_keys SET revoked_at = ?3 WHERE workspace_id = ?1 AND revoked_at IS NULL
+         AND (user_id = ?2 OR (user_id IS NULL AND created_by = ?2))`,
+      )
       .bind(workspaceId, userId, nowS),
     db.prepare("DELETE FROM notify_prefs WHERE workspace_id = ?1 AND user_id = ?2").bind(workspaceId, userId),
     revokeSentInvites(db, workspaceId, userId, nowS),
