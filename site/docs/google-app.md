@@ -73,11 +73,19 @@ https://www.googleapis.com/auth/yt-analytics.readonly
 - **Application home page**: `<PUBLIC_URL>`
 - **Application privacy policy link**: `<PUBLIC_URL>/privacy/`, the page every Bongsu serves (what it keeps, what it
   does with Google data, how to withdraw access)
+- **Application terms of service link**: `<PUBLIC_URL>/terms/`, the terms page every Bongsu serves (it links the
+  YouTube Terms of Service and the Google Privacy Policy, as YouTube's API Services ask)
 - **Authorized domains** → **Add domain**: your instance's domain (`example.com` for `bongsu.example.com`; on
   `workers.dev`, your own `<subdomain>.workers.dev`)
 
 **Save**. Without the privacy policy link, **Publish app** stays greyed out ("To publish your app, you must complete
-your configuration on the Branding page"). Leave the logo empty: a logo makes Google ask for verification.
+your configuration on the Branding page").
+
+![Branding: the app information and the app domain's links](assets/google/5-branding.png)
+
+**App logo** is optional: your app's icon at 120 × 120 px (from `packages/web/public/icon-512.png`, or your own). On a
+published app Google shows a logo only once the app is verified ("Your branding needs to be verified before it can be
+shown to users"); until then the consent screen shows the app's name, and the app works the same.
 
 ## 6. Publish the app
 
