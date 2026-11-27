@@ -635,3 +635,36 @@ describe("Settings → Media: the workspace's folder", () => {
     expect(field).toHaveProperty("value", "taken");
   });
 });
+
+describe("Devices & passkeys: leaving the workspace", () => {
+  const routes = (leave: { status?: number; body: unknown }) => ({
+    "GET state": () => ({ body: state() }),
+    "GET passkeys": { body: { passkeys: [], devices: [] } },
+    "POST session/leave": leave,
+  });
+  const assign = vi.fn();
+  beforeEach(() => {
+    assign.mockReset();
+    vi.spyOn(window.location, "assign").mockImplementation(assign);
+  });
+
+  it("asks first, then leaves and reloads in the next workspace", async () => {
+    const calls = fakeApi(routes({ body: { left: "w1" } }));
+    open("devices");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Leave this workspace" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Leave" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.find((c) => c.method === "POST")?.path).toBe("session/leave");
+  });
+
+  it("shows why the last admin can't, and stays", async () => {
+    fakeApi(routes({ status: 409, body: { error: "a workspace keeps one admin: make someone else admin first" } }));
+    open("devices");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Leave this workspace" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Leave" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/make someone else admin first/);
+    expect(assign).not.toHaveBeenCalled();
+  });
+});

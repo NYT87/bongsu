@@ -20,7 +20,7 @@ interface DeviceCode {
   expiresAt: number;
 }
 
-export function Devices(_: Props) {
+export function Devices({ state }: Props) {
   const toast = useToast();
   const { data, error, reload } = useLoad<Passkeys>("passkeys");
   const [err, setErr] = useState<string | null>(null);
@@ -204,6 +204,34 @@ export function Devices(_: Props) {
           <p className="muted">Each signs you in once when every passkey is lost.</p>
         )}
       </Card>
+      {state.workspace && (
+        <Card title={`Leave ${state.workspace.name}`}>
+          <p className="muted">
+            You stop working in it at once, in the dashboard and the app: its pages, its notifications and your CLI
+            tokens for it. An admin can invite you again. Its last admin can't leave: make someone else admin first.
+          </p>
+          <div className="actions">
+            <button
+              type="button"
+              className="danger"
+              onClick={() =>
+                confirm({
+                  title: `Leave ${state.workspace?.name}?`,
+                  detail: "You stop working in it at once. An admin can invite you again.",
+                  verb: "Leave",
+                  // a refusal (the last admin) shows in the dialog; leaving reloads in the next workspace, or none
+                  run: async () => {
+                    await api("session/leave", {});
+                    location.assign("/dashboard/");
+                  },
+                })
+              }
+            >
+              Leave this workspace
+            </button>
+          </div>
+        </Card>
+      )}
       {dialog}
     </Page>
   );

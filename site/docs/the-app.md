@@ -271,3 +271,9 @@ newer one is deployed, **Update now** reloads it.
 Every time is shown with its zone. **Settings → Time zone** picks the one the app shows and takes times in: the
 workspace's, or your own ("Use this device's…"). Plans are stored in UTC, so changing it moves nothing. **Back to the
 workspace's** undoes it.
+
+## Leaving a workspace
+
+**Settings → Leave \<workspace\>** (it asks first) takes you out of the workspace the app works in: its posts and
+notifications stop at once, in the app and the dashboard. The app opens on Today in your next workspace, or says you're
+in none. A workspace's last admin can't leave: make someone else admin first. An admin can invite you again.

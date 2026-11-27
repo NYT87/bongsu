@@ -658,3 +658,64 @@ describe("members", () => {
     expect((await ada("/admin-api/members")).status).toBe(200);
   });
 });
+
+describe("leaving a workspace", () => {
+  const sessionWs = (token: string) =>
+    env.DB.prepare("SELECT workspace_id FROM sessions WHERE token_hash = ?1")
+      .bind(token)
+      .first<string | null>("workspace_id");
+
+  it("a member leaves from the dashboard: cut off from it, still signed in, and its admins see it in the audit", async () => {
+    // eda: an editor in the default workspace and B, with a CLI token for the default one and a session in each app
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'eda', 'editor', 0)",
+    ).run();
+    await env.DB.prepare(
+      "INSERT INTO api_keys (id, name, key_hash, scopes, created_at, workspace_id, user_id) VALUES ('k1', 'cli', 'h1', '[]', 0, 'default', 'eda')",
+    ).run();
+    const app = await createSession(env.DB, nowS(), { userId: "eda" });
+    await setSessionWorkspace(env.DB, app, "default");
+    const eda = await dash("eda", "default");
+    const left = await eda("/admin-api/session/leave", {});
+    expect([left.status, left.json]).toEqual([200, { left: "default" }]);
+    expect(await member("default", "eda")).toBeNull();
+    expect(await member("b", "eda")).toBe("editor");
+    // the dashboard session stays, now in B; the app's session in the left workspace is signed out of it
+    expect((await eda("/admin-api/state")).json).toMatchObject({ signedIn: true, workspace: { id: "b" } });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM sessions WHERE app = 'pwa'").first("n")).toBe(0);
+    expect(await env.DB.prepare("SELECT revoked_at FROM api_keys WHERE id = 'k1'").first("revoked_at")).not.toBeNull();
+    expect(
+      await env.DB.prepare("SELECT target, workspace_id FROM audit WHERE action = 'member_leave'").first(),
+    ).toEqual({ target: "user:eda", workspace_id: "default" });
+    // the default workspace's data is out of reach now
+    expect((await eda("/admin-api/session/workspace", { id: "default" })).status).toBe(403);
+  });
+
+  it("refuses the last admin, and leaves their membership and session as they were", async () => {
+    const ada = await dash("ada", "default");
+    const r = await ada("/admin-api/session/leave", {});
+    expect(r.status).toBe(409);
+    expect(r.json.error).toMatch(/make someone else admin first/);
+    expect(await member("default", "ada")).toBe("admin");
+    expect((await ada("/admin-api/state")).json).toMatchObject({ workspace: { id: "default" }, role: "admin" });
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'member_leave' AND user_id = 'ada'").first(
+        "n",
+      ),
+    ).toBe(0);
+  });
+
+  it("a member leaves from the app, and lands in no workspace when it was their only one", async () => {
+    const token = await createSession(env.DB, nowS(), { userId: "eda" });
+    await setSessionWorkspace(env.DB, token, "default");
+    const call = (path: string, body?: unknown) => req("pwa", `bongsu_session=${token}`, path, body);
+    const left = await call("/app-api/session/leave", {});
+    expect([left.status, left.json]).toEqual([200, { left: "default" }]);
+    expect(await member("default", "eda")).toBeNull();
+    expect(await sessionWs(await sha256Hex(token))).toBeNull();
+    expect((await call("/app-api/me")).json).toMatchObject({ signedIn: true, noWorkspace: true });
+    // the last admin can't, from the app either
+    const adaToken = await createSession(env.DB, nowS(), { userId: "ada" });
+    expect((await req("pwa", `bongsu_session=${adaToken}`, "/app-api/session/leave", {})).status).toBe(409);
+  });
+});

@@ -135,6 +135,11 @@ Your devices approve posts in the app; your passkeys sign you in here and there.
 Keep two passkeys and a few recovery codes, so losing a phone doesn't lock you out: Overview reminds you until you have
 two passkeys and at least three codes.
 
+**Leave this workspace** (at the bottom, with a confirm) takes you out of the workspace you work in, in the dashboard
+and the app at once: its pages and notifications, and your CLI tokens for it. The dashboard reloads in your next
+workspace, if you have one. A workspace's last admin can't leave: make someone else admin first. An admin can invite
+you again. It's in the workspace's audit log.
+
 ## Keys & tokens
 
 ![Keys and tokens](assets/app/keys-light.png)
