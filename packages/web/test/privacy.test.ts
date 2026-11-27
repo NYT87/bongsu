@@ -1,5 +1,6 @@
-// The instance's privacy page (privacy/index.html, served at <PUBLIC_URL>/privacy/): the link Google's consent screen
-// needs before an app asking for Drive can be published. Built as a page of its own, branded like the app.
+// The instance's privacy policy and terms of service (privacy/index.html, terms/index.html, served at
+// <PUBLIC_URL>/privacy/ and /terms/): the links Google's consent screen asks for. Built as pages of their own,
+// branded like the app.
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { htmlFor } from "../brand";
@@ -24,5 +25,23 @@ describe("the privacy page", () => {
     for (const s of ["Google Drive", "YouTube Analytics", "never deletes", "Limited Use requirements"])
       expect(html).toContain(s);
     expect(html).toContain("https://developers.google.com/terms/api-services-user-data-policy");
+  });
+});
+
+describe("the terms of service page", () => {
+  const terms = readFileSync(new URL("../terms/index.html", import.meta.url), "utf8");
+
+  it("is built beside the app, branded like it", () => {
+    const input = config.build?.rollupOptions?.input as Record<string, string>;
+    expect(input.terms).toBe("terms/index.html");
+    expect(htmlFor(terms, { name: "Lighthouse", themeColor: "#112233" })).toContain("<title>Lighthouse</title>");
+  });
+
+  it("links the terms YouTube's API Services ask for, and the two pages link each other", () => {
+    expect(terms).toContain("https://www.youtube.com/t/terms");
+    expect(terms).toContain("https://policies.google.com/privacy");
+    expect(terms).toContain('href="/privacy/"');
+    expect(html).toContain('href="/terms/"');
+    expect(html).toContain("https://policies.google.com/privacy");
   });
 });
