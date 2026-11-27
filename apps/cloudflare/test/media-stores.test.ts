@@ -461,6 +461,107 @@ describe("Connect Google Drive", () => {
     expect(stores.errors.size).toBe(0);
   });
 
+  /** Connect Google Drive from the Media page, `root` as typed (undefined: none sent); returns where it came back. */
+  async function connectDrive(root?: string) {
+    if (!(await env.DB.prepare("SELECT 1 FROM oauth_apps WHERE id = 'google'").first()))
+      await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
+    const url = new URL(
+      (await call("/admin-api/media-stores/drive/start", root === undefined ? {} : { root })).json.url as string,
+    );
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    w.googleGrantScope = "https://www.googleapis.com/auth/drive";
+    return driveCallback(`code=g-code&state=${url.searchParams.get("state")}`);
+  }
+  const FOLDER = "application/vnd.google-apps.folder";
+  const activeFolders = async () =>
+    (
+      await env.DB.prepare(
+        "SELECT s.media_folder AS f FROM workspaces w JOIN workspace_settings s ON s.workspace_id = w.id WHERE w.archived_at IS NULL",
+      ).all<{ f: string }>()
+    ).results.map((r) => r.f);
+  /** The id of the folder named `name` right under `parent` (undefined: the top of My Drive). */
+  const folderIn = (parent: string | undefined, name: string) =>
+    [...w.drive.entries()].find(([, f]) => f.name === name && f.parent === parent && f.mimeType === FOLDER)?.[0];
+
+  it("makes every workspace's folder and inbox in the root folder typed at the start", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    w.drive.set("root-folder-id-1", { md5: "", mimeType: FOLDER, name: "bongsu-media" });
+    const back = await connectDrive("bongsu-media");
+    expect(back.location).toBe("https://bongsu.test/dashboard/media?connected=drive");
+    const row = await env.DB.prepare("SELECT settings FROM media_store WHERE id = 'drive'").first<{
+      settings: string;
+    }>();
+    expect(JSON.parse(row!.settings)).toEqual({ root: { id: "root-folder-id-1", name: "bongsu-media" } });
+    for (const f of await activeFolders()) {
+      const ws = folderIn("root-folder-id-1", f);
+      expect(ws, f).toBeDefined();
+      expect(folderIn(ws, "inbox"), f).toBeDefined();
+    }
+    expect(folderIn(undefined, "UPLOADS")).toBeUndefined(); // nothing made at the top
+  });
+
+  it("reads a workspace's folder only inside the root: a same-named folder elsewhere isn't it", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    w.drivePut("UPLOADS/inbox/stray.txt", { md5: "s", mimeType: "text/plain" }); // at the top, outside the root
+    w.drive.set("root-folder-id-1", { md5: "", mimeType: FOLDER, name: "bongsu-media" });
+    await connectDrive("bongsu-media");
+    const store = (await mediaStores(e, w.fetch)).get("drive")!;
+    const inbox = await store.resolve("UPLOADS/inbox");
+    expect(inbox?.parent).toBe(folderIn("root-folder-id-1", "UPLOADS"));
+    expect(await store.list(inbox!.id)).toEqual([]);
+  });
+
+  it("takes a folder's link as the root, keeps the root on Connect again, and refuses a root it can't find", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    w.drive.set("root-folder-id-2", { md5: "", mimeType: FOLDER, name: "shared media", parent: "someone-else" });
+    await connectDrive("https://drive.google.com/drive/folders/root-folder-id-2?usp=sharing");
+    const settings = async () =>
+      JSON.parse(
+        (await env.DB.prepare("SELECT settings FROM media_store WHERE id = 'drive'").first<{ settings: string }>())!
+          .settings,
+      );
+    expect(await settings()).toEqual({ root: { id: "root-folder-id-2", name: "shared media" } });
+    await connectDrive(); // no root sent: the saved one stays
+    expect(await settings()).toEqual({ root: { id: "root-folder-id-2", name: "shared media" } });
+    const missing = await connectDrive("no-such-folder");
+    expect(new URL(missing.location!).searchParams.get("error")).toMatch(
+      /the root folder: no folder named no-such-folder at the top of My Drive/,
+    );
+    expect(await settings()).toEqual({ root: { id: "root-folder-id-2", name: "shared media" } });
+  });
+
+  it("saves another root for a connected Drive, making the folders there; empty means the top of My Drive", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    await connectDrive(""); // no root: the workspaces' folders at the top, made when missing
+    for (const f of await activeFolders()) expect(folderIn(folderIn(undefined, f), "inbox"), f).toBeDefined();
+    w.drive.set("root-folder-id-3", { md5: "", mimeType: FOLDER, name: "later root" });
+    expect((await call("/admin-api/media-stores/drive/root", { root: "later root" })).json).toEqual({
+      saved: true,
+      settings: { root: { id: "root-folder-id-3", name: "later root" } },
+    });
+    for (const f of await activeFolders()) expect(folderIn(folderIn("root-folder-id-3", f), "inbox"), f).toBeDefined();
+    expect((await call("/admin-api/media-stores/drive/root", { root: "" })).json.settings).toEqual({});
+    expect((await call("/admin-api/media-stores/drive/root", { root: "nope" })).status).toBe(400);
+  });
+
+  it("makes each folder once when Drive's search lags the creates: connecting, then saving the root again", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    w.driveSearchLag = true;
+    w.drive.set("root-folder-id-4", { md5: "", mimeType: FOLDER, name: "lagging root" });
+    await connectDrive("lagging root");
+    await call("/admin-api/media-stores/drive/root", {
+      root: "https://drive.google.com/drive/folders/root-folder-id-4",
+    });
+    for (const f of await activeFolders()) {
+      const ws = [...w.drive.entries()].filter(([, x]) => x.name === f && x.parent === "root-folder-id-4");
+      expect(ws, f).toHaveLength(1);
+      expect(
+        [...w.drive.values()].filter((x) => x.name === "inbox" && x.parent === ws[0][0]),
+        f,
+      ).toHaveLength(1);
+    }
+  });
+
   it("refuses a grant without access to Drive", async () => {
     await call("/admin-api/oauth-apps/google", { clientId: "g-app", clientSecret: "g-secret" });
     const url = new URL((await call("/admin-api/media-stores/drive/start", {})).json.url as string);

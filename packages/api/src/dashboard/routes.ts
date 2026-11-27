@@ -45,11 +45,15 @@ import { FolderError } from "@bongsu/core/media/folders";
 import { offeredKinds, STORE_KINDS, type StoreKind, storeRows } from "@bongsu/core/media/index";
 import {
   finishDriveConnect,
+  makeWorkspaceFolders,
   removeStore,
+  rootInput,
   StoreError,
   s3Credentials,
   s3Settings,
+  saveDriveRoot,
   savedCredentials,
+  savedSettings,
   saveStore,
   setDefaultStore,
   startDriveConnect,
@@ -1444,9 +1448,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         .toLowerCase();
       if (admin !== "me" && !EMAIL.test(admin)) throw new AdminError(400, 'the first admin: "me" or an email');
       const me = c.get("session").userId;
-      // optional: the folder of the media store its files live in (else the name's slug)
+      // optional: the folder of the media store its files live in (else the workspace's id)
       const folder = typeof b.folder === "string" && b.folder.trim() ? b.folder : undefined;
       const id = await createWorkspace(c.env.DB, { name, timezone, createdBy: me, mediaFolder: folder }, nowS());
+      // its folder in the instance's stores, so files can be dropped in right away (best effort: made on first use)
+      await makeWorkspaceFolders(c.env, fetcher, id);
       const invite =
         admin === "me"
           ? null
@@ -1717,7 +1723,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (kind === "drive") {
         const creds = await savedCredentials(c.env, INSTANCE, "drive");
         if (!creds) throw new AdminError(400, "connect Google Drive first");
-        return testStore(c.env, fetcher, "drive", {}, creds);
+        return testStore(c.env, fetcher, "drive", await savedSettings(c.env, INSTANCE, "drive"), creds);
       }
       const { settings, credentials } = await storeInput(c, kind, await body(c));
       return testStore(c.env, fetcher, kind, settings, credentials);
@@ -1738,9 +1744,21 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/media-stores/drive/start",
     wrap(async (c) => {
       fresh(c);
-      const flow = await startDriveConnect(c.env, c.get("session").userId, null, nowS());
+      const b = await body(c);
+      const root = b.root === undefined ? undefined : rootInput(b.root);
+      const flow = await startDriveConnect(c.env, c.get("session").userId, null, nowS(), root);
       c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
       return { url: flow.url };
+    }),
+  );
+  app.post(
+    "/admin-api/media-stores/drive/root",
+    wrap(async (c) => {
+      fresh(c);
+      const root = rootInput((await body(c)).root);
+      const settings = await saveDriveRoot(c.env, fetcher, INSTANCE, root, c.get("session").userId, nowS());
+      await audit(c, "media_store_save", "drive", { ...settings }, undefined, null);
+      return { saved: true, settings };
     }),
   );
   app.post(
@@ -1806,7 +1824,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const folder = await setMediaFolder(c.env.DB, ws(c), String((await body(c)).folder ?? ""), nowS());
       await audit(c, "media_folder", folder, { folder });
-      return { folder };
+      // the new folder in the stores the workspace uses; one that fails makes it on first use
+      const { failed } = await makeWorkspaceFolders(c.env, fetcher, ws(c));
+      return { folder, failed };
     }),
   );
   /** The settings and keys a workspace's bucket form sends (its saved keys when both are left empty). */
@@ -1825,7 +1845,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (kind === "drive") {
         const creds = await savedCredentials(c.env, scope, "drive");
         if (!creds) throw new AdminError(400, "connect Google Drive first");
-        return testStore(c.env, fetcher, "drive", {}, creds, scope);
+        return testStore(c.env, fetcher, "drive", await savedSettings(c.env, scope, "drive"), creds, scope);
       }
       // a workspace admin's endpoint, signed requests sent to it: confirmed with a passkey, as saving is
       fresh(c);
@@ -1837,9 +1857,22 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/settings/media/stores/drive/start",
     wrap(async (c) => {
       fresh(c);
-      const flow = await startDriveConnect(c.env, c.get("session").userId, ws(c), nowS());
+      const b = await body(c);
+      const root = b.root === undefined ? undefined : rootInput(b.root);
+      const flow = await startDriveConnect(c.env, c.get("session").userId, ws(c), nowS(), root);
       c.header("Set-Cookie", oauthCookie(flow.browser, flow.cookiePath), { append: true });
       return { url: flow.url };
+    }),
+  );
+  app.post(
+    "/admin-api/settings/media/stores/drive/root",
+    wrap(async (c) => {
+      fresh(c);
+      const root = rootInput((await body(c)).root);
+      const scope = { workspaceId: ws(c) };
+      const settings = await saveDriveRoot(c.env, fetcher, scope, root, c.get("session").userId, nowS());
+      await audit(c, "workspace_store_set", "drive", { ...settings });
+      return { saved: true, settings };
     }),
   );
   app.post(

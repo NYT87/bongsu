@@ -233,8 +233,8 @@ work (`ACCOUNT_BACKFILL_PER_RUN`).
 
 ## The media stores' layout
 
-The same in every store: a Drive's top folders, a bucket's key prefixes (under its folder, if it has one), the
-server's media directory.
+The same in every store: a Drive's folders inside its root folder (or at the top of My Drive without one), a bucket's
+key prefixes (under its folder, if it has one), the server's media directory.
 
 | Path | Use |
 |---|---|
@@ -243,8 +243,10 @@ server's media directory.
 | `<folder>/_posted/` | posted media is moved here, in the store it's in |
 | `<folder>/_uploads/` | files uploaded from the app, in the store picked for the upload |
 
-`<folder>` is the workspace's media folder: a name made from the workspace's name (`UPLOADS` for a workspace kept from
-before this release), editable by its admins in Settings → Media. Bongsu never moves files when it changes.
+`<folder>` is the workspace's media folder: the workspace's id (`w_…`) unless another name was given when it was made
+(`UPLOADS` for a workspace kept from before folders had names), editable by its admins in Settings → Media. Bongsu
+makes `<folder>/inbox` in every store the workspace uses when the store is connected, the workspace is made or its
+folder changes; it never moves files when the folder changes.
 
 ## Tunable limits (`packages/core/src/constants.ts`)
 

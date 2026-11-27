@@ -28,9 +28,8 @@ export function Workspaces(_: Props) {
   // what the form above the table does: make one, rename one, or add an admin to one
   const [form, setForm] = useState<{ kind: "create" } | { kind: "rename" | "admin"; w: WorkspaceRow } | null>(null);
   const [name, setName] = useState("");
-  // the folder follows the name as it's typed until it's edited by hand
+  // empty: the server names the folder after the workspace's id
   const [folder, setFolder] = useState("");
-  const [folderEdited, setFolderEdited] = useState(false);
   const [tz, setTz] = useState(Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
   const [adminIsMe, setAdminIsMe] = useState(true);
   const [email, setEmail] = useState("");
@@ -44,7 +43,6 @@ export function Workspaces(_: Props) {
     setErr(null);
     setName(f && f.kind === "rename" ? f.w.name : "");
     setFolder("");
-    setFolderEdited(false);
     setEmail("");
     setAdminIsMe(true);
   };
@@ -128,35 +126,22 @@ export function Workspaces(_: Props) {
                 label={form.kind === "create" ? "Name" : `New name for ${form.w.name}`}
                 help="Who or what it's for: a brand, a client, a team."
               >
-                {(p) => (
-                  <input
-                    {...p}
-                    value={name}
-                    onChange={(e) => {
-                      setName(e.target.value);
-                      if (!folderEdited) setFolder(e.target.value.trim() ? folderSlug(e.target.value) : "");
-                    }}
-                    maxLength={80}
-                    required
-                  />
-                )}
+                {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />}
               </Field>
             )}
             {form.kind === "create" && (
               <>
                 <Field
                   label="Media folder"
-                  help="The one folder of the media store its files live in. Filled from the name; change it if you like. It can't be one another workspace uses."
+                  help="The one folder of the media store its files live in, made for you. Leave it empty to name it after the workspace's id, which a rename never changes. It can't be one another workspace uses."
                 >
                   {(p) => (
                     <input
                       {...p}
                       className="mono"
                       value={folder}
-                      onChange={(e) => {
-                        setFolder(e.target.value);
-                        setFolderEdited(true);
-                      }}
+                      onChange={(e) => setFolder(e.target.value)}
+                      placeholder="the workspace's id"
                       maxLength={60}
                       spellCheck={false}
                     />
@@ -328,12 +313,3 @@ export function Workspaces(_: Props) {
     </Page>
   );
 }
-
-/** The folder name a workspace's name makes: core's `folderSlug` (packages/core/src/media/folders.ts), copied here
- *  because the dashboard doesn't depend on core. The server checks the name it gets. */
-const folderSlug = (name: string) =>
-  name
-    .toLowerCase()
-    .replace(/ /g, "-")
-    .replace(/[^a-z0-9_-]/g, "")
-    .slice(0, 60) || "workspace";

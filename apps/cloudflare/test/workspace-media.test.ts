@@ -122,7 +122,7 @@ describe("a workspace's media settings", () => {
     });
 
     const put = (folder: unknown) => amy("/admin-api/settings/media/folder", { folder }, { method: "PUT" });
-    expect((await put("demo-a")).json).toEqual({ folder: "demo-a" });
+    expect((await put("demo-a")).json).toEqual({ folder: "demo-a", failed: [] });
     expect((await amy("/admin-api/settings/media")).json.folder).toBe("demo-a");
     const taken = await put("demo-studio"); // the other workspace's
     expect(taken.status).toBe(400);
@@ -231,7 +231,7 @@ describe("a workspace's media settings", () => {
       "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'amy', 'admin', 0) ON CONFLICT (workspace_id, user_id) DO NOTHING",
     ).run();
     const stale = caller(await createSession(env.DB, nowS() - 11 * 60, { app: "dashboard", userId: "amy" }));
-    for (const p of ["stores/s3", "stores/s3/test", "stores/drive/start", "stores/s3/remove"])
+    for (const p of ["stores/s3", "stores/s3/test", "stores/drive/start", "stores/drive/root", "stores/s3/remove"])
       expect((await stale(`/admin-api/settings/media/${p}`, S3_FORM)).json, p).toMatchObject({ verify: true });
     expect(
       (await stale("/admin-api/settings/oauth-apps/google", { clientId: "c", clientSecret: "s" })).json,
@@ -246,6 +246,7 @@ describe("a workspace's media settings", () => {
       ["/admin-api/settings/media/stores/s3/test", S3_FORM],
       ["/admin-api/settings/media/stores/s3", S3_FORM],
       ["/admin-api/settings/media/stores/drive/start", {}],
+      ["/admin-api/settings/media/stores/drive/root", { root: "x" }],
       ["/admin-api/settings/media/stores/s3/default", {}],
       ["/admin-api/settings/media/default-instance", {}],
       ["/admin-api/settings/media/stores/s3/remove", {}],
@@ -349,6 +350,36 @@ describe("a workspace's media settings", () => {
     });
   });
 
+  it("a workspace's own Drive takes its own root folder, and makes only its folder there", async () => {
+    const amy = await as("amy", "admin");
+    await amy("/admin-api/settings/oauth-apps/google", { clientId: "own-g", clientSecret: "own-secret" });
+    const FOLDER = "application/vnd.google-apps.folder";
+    w.drive.set("ws-root-id-1", { md5: "", mimeType: FOLDER, name: "our media" });
+    const start = await amy("/admin-api/settings/media/stores/drive/start", { root: "our media" });
+    const flowCookie = start.setCookies.find((c) => c.startsWith("bongsu_oauth="))!.split(";")[0];
+    const url = new URL(start.json.url as string);
+    w.googleChallenge = url.searchParams.get("code_challenge")!;
+    w.googleGrantScope = "https://www.googleapis.com/auth/drive";
+    await amy(`/admin-api/media-stores/drive/callback?code=g-code&state=${url.searchParams.get("state")}`, undefined, {
+      cookie: flowCookie,
+    });
+    const settings = async () =>
+      JSON.parse(
+        (await env.DB.prepare("SELECT settings FROM media_store WHERE id = 'drive-default'").first<{
+          settings: string;
+        }>())!.settings,
+      );
+    expect(await settings()).toEqual({ root: { id: "ws-root-id-1", name: "our media" } });
+    const made = [...w.drive.entries()].filter(([, f]) => f.parent === "ws-root-id-1").map(([, f]) => f.name);
+    expect(made).toEqual(["UPLOADS"]); // this workspace's folder only, not the others'
+    w.drive.set("ws-root-id-2", { md5: "", mimeType: FOLDER, name: "our media 2" });
+    expect((await amy("/admin-api/settings/media/stores/drive/root", { root: "our media 2" })).json.settings).toEqual({
+      root: { id: "ws-root-id-2", name: "our media 2" },
+    });
+    // the instance's Drive keeps no root
+    expect(await env.DB.prepare("SELECT settings FROM media_store WHERE id = 'drive'").first("settings")).toBe("{}");
+  });
+
   it("the Workspaces page's create takes a folder, and refuses one in use", async () => {
     const ina = await as("ina");
     const make = (folder?: string) =>
@@ -366,6 +397,21 @@ describe("a workspace's media settings", () => {
         .bind(ok.json.id)
         .first("media_folder"),
     ).toBe("demo-two-files");
+  });
+
+  it("names a new workspace's folder after its id, and makes it with its inbox in the instance's Drive", async () => {
+    const ina = await as("ina");
+    const made = await ina("/admin-api/workspaces", { name: "Demo Three", timezone: "UTC", admin: "me" });
+    expect(made.status).toBe(200);
+    const id = made.json.id as string;
+    expect(
+      await env.DB.prepare("SELECT media_folder FROM workspace_settings WHERE workspace_id = ?1")
+        .bind(id)
+        .first("media_folder"),
+    ).toBe(id);
+    const [folder] = [...w.drive.entries()].filter(([, f]) => f.name === id && !f.parent);
+    expect(folder).toBeDefined();
+    expect([...w.drive.values()].some((f) => f.name === "inbox" && f.parent === folder[0])).toBe(true);
   });
 });
 

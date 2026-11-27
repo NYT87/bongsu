@@ -19,10 +19,11 @@ import type { Env } from "../env";
 import { notifier, notifyInstanceAdmins } from "../notify";
 import { mediaStoreProblem } from "../texts/notifications";
 import { sessionWorkspace, workspaceSettings } from "../workspaces";
-import { DRIVE_SCOPE } from "./drive";
+import { DRIVE_SCOPE, DriveStore } from "./drive";
 import { mediaPath } from "./folders";
 import { buildStore, offeredKinds, type StoreKind, type StoreScope, storeId, storeRows } from "./index";
 import type { S3Settings } from "./s3";
+import type { MediaStore } from "./store";
 
 /** The oauth_states flow name of Connect Google Drive. */
 const DRIVE_FLOW = "media:drive";
@@ -95,21 +96,30 @@ export function s3Credentials(b: Record<string, unknown>): string | null {
 
 // ---- testing, saving, removing
 
-/** The folder a scope's stores are tested in: the workspace's own media folder; for the instance's, the first
- *  active workspace's, as checkStores does (null when there is none: nothing is made). */
-async function testFolder(env: Env, scope: StoreScope): Promise<string | null> {
-  const ws =
-    scope.workspaceId ??
-    (
-      await env.DB.prepare("SELECT id FROM workspaces WHERE archived_at IS NULL ORDER BY id LIMIT 1").first<{
-        id: string;
-      }>()
-    )?.id;
-  return ws ? (await workspaceSettings(env.DB, ws)).mediaFolder : null;
+/** The media folders a scope's stores hold: the workspace's own; for the instance's, every active workspace's (any
+ *  of them can use the instance's stores). */
+async function scopeFolders(env: Env, scope: StoreScope): Promise<string[]> {
+  if (scope.workspaceId) return [(await workspaceSettings(env.DB, scope.workspaceId)).mediaFolder];
+  const r = await env.DB.prepare(
+    `SELECT s.media_folder FROM workspaces w JOIN workspace_settings s ON s.workspace_id = w.id
+     WHERE w.archived_at IS NULL ORDER BY w.id`,
+  ).all<{ media_folder: string | null }>();
+  return r.results.map((x) => x.media_folder).filter((f): f is string => !!f);
 }
 
-/** What Test does with settings before they're saved: find (or make) <folder>/inbox, so reading and writing both
- *  work. With no workspace to test in, the store is only built (it isn't asked for a folder nobody uses). */
+/** Makes <folder>/inbox in the store for each folder (the workspace's folder too, when missing), so files can be
+ *  dropped in right away and reading and writing both work. */
+async function makeFolders(store: MediaStore, folders: string[]): Promise<void> {
+  // shortcut: one request makes every workspace's folders (about 4 Drive calls each); past ~10 new workspaces the
+  // free plan's 50 calls per request run out, so make them over several requests then
+  for (const folder of folders) {
+    const inbox = mediaPath(folder, "inbox");
+    if (!(await store.resolve(inbox))) await store.ensureFolder(inbox);
+  }
+}
+
+/** What Test does with settings before they're saved: makes the inbox of every workspace folder the store holds
+ *  (scopeFolders), so reading and writing both work. With no workspace, the store is only built. */
 export async function testStore(
   env: Env,
   fetcher: typeof fetch,
@@ -122,15 +132,31 @@ export async function testStore(
     // checked again here, whoever calls: the routes do, but a workspace's bucket must never reach a private address
     if (kind === "s3" && scope.workspaceId !== null) s3Settings(settings, scope);
     const store = buildStore(env, fetcher, kind, settings, credentials, storeId(kind, scope.workspaceId));
-    const folder = await testFolder(env, scope);
-    if (folder === null) return { ok: true, error: null };
-    const inbox = mediaPath(folder, "inbox");
-    if (!(await store.resolve(inbox))) await store.ensureFolder(inbox);
-    if (!(await store.resolve(inbox))) return { ok: false, error: `${inbox} can't be found after making it` };
+    await makeFolders(store, await scopeFolders(env, scope));
     return { ok: true, error: null };
   } catch (e) {
     return { ok: false, error: (e as Error).message.slice(0, 300) };
   }
+}
+
+/** A workspace's folder (and its inbox) in the stores it uses: its own and the instance's, when it's made or its
+ *  folder changes. Best effort: a store that fails is named in the answer, and the folder is made again on first use. */
+export async function makeWorkspaceFolders(
+  env: Env,
+  fetcher: typeof fetch,
+  workspaceId: string,
+): Promise<{ failed: string[] }> {
+  const folder = (await workspaceSettings(env.DB, workspaceId)).mediaFolder;
+  const failed: string[] = [];
+  for (const r of await storeRows(env.DB, { workspaceId })) {
+    try {
+      const creds = r.credentials ? await decryptSecret(env.ENCRYPTION_KEY, r.credentials) : null;
+      await makeFolders(buildStore(env, fetcher, r.kind, r.settings, creds, r.id), [folder]);
+    } catch (e) {
+      failed.push(`${r.kind}: ${(e as Error).message.slice(0, 200)}`);
+    }
+  }
+  return { failed };
 }
 
 /** The saved credentials of a store, decrypted (null when it has none). */
@@ -138,6 +164,12 @@ export async function savedCredentials(env: Env, scope: StoreScope, kind: StoreK
   const id = storeId(kind, scope.workspaceId);
   const row = (await storeRows(env.DB)).find((r) => r.id === id);
   return row?.credentials ? decryptSecret(env.ENCRYPTION_KEY, row.credentials) : null;
+}
+
+/** The saved settings of a store ({} when it isn't set up): Drive's root folder, a bucket's endpoint. */
+export async function savedSettings(env: Env, scope: StoreScope, kind: StoreKind): Promise<Record<string, unknown>> {
+  const id = storeId(kind, scope.workspaceId);
+  return (await storeRows(env.DB)).find((r) => r.id === id)?.settings ?? {};
 }
 
 /** The rows of exactly one scope (not the instance's too, as storeRows gives a workspace). */
@@ -251,13 +283,35 @@ export async function removeStore(env: Env, scope: StoreScope, kind: StoreKind, 
 
 // ---- Connect Google Drive
 
+/** A root folder as typed in the dashboard (a name at the top of My Drive, a folder's link or id), trimmed; "" for
+ *  none (the workspaces' folders at the top of My Drive). */
+export function rootInput(v: unknown): string {
+  const r = String(v ?? "").trim();
+  if (r.length > 300 || [...r].some((ch) => ch < " "))
+    throw new StoreError("the root folder: a folder's name or its link");
+  return r;
+}
+
+/** Drive's settings for a root folder as typed, found with the grant: {} for none. */
+async function driveSettings(env: Env, fetcher: typeof fetch, grant: string, root: string, id: string) {
+  if (!root) return {};
+  const store = new DriveStore({ oauth: grant, fetch: fetcher, db: env.DB, id });
+  try {
+    return { root: await store.findRoot(root) };
+  } catch (e) {
+    throw new StoreError(`the root folder: ${(e as Error).message}`);
+  }
+}
+
 /** Starts Connect Google Drive: the Google app YouTube uses (a workspace's own, else the instance's), scope drive, a
- *  refresh token. `workspaceId` null connects the instance's Drive store, a workspace's its own. */
+ *  refresh token. `workspaceId` null connects the instance's Drive store, a workspace's its own. `root` is the root
+ *  folder as typed (rootInput); undefined keeps the store's (connecting again). */
 export async function startDriveConnect(
   env: Env,
   userId: string,
   workspaceId: string | null,
   nowS: number,
+  root?: string,
 ): Promise<StartedFlow> {
   if (!offeredKinds().includes("drive")) throw new StoreError("this server doesn't offer Google Drive");
   const app = await oauthApp(env, "google", driveRedirectUri(env.PUBLIC_URL), { workspaceId });
@@ -271,7 +325,14 @@ export async function startDriveConnect(
       authorizeParams: { access_type: "offline", prompt: "consent" },
     },
     app,
-    { flow: DRIVE_FLOW, userId, workspaceId, connectionId: null, nowS },
+    {
+      flow: DRIVE_FLOW,
+      userId,
+      workspaceId,
+      connectionId: null,
+      nowS,
+      ...(root === undefined ? {} : { settings: { root } }),
+    },
   );
 }
 
@@ -331,12 +392,36 @@ export async function finishDriveConnect(
       refresh_token: j.refresh_token,
       token_uri: GOOGLE_TOKEN,
     });
-    await saveStore(env, fetcher, { workspaceId: st.workspaceId }, "drive", {}, grant, st.userId, nowS);
+    const scope = { workspaceId: st.workspaceId };
+    const id = storeId("drive", st.workspaceId);
+    // the root typed at the start, found with the new grant; none typed: connecting again keeps the store's
+    const settings =
+      typeof st.settings.root === "string"
+        ? await driveSettings(env, fetcher, grant, st.settings.root, id)
+        : ((await ownRows(env, scope)).find((r) => r.id === id)?.settings ?? {});
+    await saveStore(env, fetcher, scope, "drive", settings, grant, st.userId, nowS);
   } catch (e) {
     if (e instanceof Error) Object.assign(e, { workspaceId: st.workspaceId });
     throw e;
   }
   return { userId: st.userId, workspaceId: st.workspaceId };
+}
+
+/** Changes a connected Drive's root folder (rootInput; "" for none): found with the saved grant, then saved as any
+ *  store is, after making every workspace folder it holds in the new root. Files already in the old root stay there. */
+export async function saveDriveRoot(
+  env: Env,
+  fetcher: typeof fetch,
+  scope: StoreScope,
+  root: string,
+  userId: string,
+  nowS: number,
+): Promise<Record<string, unknown>> {
+  const grant = await savedCredentials(env, scope, "drive");
+  if (!grant) throw new StoreError("connect Google Drive first");
+  const settings = await driveSettings(env, fetcher, grant, root, storeId("drive", scope.workspaceId));
+  await saveStore(env, fetcher, scope, "drive", settings, grant, userId, nowS);
+  return settings;
 }
 
 // ---- the weekly check

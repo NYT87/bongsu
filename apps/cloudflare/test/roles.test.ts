@@ -131,6 +131,7 @@ describe("the roles table", () => {
       expect((await call("/admin-api/media-stores")).status, role).toBe(403);
       expect((await call("/admin-api/oauth-apps")).status, role).toBe(403);
       expect((await call("/admin-api/media-stores/s3", { bucket: "x" })).status, role).toBe(403);
+      expect((await call("/admin-api/media-stores/drive/root", { root: "x" })).status, role).toBe(403);
       expect((await call("/admin-api/oauth-apps/instagram", { clientId: "x" })).status, role).toBe(403);
       expect((await call("/admin-api/workspaces")).status, role).toBe(403);
       expect((await call("/admin-api/instance-admins")).status, role).toBe(403);

@@ -73,8 +73,10 @@ again.
 
 You can set up several, one of each kind:
 
-- **Google Drive**: **Connect Google Drive** signs in with your Google app (add it under OAuth apps first). See
-  [Google Drive](drive.md).
+- **Google Drive**: type the **Root folder** (a folder at the top of My Drive, or any folder's link; empty: the top of
+  My Drive), then **Connect Google Drive** signs in with your Google app (add it under OAuth apps first) and makes each
+  workspace's folder with its inbox in the root. **Save the root folder** moves to another root later (the folders are
+  made there; files already in the old one stay). See [Google Drive](drive.md).
 - **S3-compatible bucket**: **Add a bucket** takes the service (AWS S3, Cloudflare R2, Backblaze B2, MinIO or other),
   the bucket, an optional folder in it and a key; **Test and save** saves it only once it answers. See
   [S3-compatible buckets](s3.md).
@@ -208,9 +210,10 @@ They are set where the instance is deployed, never here: [When the runs happen](
 Settings has three tabs: **General**, **Media** and **OAuth apps** (`/dashboard/settings`, `/settings/media`,
 `/settings/apps`).
 
-**Media** (admins) sets the workspace's **media folder** (a name made from the
-workspace's name, or `UPLOADS` for a workspace kept from before this release; Bongsu never moves files, so move them yourself when you change it) and its own S3 bucket
-or Google Drive. A workspace's default store is its own if it has one, else the instance's. A file must be in the
+**Media** (admins) sets the workspace's **media folder** (the workspace's id unless another name was given when it was
+made, so a rename never changes it; `UPLOADS` for a workspace kept from before folders had names; Bongsu makes the new
+folder with its inbox in each store but never moves files, so move them yourself when you change it) and its own S3
+bucket or Google Drive (with a root folder of its own). A workspace's default store is its own if it has one, else the instance's. A file must be in the
 workspace's own store or inside its folder in an instance store, or it's refused with "not in this workspace's media".
 The inbox scans `<folder>/inbox` in each of the workspace's stores, a few workspaces per run in turn.
 

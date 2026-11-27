@@ -6,7 +6,7 @@
 import { decryptSecret } from "../crypto";
 import type { Db } from "../db";
 import type { Env } from "../env";
-import { DriveStore } from "./drive";
+import { type DriveRoot, DriveStore } from "./drive";
 import { type S3Credentials, type S3Settings, S3Store } from "./s3";
 import type { MediaRef, MediaStore } from "./store";
 
@@ -96,7 +96,8 @@ export function buildStore(
 ): MediaStore {
   if (kind === "drive") {
     if (!credentials) throw new Error("Google Drive isn't connected");
-    return new DriveStore({ oauth: credentials, fetch: fetcher, db: env.DB, id });
+    const root = (settings.root as DriveRoot | undefined)?.id;
+    return new DriveStore({ oauth: credentials, fetch: fetcher, db: env.DB, id, ...(root ? { root } : {}) });
   }
   if (kind === "s3") {
     if (!credentials) throw new Error("the bucket's keys are missing");

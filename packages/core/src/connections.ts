@@ -259,12 +259,20 @@ export async function startConnect(
 /** Starts any OAuth flow: keeps its state (hashed), its PKCE verifier and the hash of the starting browser's cookie,
  *  single use, for STATE_S; returns the URL to send the browser to and the cookie's value and path. `flow` names what
  *  the callback finishes (a provider, or "media:drive"); `workspaceId` is where it connects into (null: the instance,
- *  as Drive); `app.scope` is whose OAuth app it was started with, kept for the callback. */
+ *  as Drive); `app.scope` is whose OAuth app it was started with, kept for the callback; `settings` is what the flow
+ *  saves with its grant (Drive's root folder as typed), handed back by takeState. */
 export async function authorizeUrl(
   env: Env,
   spec: Pick<ConnectSpec, "authorizeUrl" | "scopes" | "scopeSeparator" | "pkce" | "authorizeParams">,
   app: { clientId: string; redirectUri: string; scope?: AppScope },
-  o: { flow: string; userId: string; workspaceId: string | null; connectionId: string | null; nowS: number },
+  o: {
+    flow: string;
+    userId: string;
+    workspaceId: string | null;
+    connectionId: string | null;
+    nowS: number;
+    settings?: Record<string, unknown>;
+  },
 ): Promise<StartedFlow> {
   await env.DB.prepare("DELETE FROM oauth_states WHERE expires_at < ?1").bind(o.nowS).run(); // flows never finished
   const state = random();
@@ -274,8 +282,8 @@ export async function authorizeUrl(
   const browser = random();
   await env.DB.prepare(
     `INSERT INTO oauth_states (state_hash, provider, user_id, workspace_id, verifier, connection_id, created_at,
-       expires_at, browser_hash, app_scope)
-     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)`,
+       expires_at, browser_hash, app_scope, flow_settings)
+     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)`,
   )
     .bind(
       await sha256Hex(state),
@@ -288,6 +296,7 @@ export async function authorizeUrl(
       o.nowS + STATE_S,
       await sha256Hex(browser),
       app.scope ?? null,
+      o.settings ? JSON.stringify(o.settings) : null,
     )
     .run();
   const url = new URL(spec.authorizeUrl ?? "");
@@ -341,7 +350,7 @@ export async function takeState(env: Env, flow: string, q: CallbackQuery, browse
     throw new ConnectError(INVALID, undefined, "browser");
   const st = await env.DB.prepare(
     `UPDATE oauth_states SET used_at = ?1 WHERE state_hash = ?2 AND used_at IS NULL
-     RETURNING provider, user_id, workspace_id, verifier, connection_id, expires_at, app_scope`,
+     RETURNING provider, user_id, workspace_id, verifier, connection_id, expires_at, app_scope, flow_settings`,
   )
     .bind(nowS, stateHash)
     .first<{
@@ -352,6 +361,7 @@ export async function takeState(env: Env, flow: string, q: CallbackQuery, browse
       connection_id: string | null;
       expires_at: number;
       app_scope: AppScope | null;
+      flow_settings: string | null;
     }>();
   if (!st || (st.provider !== flow && st.provider !== `${flow}${APP_FLOW}`)) throw new ConnectError(INVALID);
   const back: ConnectBack = st.provider === flow ? "dashboard" : "app";
@@ -373,6 +383,7 @@ export async function takeState(env: Env, flow: string, q: CallbackQuery, browse
     verifier: st.verifier,
     connectionId: st.connection_id,
     appScope: st.app_scope,
+    settings: (st.flow_settings ? JSON.parse(st.flow_settings) : {}) as Record<string, unknown>,
     code: q.code,
   };
 }

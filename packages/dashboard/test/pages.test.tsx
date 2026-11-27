@@ -196,3 +196,69 @@ describe("Connections: a Bluesky app password", () => {
     });
   });
 });
+
+describe("Media: Google Drive's root folder", () => {
+  const stores = (drive?: { root?: { id: string; name: string } }) => ({
+    body: {
+      stores: drive
+        ? [
+            {
+              kind: "drive",
+              default: true,
+              settings: drive.root ? { root: drive.root } : {},
+              hasCredentials: true,
+              status: "ok",
+              lastError: null,
+              lastCheckedAt: null,
+              waitingApprovals: 0,
+            },
+          ]
+        : [],
+      offered: ["drive", "s3"],
+      googleApp: true,
+      encryptionKeySet: true,
+    },
+  });
+  const admin = () => ({ body: { ...state(), instanceAdmin: true } });
+  // the start's answer is where the browser goes: Google, which a test doesn't visit
+  const assign = vi.fn();
+  beforeEach(() => {
+    assign.mockReset();
+    vi.spyOn(window.location, "assign").mockImplementation(assign);
+  });
+
+  it("connects a new Drive with the root folder typed", async () => {
+    const calls = fakeApi({
+      "GET state": admin,
+      "GET media-stores": stores(),
+      "POST media-stores/drive/start": { body: { url: "https://accounts.google.com/o/oauth2/v2/auth?x=1" } },
+    });
+    open("media");
+    await userEvent.type(await screen.findByLabelText("Root folder"), "bongsu-media");
+    await userEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/v2/auth?x=1"));
+    expect(calls.find((c) => c.path === "media-stores/drive/start")?.body).toEqual({ root: "bongsu-media" });
+  });
+
+  it("shows a connected Drive's root, saves another, and connects again keeping it", async () => {
+    const calls = fakeApi({
+      "GET state": admin,
+      "GET media-stores": stores({ root: { id: "f1", name: "bongsu-media" } }),
+      "POST media-stores/drive/root": { body: { saved: true, settings: { root: { id: "f2", name: "other" } } } },
+      "POST media-stores/drive/start": { body: { url: "https://accounts.google.com/o/oauth2/v2/auth?x=2" } },
+    });
+    open("media");
+    const field = await screen.findByLabelText("Root folder");
+    expect(field).toHaveProperty("value", "bongsu-media");
+    expect(screen.getByText(/each workspace's folder in bongsu-media/)).toBeTruthy();
+    await userEvent.click(screen.getByRole("button", { name: "Connect again" }));
+    await waitFor(() => expect(assign).toHaveBeenCalled());
+    expect(calls.find((c) => c.path === "media-stores/drive/start")?.body).toEqual({}); // the saved root stays
+    await userEvent.clear(field);
+    await userEvent.type(field, "other");
+    await userEvent.click(screen.getByRole("button", { name: "Save the root folder" }));
+    await waitFor(() =>
+      expect(calls.find((c) => c.path === "media-stores/drive/root")?.body).toEqual({ root: "other" }),
+    );
+  });
+});

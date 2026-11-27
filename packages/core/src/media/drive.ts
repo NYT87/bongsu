@@ -1,7 +1,8 @@
 // Google Drive as a media store: the only code that talks to Drive. Everything goes through the owner's OAuth grant
 // (Connect Google Drive in the dashboard, scope drive: the files they drop in by hand too, and moving them aside).
 // Uploads from the app open a resumable session, so the bytes go from the browser straight to Google. Paths start at
-// a top folder of the owner's ("UPLOADS/inbox/<project>"). Nothing here trashes or deletes.
+// a workspace's folder ("UPLOADS/inbox/<project>"), inside the store's root folder when it has one, else anywhere in
+// the Drive (found by its name). Nothing here trashes or deletes.
 import { refreshToken } from "../clients/google";
 import type { Db } from "../db";
 import { type MediaEntry, MediaRefused, type MediaStore, type UploadTarget } from "./store";
@@ -51,6 +52,20 @@ export interface DriveStoreOptions {
   /** The store's id ("drive" for the instance's, "drive-<workspace>" for a workspace's own): the folders remembered
    *  here are per store, since two grants have different folders under the same path. */
   id?: string;
+  /** The Drive id of the root folder the workspaces' folders live in (the store's settings.root); none: the
+   *  workspaces' folders are found by name anywhere in the Drive and made at the top of My Drive. */
+  root?: string;
+}
+
+/** A root folder as the dashboard keeps it: its Drive id, and its name to show. */
+export interface DriveRoot {
+  id: string;
+  name: string;
+}
+
+/** The folder id in a Drive folder link (…/folders/<id>); null when the input isn't one. */
+export function driveFolderId(input: string): string | null {
+  return /\/folders\/([A-Za-z0-9_-]{10,})/.exec(input)?.[1] ?? null;
 }
 
 export class DriveStore implements MediaStore {
@@ -70,6 +85,11 @@ export class DriveStore implements MediaStore {
     if (!r.ok) throw new Error(`drive stat ${id}: ${r.status}`);
     const f = (await r.json()) as DriveFile;
     return f.trashed ? null : f;
+  }
+
+  /** Where a workspace's folder is made when missing: the root folder, else the top of My Drive. */
+  private get top(): string {
+    return this.o.root ?? "root";
   }
 
   private async query(q: string): Promise<DriveFile[]> {
@@ -125,7 +145,8 @@ export class DriveStore implements MediaStore {
     };
     let node = from;
     if (start === 0) {
-      const tops = await this.query(`name='${esc(parts[0])}' and mimeType='${FOLDER}' and trashed=false`);
+      const inRoot = this.o.root ? `'${esc(this.o.root)}' in parents and ` : "";
+      const tops = await this.query(`${inRoot}name='${esc(parts[0])}' and mimeType='${FOLDER}' and trashed=false`);
       if (tops.length !== 1) return null;
       node = toEntry(tops[0]);
       remember(0, node);
@@ -189,9 +210,14 @@ export class DriveStore implements MediaStore {
     let at = parts.length;
     let found = await this.resolve(path);
     while (!found && --at > 0) found = await this.resolve(parts.slice(0, at).join("/"));
-    if (!found) throw new Error(`drive: no top folder named ${parts[0]} in the connected Drive`);
-    let id = found.id;
-    for (let i = at; i < parts.length; i++) id = await this.mkdir(parts[i], id);
+    // not even the workspace's folder: it's made too, in the root folder (or at the top of My Drive). Each missing
+    // level is looked for in its parent's listing first: Drive's search lags a create, so a folder made a moment ago
+    // (connecting, then saving the root) isn't found by name and would be made twice
+    let id = found?.id ?? this.top;
+    for (let i = at; i < parts.length; i++) {
+      const have = (await this.list(id)).find((e) => e.folder && e.name === parts[i]);
+      id = have?.id ?? (await this.mkdir(parts[i], id));
+    }
     return id;
   }
 
@@ -210,9 +236,34 @@ export class DriveStore implements MediaStore {
     if (!r.ok) throw new Error(`drive move ${id}: ${r.status}`);
   }
 
+  /** The root folder a dashboard input names: a Drive folder link, a folder id, or the name of a folder at the top of
+   *  My Drive (exactly one of them). Throws when it isn't a folder this grant can reach. */
+  async findRoot(input: string): Promise<DriveRoot> {
+    const byId = async (id: string) => {
+      const f = await this.get(id);
+      return f && f.mimeType === FOLDER ? { id, name: f.name ?? id } : null;
+    };
+    const link = driveFolderId(input);
+    if (link) {
+      const f = await byId(link);
+      if (!f) throw new Error(`the link names no folder this Google account can reach`);
+      return f;
+    }
+    const esc = input.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const hits = await this.query(`'root' in parents and name='${esc}' and mimeType='${FOLDER}' and trashed=false`);
+    if (hits.length > 1)
+      throw new Error(`${hits.length} folders named ${input} at the top of My Drive: paste the one's link instead`);
+    if (hits.length) return { id: hits[0].id, name: hits[0].name ?? input };
+    // not a name at the top: a folder's id pasted on its own
+    const f = /^[A-Za-z0-9_-]{10,}$/.test(input) ? await byId(input) : null;
+    if (!f) throw new Error(`no folder named ${input} at the top of My Drive`);
+    return f;
+  }
+
   // ---------------------------------------------------------------- uploads from the app
 
-  /** A top folder of the owner's for uploads, created on first use and remembered in settings. */
+  /** A workspace's folder for uploads (in the root folder, else at the top of My Drive), created on first use and
+   *  remembered in settings. */
   private async ownerFolder(name: string): Promise<string> {
     const key = `drive_upload_folder:${this.id}:${name}`;
     const hit = await this.o.db
@@ -223,7 +274,7 @@ export class DriveStore implements MediaStore {
     const r = await this.o.fetch(`${API}?fields=id`, {
       method: "POST",
       headers: { ...(await this.auth()), "Content-Type": "application/json" },
-      body: JSON.stringify({ name, mimeType: FOLDER }),
+      body: JSON.stringify({ name, mimeType: FOLDER, parents: [this.top] }),
     });
     if (!r.ok) throw new Error(`drive: creating "${name}": ${r.status}`);
     const id = ((await r.json()) as { id: string }).id;
@@ -237,7 +288,7 @@ export class DriveStore implements MediaStore {
   /** A resumable upload session: the browser PUTs the bytes to the URL in chunks; the last answer names the file. */
   async createUpload(name: string, folderPath: string, mime: string, origin: string): Promise<UploadTarget> {
     const [top, ...rest] = folderPath.split("/");
-    // The top folder is the owner's (made at the root when missing). Its id is kept from there, not looked up again by
+    // The workspace's folder (made in the root folder when missing). Its id is kept from there, not looked up again by
     // name: Drive's search lags a create, so a first upload would find nothing. What's below it is made as needed.
     let folder = (await this.resolve(top))?.id ?? (await this.ownerFolder(top));
     for (const part of rest) {
