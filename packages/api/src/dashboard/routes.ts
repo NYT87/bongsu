@@ -2133,9 +2133,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const before = Number(c.req.query("before") ?? 0) || null;
       // a workspace's own rows; the instance's (no workspace: new workspaces, media stores, OAuth apps, instance
-      // admins, sign-ins outside any workspace) only to instance admins, on their own (?instance=1)
+      // admins, sign-ins outside any workspace) only to instance admins, on their own (?instance=1), and so is any
+      // other workspace's (?workspace=<id>: the admin dashboard's Audit, which reads every workspace's log)
       const instance = c.req.query("instance") === "1";
-      if (instance && !c.get("instanceAdmin")) throw new AdminError(403, "only an instance admin can do this");
+      const other = c.req.query("workspace");
+      if ((instance || other) && !c.get("instanceAdmin"))
+        throw new AdminError(403, "only an instance admin can do this");
+      if (other && !(await c.env.DB.prepare("SELECT 1 FROM workspaces WHERE id = ?1").bind(other).first()))
+        throw new AdminError(404, "no such workspace");
+      const workspace = instance ? null : (other ?? ws(c));
       // who: the person who acted, when a person did (their name, else their email; in a workspace's list, as that
       // workspace names them, below)
       const r = await c.env.DB.prepare(
@@ -2145,7 +2151,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
            AND (a.workspace_id = ?2 OR (CAST(?2 AS TEXT) IS NULL AND a.workspace_id IS NULL))
          ORDER BY a.id DESC LIMIT 50`,
       )
-        .bind(before, instance ? null : ws(c))
+        .bind(before, workspace)
         .all<{
           id: number;
           at: number;
@@ -2156,12 +2162,12 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           user_id: string | null;
           who: string | null;
         }>();
-      // every row here is the session's workspace's (the query's filter), so one workspace names them all
-      if (!instance) {
+      // every row here is that workspace's (the query's filter), so it names them all
+      if (workspace) {
         const names = await memberNames(
           c.env.DB,
           r.results.flatMap((x) => (x.user_id ? [x.user_id] : [])),
-          ws(c),
+          workspace,
         );
         for (const x of r.results) if (x.user_id) x.who = names.get(x.user_id) ?? x.who;
       }

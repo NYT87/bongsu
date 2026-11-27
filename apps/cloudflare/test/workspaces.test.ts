@@ -785,6 +785,9 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
         expect.objectContaining({ action: "client_error", actor: "user:ed", user_id: "ed", who: "Ed" }),
       ]);
       expect((await as(who, "dashboard", "/admin-api/audit?instance=1")).status, who).toBe(403);
+      // another workspace's log is the admin dashboard's, an instance admin's only: neither A's nor (named) B's own
+      for (const w of [a, "b"])
+        expect((await as(who, "dashboard", `/admin-api/audit?workspace=${w}`)).status, `${who} ${w}`).toBe(403);
     }
     // the instance admin, in no workspace (A's admin is someone else): the instance's rows
     const inst = await as("ina3", "dashboard", "/admin-api/audit?instance=1");
@@ -794,6 +797,19 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
       "workspace_create",
     ]);
     expect((await as("ina3", "dashboard", "/admin-api/audit")).json).toMatchObject({ noWorkspace: true });
+    // the admin dashboard's Audit: any workspace's log, picked by its id, named as that workspace names its people
+    const b = await as("ina3", "dashboard", "/admin-api/audit?workspace=b");
+    expect(b.status).toBe(200);
+    expect(b.json.entries).toEqual([
+      expect.objectContaining({ action: "pause", who: "Cleo" }),
+      expect.objectContaining({ action: "client_error", who: "Ed" }),
+    ]);
+    expect(
+      ((await as("ina3", "dashboard", `/admin-api/audit?workspace=${a}`)).json.entries as { action: string }[]).map(
+        (x) => x.action,
+      ),
+    ).toEqual(["invite_create"]);
+    expect((await as("ina3", "dashboard", "/admin-api/audit?workspace=nope")).status).toBe(404);
   });
 
   it("notification settings: a change in B leaves the default workspace's alone, and each GET reads its own", async () => {

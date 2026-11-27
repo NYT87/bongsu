@@ -21,7 +21,8 @@ Admin dashboard → **Media** → Google Drive: type the **Root folder** (its na
 the folder's link from Drive), then **Connect Google Drive**. Sign in with the Google account whose Drive holds the
 media and allow access; Google sends you back with Drive set up as a store (the first store you add is the default).
 Before saving it, Bongsu makes each workspace's folder with its `inbox` in the root, so reading and writing both work.
-Left empty, the workspaces' folders go at the top of My Drive instead.
+The root folder is required: **Connect Google Drive** stays disabled until it's typed. (A Drive connected before root
+folders existed keeps its folders at the top of My Drive until you save one.)
 
 **Connect again** replaces the grant (for example after you revoked it in your Google account) and keeps the root.
 **Save the root folder** moves to another root: the folders are made in the new one, and files already in the old one

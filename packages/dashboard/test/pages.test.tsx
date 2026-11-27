@@ -242,10 +242,26 @@ describe("Media: Google Drive's root folder", () => {
       "POST media-stores/drive/start": { body: { url: "https://accounts.google.com/o/oauth2/v2/auth?x=1" } },
     });
     open("media");
-    await userEvent.type(await screen.findByLabelText("Root folder"), "bongsu-media");
+    await userEvent.type(await screen.findByLabelText(/^Root folder/), "bongsu-media");
     await userEvent.click(screen.getByRole("button", { name: "Connect Google Drive" }));
     await waitFor(() => expect(assign).toHaveBeenCalledWith("https://accounts.google.com/o/oauth2/v2/auth?x=1"));
     expect(calls.find((c) => c.path === "media-stores/drive/start")?.body).toEqual({ root: "bongsu-media" });
+  });
+
+  it("asks for the root folder before connecting: an empty field says why and sends nothing", async () => {
+    const calls = fakeApi({ "GET state": admin, "GET media-stores": stores() });
+    open("media");
+    const field = await screen.findByLabelText(/^Root folder \(required\)/);
+    expect(field.getAttribute("placeholder")).toBeNull(); // no grey example that reads like a value
+    const connect = screen.getByRole("button", { name: "Connect Google Drive" });
+    expect(connect.getAttribute("aria-disabled")).toBe("true");
+    await userEvent.click(connect);
+    expect((await screen.findByRole("alert")).textContent).toMatch(/Type the root folder first/);
+    expect(calls.some((c) => c.path === "media-stores/drive/start")).toBe(false);
+    expect(assign).not.toHaveBeenCalled();
+    await userEvent.type(field, "bongsu-media");
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(connect.getAttribute("aria-disabled")).toBe("false");
   });
 
   it("shows a connected Drive's root, saves another, and connects again keeping it", async () => {
@@ -256,7 +272,7 @@ describe("Media: Google Drive's root folder", () => {
       "POST media-stores/drive/start": { body: { url: "https://accounts.google.com/o/oauth2/v2/auth?x=2" } },
     });
     open("media");
-    const field = await screen.findByLabelText("Root folder");
+    const field = await screen.findByLabelText(/^Root folder/);
     expect(field).toHaveProperty("value", "bongsu-media");
     expect(screen.getByText(/each workspace's folder in bongsu-media/)).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "Connect again" }));
@@ -352,7 +368,7 @@ describe("the admin dashboard", () => {
       nav()
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["Workspaces", "Media", "OAuth apps"]);
+    ).toEqual(["Workspaces", "Media", "OAuth apps", "Audit"]);
     await user.click(within(sidebar()).getByRole("link", { name: "Back to Demo Travel" }));
     await heading("Overview");
     expect(location.pathname).toBe("/dashboard/");
@@ -373,7 +389,7 @@ describe("the admin dashboard", () => {
     expect(location.pathname).toBe("/dashboard/admin/apps");
   });
 
-  it("is where an instance admin in no workspace is, with their devices and the instance's audit", async () => {
+  it("is where an instance admin in no workspace is, with their devices", async () => {
     fakeApi(routes({ instanceAdmin: true, noWorkspace: true, workspace: null, workspaces: [], role: null }));
     open("");
     await heading("Workspaces");
@@ -381,7 +397,7 @@ describe("the admin dashboard", () => {
       nav()
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["Workspaces", "Media", "OAuth apps", "Devices & passkeys", "Audit"]);
+    ).toEqual(["Workspaces", "Media", "OAuth apps", "Audit", "Devices & passkeys"]);
     // no workspace to go back to
     expect(within(sidebar()).queryByRole("navigation", { name: "Dashboards" })).toBeNull();
   });
@@ -461,5 +477,56 @@ describe("the workspace switcher", () => {
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(token);
     expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("Audit", () => {
+  const entry = (id: number, action: string) => ({
+    id,
+    at: 0,
+    actor: "user:u1",
+    action,
+    target: null,
+    detail: null,
+    who: "Ada",
+  });
+  const routes = (s: object) => ({
+    "GET state": { body: { ...state(), ...s } },
+    "GET workspaces": {
+      body: {
+        workspaces: [
+          { id: "w1", name: "Demo Travel" },
+          { id: "w2", name: "Demo Running" },
+        ],
+      },
+    },
+    "GET audit": { body: { entries: [entry(3, "settings_save")] } },
+    "GET audit?instance=1": { body: { entries: [entry(2, "workspace_create")] } },
+    "GET audit?workspace=w2": { body: { entries: [entry(1, "invite_create")] } },
+  });
+
+  it("is the workspace's own log in the workspace, with no switch to another", async () => {
+    const calls = fakeApi(routes({ instanceAdmin: true }));
+    open("audit");
+    expect(await screen.findByText("settings save")).toBeTruthy();
+    expect(screen.queryByLabelText("Which log")).toBeNull();
+    expect(calls.filter((c) => c.path.startsWith("audit")).map((c) => c.path)).toEqual(["audit"]);
+  });
+
+  it("reads the instance's log in the admin dashboard, then any workspace's picked there", async () => {
+    const calls = fakeApi(routes({ instanceAdmin: true }));
+    open("admin/audit");
+    // no workspace picked at first: the instance's own log
+    expect(await screen.findByText("workspace create")).toBeTruthy();
+    const pick = screen.getByLabelText("Workspace") as HTMLSelectElement;
+    expect(pick.value).toBe("");
+    await waitFor(() => expect(pick.options.length).toBe(3));
+    await userEvent.setup().selectOptions(pick, "w2");
+    expect(await screen.findByText("invite create")).toBeTruthy();
+    expect(screen.queryByText("workspace create")).toBeNull();
+    expect(calls.filter((c) => c.path.startsWith("audit")).map((c) => c.path)).toEqual([
+      "audit?instance=1",
+      "audit?workspace=w2",
+    ]);
   });
 });

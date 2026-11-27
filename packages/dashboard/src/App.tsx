@@ -5,7 +5,7 @@ import { type FormEvent, type MouseEvent, useCallback, useEffect, useState } fro
 import { APP_ONLY, api, manages, NAVIGATED, STATE_STALE, switchWorkspace } from "./api";
 import { Guide, GuideLink } from "./docs";
 import { Accounts } from "./pages/Accounts";
-import { Audit } from "./pages/Audit";
+import { AdminAudit, Audit } from "./pages/Audit";
 import { Connections } from "./pages/Connections";
 import { Devices } from "./pages/Devices";
 import { AcceptInvite, FirstWorkspace } from "./pages/FirstRun";
@@ -59,14 +59,14 @@ const INSTANCE = [
   ["admin/workspaces", "Workspaces", Workspaces],
   ["admin/media", "Media", Media],
   ["admin/apps", "OAuth apps", OAuthApps],
+  ["admin/audit", "Audit", AdminAudit],
 ] as const;
 /** Where the admin pages were before the admin dashboard, still in links already sent (emails, bookmarks). */
 const MOVED: readonly string[] = ["workspaces", "media", "apps"];
 /** What an editor doesn't see (the server refuses them too): the workspace's connections, members and settings. */
 const ADMINS_ONLY: readonly string[] = ["connections", "members", "settings"];
-/** What an instance admin in no workspace has besides the admin pages: their own passkeys and devices, and the
- *  instance's audit. */
-const OUTSIDE: readonly string[] = ["devices", "audit"];
+/** What an instance admin in no workspace has besides the admin pages: their own passkeys and devices. */
+const OUTSIDE: readonly string[] = ["devices"];
 /** Pages that belong to no workspace: switching workspaces stays on them. */
 const NO_WORKSPACE: readonly string[] = ["devices"];
 /** Pages reached from other pages, not the sidebar. */
