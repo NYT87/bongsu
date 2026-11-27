@@ -361,9 +361,22 @@ describe("invites", () => {
     expect(again.json).toEqual({ url: made.json.url });
     expect(
       await env.DB.prepare("SELECT target, workspace_id FROM audit WHERE action = 'invite_link_copy'").first(),
-    ).toEqual({ target: "later@example.com", workspace_id: "default" });
+    ).toEqual({ target: `invite:${id}`, workspace_id: "default" });
     // revoked: gone; a used one too
     expect((await ada(`/admin-api/invites/${id}/revoke`, {})).status).toBe(200);
+    // the audit names the invite by id, never by email (#142); the Audit page shows its email from the invite itself
+    const rows = (
+      await env.DB.prepare("SELECT action FROM audit WHERE target = ?1 ORDER BY id")
+        .bind(`invite:${id}`)
+        .all<{ action: string }>()
+    ).results;
+    expect(rows.map((r) => r.action)).toEqual(["invite_create", "invite_link_copy", "invite_revoke"]);
+    // and no row anywhere in the log holds an email
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE target LIKE '%@%' OR detail LIKE '%@%'").first("n"),
+    ).toBe(0);
+    const log = (await ada("/admin-api/audit")).json.entries as { action: string; target_name: string | null }[];
+    expect(log.find((e) => e.action === "invite_revoke")?.target_name).toBe("later@example.com");
     expect((await ada(`/admin-api/invites/${id}/link`, {})).status).toBe(404);
     const used = tokenOf((await ada("/admin-api/invites", { email: "used@example.com", role: "editor" })).json.url);
     const usedId = ((await ada("/admin-api/members")).json.invites as { id: string }[])[0].id;

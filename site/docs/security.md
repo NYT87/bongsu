@@ -6,7 +6,8 @@
 - The first person on a new instance signs up with the `SETUP_TOKEN` and becomes the instance admin. The token is
   useless once a user exists. Anyone else joins through an invite (below).
 - Later devices get a one-time code (15 minutes, stored hashed) from a signed-in session.
-- Sessions are an HTTP-only cookie (`bongsu_session`).
+- Sessions are HTTP-only, `SameSite=Strict` cookies, one per app: the phone app's (`bongsu_session`, 30 days) works only
+  on its routes (`/app-api`), the dashboard's (`bongsu_admin`, 12 hours) only on the dashboard's (`/admin-api`).
 - Approving an item, resuming a paused scheduler and moving a YouTube release date each need a fresh assertion from
   the signed-in user's own passkey, not only a session.
 - A recovery code (stored hashed) signs in once when every passkey is lost; an email gets five tries in 15 minutes,
@@ -36,6 +37,11 @@ A person has a role in each workspace they belong to, and the instance has admin
 | Plan, texts, drafts, release dates | yes | yes | yes | yes |
 | Approve, pause, resume | yes | yes | no | yes |
 | Dashboard | yes | yes | yes | no, they use the app |
+
+The dashboard's content pages (`/admin-api/content`) are the app's own routes and rules, served to the dashboard
+session after the dashboard's checks: a creator is sent to the app, an editor plans but never approves, pauses or
+resumes, and approving asks for the person's passkey as in the app (any of their passkeys). An approval made there is
+recorded as through the dashboard (`owner@dashboard`), with the person.
 
 What a signed-in person's app session and CLI token carry comes from the role (`agent/auth.ts` `ROLE_SCOPES`):
 approving and resuming need `approve` / `resume`, changing the plan `plan`. In the app, approving and resuming ask for
@@ -105,7 +111,9 @@ shows which are missing, by name only.
 ## Audit
 
 Actions by people (approve, passkey added, setup code, pause/resume, members, workspaces…) are written to the `audit`
-table, kept 180 days.
+table, kept 180 days. A row names people by id (`user:<id>`, an invite as `invite:<id>`), never by email: the
+dashboard's Audit page shows the name or email from the live account or invite, and every write masks anything shaped
+like an email (`[email]`), so an email doesn't outlive the account it belongs to.
 
 ## Reporting a vulnerability
 

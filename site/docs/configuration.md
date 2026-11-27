@@ -66,6 +66,8 @@ Nothing else changes: the design, the accent and the dashboard keep Bongsu's.
 |---|---|---|
 | `BONGSU_APP_NAME` | `Bongsu` | Install name, `<title>`, manifest `name`/`short_name`, the sign-in title and the Android hint. At most 40 characters |
 | `BONGSU_THEME_COLOR` | `#131f2a` | Manifest `theme_color` and `background_color`, and the `theme-color` meta. `#rrggbb`; anything else falls back to the default |
+| `BONGSU_OPERATOR_NAME` | none | Who runs the instance (a person or a business), shown on its privacy policy and terms (`/privacy/`, `/terms/`) |
+| `BONGSU_OPERATOR_CONTACT` | none | How to reach them, on the same pages: an email or a web address becomes a link |
 
 The icons are the seven files in `packages/web/public`: `favicon.svg`, `favicon.ico`, `icon-192.png`, `icon-512.png`,
 `icon-maskable-192.png`, `icon-maskable-512.png` and `apple-touch-icon.png`. `pnpm brand` makes all of them from one

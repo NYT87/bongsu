@@ -5,6 +5,7 @@
 // which workspace it's from: its links carry `w` (the app switches to it), its tag holds the workspace (two
 // workspaces' notes about one item don't replace each other) and, for a person in more than one, its title starts
 // with the workspace's name.
+import { auditDetail, noEmail } from "./audit-safe";
 import type { Db } from "./db";
 import type { Env } from "./env";
 import { iconHashes, iconUrl } from "./icon";
@@ -91,7 +92,7 @@ export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifie
       await env.DB.prepare(
         "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, ?4)",
       )
-        .bind(nowS, target ?? null, JSON.stringify({ title, text }), workspaceId)
+        .bind(nowS, noEmail(target ?? null), auditDetail({ title, text }), workspaceId)
         .run();
       const a = actionsFor(target, extra);
       const url = await topic(workspaceId);
@@ -138,7 +139,7 @@ export async function notifyInstanceAdmins(env: Env, fetcher: typeof fetch, note
   await env.DB.prepare(
     "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, NULL)",
   )
-    .bind(nowS, note.target ?? null, JSON.stringify({ title: note.title, text: note.text }))
+    .bind(nowS, noEmail(note.target ?? null), auditDetail({ title: note.title, text: note.text }))
     .run();
   try {
     const mail = mailer(env, fetcher);
@@ -171,6 +172,6 @@ export async function audit(
 ) {
   await db
     .prepare("INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', ?2, ?3, ?4, ?5)")
-    .bind(nowS, action, target, JSON.stringify(detail), workspaceId)
+    .bind(nowS, action, noEmail(target), auditDetail(detail), workspaceId)
     .run();
 }

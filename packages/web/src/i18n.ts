@@ -607,6 +607,10 @@ export const en = {
   "settings.newer": "A newer version is deployed (",
   "settings.newerEnd": ", {built}).",
   "settings.update": "Update now",
+
+  // the links to the instance's privacy policy and terms (sign-in and Settings)
+  "legal.privacy": "Privacy",
+  "legal.terms": "Terms",
 } as const;
 
 export type Key = keyof typeof en;

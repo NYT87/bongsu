@@ -65,6 +65,14 @@ describe("Settings: the Icon card", () => {
     expect(card.textContent).toContain("0.7.0");
   });
 
+  it("links the instance's privacy policy and terms under the version", async () => {
+    fakeApi({ "GET state": () => ({ body: state() }), "GET settings": settings });
+    open("settings");
+    const card = (await screen.findByRole("heading", { name: "Version" })).closest(".card") as HTMLElement;
+    expect(within(card).getByRole("link", { name: "Privacy" }).getAttribute("href")).toBe("/privacy/");
+    expect(within(card).getByRole("link", { name: "Terms" }).getAttribute("href")).toBe("/terms/");
+  });
+
   it("uploads a PNG, then the card and the sidebar both show the new icon", async () => {
     const calls = fakeApi({
       "GET state": () => ({ body: state() }),
@@ -408,7 +416,8 @@ describe("the admin dashboard", () => {
     fakeApi(routes({ instanceAdmin: false }));
     open("admin/workspaces");
     await heading("Overview");
-    expect(location.pathname).toBe("/dashboard/");
+    // the redirect is an effect after the first render: wait for it rather than read the path at once
+    await waitFor(() => expect(location.pathname).toBe("/dashboard/"));
     expect(within(sidebar()).queryByRole("link", { name: "Admin dashboard" })).toBeNull();
   });
 
@@ -868,5 +877,15 @@ describe("Connections: where a missing OAuth app is added", () => {
     open("connections");
     await userEvent.setup().click(await screen.findByRole("button", { name: "add it" }));
     await waitFor(() => expect(location.pathname).toBe("/dashboard/admin/apps"));
+  });
+});
+
+describe("Sign in", () => {
+  it("links the instance's privacy policy and terms", async () => {
+    fakeApi({ "GET state": () => ({ body: { ...state(), signedIn: false } }) });
+    open("");
+    await screen.findByRole("heading", { name: "Sign in" });
+    expect(screen.getByRole("link", { name: "Privacy" }).getAttribute("href")).toBe("/privacy/");
+    expect(screen.getByRole("link", { name: "Terms" }).getAttribute("href")).toBe("/terms/");
   });
 });
