@@ -1,6 +1,6 @@
 # API reference
 
-The keys, scopes, MCP tools and REST endpoints agents use. To connect Claude, start with [Connect Claude](connect-claude.md);
+The keys, scopes, MCP tools and REST endpoints agents use. To connect Claude, Codex or another agent, start with [Connect an agent](connect-an-agent.md);
 for what an agent may and may not do, see [What agents can do](what-agents-can-do.md).
 
 AI agents (Claude Code, other MCP clients, scripts) work with the plan through the `bongsu` Worker. They can read,
