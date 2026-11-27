@@ -133,16 +133,62 @@ at `/admin-api/content` behind the dashboard session (same role rules). The app'
 
 ---
 
-## Phase 2: `<Content>` in `@bongsu/web` (one PR, outline)
+## Phase 2: the shared content in `@bongsu/web` (one PR)
 
-- Move `useSharedState`, `refreshMe` (zone, locale, platforms) and `lastList` handling from `App.tsx` into a
-  `<Content host={…}>` component exported from `@bongsu/web/content` (a `package.json` `exports` entry).
-- `ContentHost`: `{ apiBase: string; brand: Brand; settingsHref: string; setupHref: string; workspaceId: string;
-  showWorkspacePicker: boolean }`. `api.ts` and the passkey ceremonies (`useApprove`, the release, resume) read
-  `apiBase`; `common.tsx`'s `BRAND` comes from the host instead of `__APP_BRAND__` (the app passes its define).
-- `useLoad`'s cache key carries `apiBase` and `workspaceId`.
-- The app's `App.tsx` hosts `<Content>` with `apiBase: "/app-api"`. Tests: `packages/web/test/screens.test.tsx` still
-  passes; a new test renders `<Content>` with another `apiBase` and checks calls and cache keys use it.
+The app's `SignedIn` (`packages/web/src/App.tsx`) mixes the content (the shared lists, the page each `#/` route shows,
+its title, `MeCtx`/`SharedCtx`) with the phone app's chrome (header, tabs, workspace sheet, Settings). The content part
+moves to `packages/web/src/content.tsx`, exported as `@bongsu/web/content`; the app keeps its chrome and uses it. No
+visible change.
+
+**Ruling (plan):** module-level state stays in its own file with its setter (the learning on module `let`s): the API
+base in `api.ts`, the brand and the cache scope in `common.tsx`.
+
+### Task 5: the API base and the cache scope
+
+**Files:** Modify `packages/web/src/api.ts`, `packages/web/src/common.tsx`. Test: `packages/web/test/content.test.tsx`
+(new).
+
+**Interfaces (produces):**
+- `api.ts`: `export function setApiBase(base: string): void` (default `"/app-api"`); `api()` fetches `${base}/${path}`.
+- `common.tsx`: `export function setCacheScope(scope: string): void` (default `""`); the cache key becomes
+  `bongsu-cache:<day>:<scope>:<path>`, so `cachePrune` (by day) keeps working.
+- `common.tsx`: `export let BRAND` defaulting to `__APP_BRAND__` when defined, else `{ name: "Bongsu", themeColor:
+  "#131f2a" }`; `export function setBrand(b: { name: string; themeColor: string }): void`.
+
+- [ ] Test `"the API base decides where every call goes"`: `setApiBase("/admin-api/content")`, `api("queue")` → fetch
+  called with `/admin-api/content/queue`; back to `/app-api` after `setApiBase("/app-api")`.
+- [ ] Test `"two scopes never read each other's cache"`: `setCacheScope("a")`, `cachePut("queue", 1)`;
+  `setCacheScope("b")` → `cacheGet("queue")` is null; back to `"a"` → 1.
+- [ ] Run (fail), implement, run (pass): `pnpm --filter @bongsu/web exec vitest run test/content.test.tsx`.
+- [ ] Commit `refactor(web): an API base, a cache scope and a brand the host sets`.
+
+### Task 6: the content module
+
+**Files:** Create `packages/web/src/content.tsx`; modify `packages/web/src/App.tsx`, `packages/web/package.json`
+(`exports["./content"] = "./src/content.tsx"`). Test: `packages/web/test/content.test.tsx`.
+
+**Interfaces (produces), from `content.tsx`:**
+- `export interface ContentHost { apiBase: string; brand?: { name: string; themeColor: string } }`
+- `export async function bootContent(host: ContentHost, me: Me): Promise<void>`: sets the API base, brand, zone,
+  locale, platforms (`/platforms`), and the cache scope `${apiBase}|${me.workspace?.id ?? ""}`. The app's `refreshMe`
+  calls it after loading `me`.
+- `export function useSharedState(): Shared` (moved from `App.tsx`).
+- `export function contentRoute(route: string, onTitle: (key: string, title: string | null) => void): { page:
+  ReactNode; title: string } | null`: the page and title for a content route (Today, Calendar, Queue, Drafts, Item,
+  Video, Stats, channel page, Comments); null for one that isn't content (`/settings`, which the app keeps).
+- `export function ContentProviders({ me, shared, children })`: `MeCtx` and `SharedCtx`.
+
+- [ ] Test `"the content routes and their titles"`: `contentRoute("/queue", …)` → Queue's page and title;
+  `"/item/reel%3Ax"` → the item page; `"/settings"` → null.
+- [ ] Test `"the content screens run on another host"`: `bootContent({ apiBase: "/admin-api/content" }, me)` then
+  render `ContentProviders` + `contentRoute("/queue")` with `fetch` faked at `/admin-api/content/` → the queue's
+  items render and no request goes to `/app-api`.
+- [ ] Move the code; `SignedIn` uses `useSharedState`, `contentRoute` (falling back to its Settings page) and
+  `ContentProviders`; `refreshMe` uses `bootContent({ apiBase: "/app-api" }, me)`.
+- [ ] Run `pnpm --filter @bongsu/web test` (all, including `screens.test.tsx`), `pnpm --filter @bongsu/web build`,
+  `pnpm typecheck`.
+- [ ] Commit `refactor(web): the content screens as a module both hosts can use`; push, PR
+  `refactor(web): share the app's content screens`, `Refs #145`. No changeset (nothing visible changes).
 
 ## Phase 3: the dashboard's Content page (one PR, outline)
 
