@@ -7,7 +7,7 @@ import { PausedBanner, WorkspaceSheet } from "../src/App";
 import { type DraftsAnswer, type Me, type Shared, SharedCtx } from "../src/common";
 import { DraftsPage } from "../src/Drafts";
 import { ApprovedText, TrialCopy } from "../src/Item";
-import { YouCard } from "../src/Settings";
+import { VersionInfo, YouCard } from "../src/Settings";
 import { fakeApi } from "./fake-api";
 
 afterEach(() => {
@@ -24,6 +24,24 @@ const base: Me = {
   workspace: { id: "w1", name: "Demo Travel", mediaFolder: "UPLOADS", iconUrl: null },
   you: { name: "Ada", emailName: "ada", displayName: null, shownAs: "Ada" },
 };
+
+describe("the version card", () => {
+  it("shows the app's release and commit, and the server's beside it", () => {
+    vi.stubGlobal("fetch", () => new Promise(() => {})); // the deployed version.json: not needed here
+    render(<VersionInfo me={{ ...base, server: { version: "0.7.0", commit: "abc1234" } }} />);
+    expect(screen.getByText(__APP_VERSION__.commit)).toBeTruthy();
+    expect(screen.getByText("abc1234").parentElement?.textContent).toBe("Server 0.7.0 abc1234");
+  });
+
+  it("says when the server's commit isn't known, and shows no server line signed out", () => {
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+    const { unmount } = render(<VersionInfo me={{ ...base, server: { version: "0.7.0", commit: null } }} />);
+    expect(screen.getByText("unknown commit")).toBeTruthy();
+    unmount();
+    render(<VersionInfo me={{ ...base, server: null }} />);
+    expect(screen.queryByText(/^Server/)).toBeNull();
+  });
+});
 
 describe("the You card", () => {
   it("shows the workspace's name in the label, and the person's own name as the placeholder", () => {

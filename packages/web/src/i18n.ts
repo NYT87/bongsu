@@ -597,6 +597,8 @@ export const en = {
 
   // the app's version
   "settings.app": "App",
+  "settings.server": "Server",
+  "settings.unknownCommit": "unknown commit",
   "settings.built": ", built {built}.",
   "settings.upToDate": "Up to date.",
   "settings.newer": "A newer version is deployed (",

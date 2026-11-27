@@ -201,6 +201,7 @@ function GeneralSettings(_: Props) {
     ntfy: { set: boolean; host: string | null };
     encryptionKeySet: boolean;
     iconUrl: string | null;
+    server: { version: string; commit: string | null };
   }>("settings");
   const [name, setName] = useState("");
   const [tz, setTz] = useState("");
@@ -286,6 +287,18 @@ function GeneralSettings(_: Props) {
                 ) : (
                   <Pill status="ok" label="Live" />
                 )}
+              </dd>
+            </dl>
+          </Card>
+          <Card title="Version">
+            <dl className="facts">
+              <dt>App</dt>
+              <dd>
+                {__APP_VERSION__.version} <code>{__APP_VERSION__.commit}</code>
+              </dd>
+              <dt>Server</dt>
+              <dd>
+                {data.server.version} <code>{data.server.commit ?? "unknown commit"}</code>
               </dd>
             </dl>
           </Card>

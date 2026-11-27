@@ -48,6 +48,7 @@ import { type Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { type Caller, type Scope, scopesOf } from "../agent/auth";
 import * as ops from "../agent/ops";
+import { serverVersion } from "../version";
 import { resolveItem, type Snapshot, sameSnapshot, snapshot, writeApproval } from "./approve";
 import { AcceptError, APP_ROLES, inviteOptions, invitePreview, inviteVerify } from "./invite";
 import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
@@ -221,6 +222,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       accounts: accounts?.n ?? 0,
       vapidPublicKey: c.env.VAPID_PUBLIC_KEY,
       dryRun: c.env.DRY_RUN !== "0",
+      // Settings shows it beside the app's own version; signed-in people only
+      server: s ? serverVersion(c.env) : null,
       // the user's own zone, else their workspace's; UTC without one (never another workspace's)
       timezone: s ? await callerZone(c.env.DB, caller?.workspaceId ?? null, s.userId) : FALLBACK_ZONE,
       workspaceTimezone: caller ? await workspaceZone(c.env.DB, caller.workspaceId) : FALLBACK_ZONE,

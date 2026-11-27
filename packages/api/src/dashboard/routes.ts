@@ -120,6 +120,7 @@ import {
   verifyAuthentication,
   verifyRegistration,
 } from "../pwa/webauthn";
+import { serverVersion } from "../version";
 
 type Vars = {
   Bindings: Env;
@@ -2034,6 +2035,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         publicUrl: origin(c),
         ntfy: { set: !!topic, host: topic ? new URL(topic).host : null },
         encryptionKeySet: !!c.env.ENCRYPTION_KEY,
+        server: serverVersion(c.env),
       };
     }),
   );

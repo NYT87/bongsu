@@ -112,6 +112,16 @@ beforeEach(async () => {
   );
 });
 
+describe("the Settings page's version", () => {
+  it("answers the server's release and the commit it was deployed from, null when none was given", async () => {
+    const amy = await as("amy", "admin");
+    const server = (await amy("/admin-api/settings")).json.server;
+    expect(server).toEqual({ version: expect.stringMatching(/^\d+\.\d+\.\d+/), commit: null });
+    e.BONGSU_COMMIT = "abc1234";
+    expect((await amy("/admin-api/settings")).json.server).toEqual({ version: server.version, commit: "abc1234" });
+  });
+});
+
 describe("a workspace's media settings", () => {
   it("an admin sets the folder, adds a bucket, makes it the default, goes back to the instance's, removes it", async () => {
     const amy = await as("amy", "admin");

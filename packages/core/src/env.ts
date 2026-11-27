@@ -29,6 +29,8 @@ export interface Env {
   ENCRYPTION_KEY?: string;
   /** Asked once by the dashboard to create its first user (site/docs/deploy-cloudflare.md); useless after that. */
   SETUP_TOKEN?: string;
+  /** The commit this server was built from (`pnpm run deploy` passes it; a Docker build arg), shown in Settings. */
+  BONGSU_COMMIT?: string;
   /** Email (core/mail.ts), optional: "resend", with MAIL_FROM ("Bongsu <bongsu@example.com>") and the RESEND_API_KEY
    *  secret. Unset: no email. */
   MAILER?: string;

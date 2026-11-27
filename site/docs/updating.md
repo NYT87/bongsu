@@ -105,6 +105,8 @@ pnpm run deploy          # both Workers
 ```
 
 `pnpm run deploy` is `wrangler deploy && wrangler deploy -c wrangler.cron.toml`: the web Worker and the cron Worker.
+The web Worker also gets the checkout's commit (`--var BONGSU_COMMIT:…`), which the dashboard's and the app's Settings
+show beside the app's own version: when they differ, the installed app is behind.
 Deploy both, or the scheduler and the app run different versions. `migrations apply` skips the ones already applied.
 Your secrets stay where they are ([Configuration](configuration.md)); a release that needs a new one says so in its
 changelog.

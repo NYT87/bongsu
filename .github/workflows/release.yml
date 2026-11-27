@@ -102,6 +102,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: BONGSU_COMMIT=${{ github.sha }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha

@@ -1,26 +1,12 @@
 /// <reference types="vitest/config" />
-import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import react from "@vitejs/plugin-react";
 import { defineConfig, type Plugin } from "vite";
 import { brand, htmlFor, manifestFor } from "./brand";
 import { iconProblems } from "./icons";
+import { version } from "./version";
 
-// The app's version: the commit (CI's, else the local checkout's) and the build time. It's compiled into the app
-// (__APP_VERSION__) and written to dist/version.json, so an installed PWA can tell it's behind the deployed one.
-const commit =
-  process.env.CI_COMMIT_SHORT_SHA ??
-  (() => {
-    try {
-      return execSync("git rev-parse --short HEAD").toString().trim();
-    } catch {
-      return "dev";
-    }
-  })();
-const version = {
-  commit,
-  built: `${new Date().toISOString().slice(0, 16).replace("T", " ")} UTC`,
-};
+// dist/version.json: the deployed version, which an installed PWA compares with its own (version.ts)
 const versionFile: Plugin = {
   name: "version-file",
   apply: "build",
