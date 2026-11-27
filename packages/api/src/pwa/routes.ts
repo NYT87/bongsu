@@ -54,6 +54,7 @@ import { resolveItem, type Snapshot, sameSnapshot, snapshot, writeApproval } fro
 import { AcceptError, APP_ROLES, inviteOptions, invitePreview, inviteVerify } from "./invite";
 import { editTexts, ScheduleError, scheduleDraft } from "./schedule";
 import {
+  type App,
   createSession,
   endSession,
   leaveWorkspace,
@@ -94,30 +95,62 @@ type C = Context<Vars>;
 /** The scope each change needs, by route pattern; a POST not listed needs "plan" unless it's the person's own (session,
  *  device, zone). The router tags each request with its pattern's (below), never a second look at the URL: Hono
  *  matches the decoded path, so a regex on the raw one would miss `/app-api/%61pprove/options`. */
-const NEEDS: [string, Scope | null][] = [
-  ["/app-api/approve/*", "approve"],
-  ["/app-api/resume/*", "resume"],
-  ["/app-api/pause", "pause"],
-  ["/app-api/youtube/release/*", "reschedule"],
+const needsFor = (P: string): [string, Scope | null][] => [
+  [`${P}/approve/*`, "approve"],
+  [`${P}/resume/*`, "resume"],
+  [`${P}/pause`, "pause"],
+  [`${P}/youtube/release/*`, "reschedule"],
   // connecting accounts needs the role itself (an admin's or a creator's: core/roles.ts mayConnect), not a scope
-  ["/app-api/connect/*", null],
-  ["/app-api/logout", null],
-  ["/app-api/me/timezone", null],
+  [`${P}/connect/*`, null],
+  [`${P}/logout`, null],
+  [`${P}/me/timezone`, null],
   // a person's own name, and the one their workspace shows
-  ["/app-api/me/name", null],
-  ["/app-api/me/display-name", null],
+  [`${P}/me/name`, null],
+  [`${P}/me/display-name`, null],
   // switching workspaces is the person's own; where they may go is mayOpen's (session.ts openWorkspace)
-  ["/app-api/session/*", null],
-  ["/app-api/push/*", null],
+  [`${P}/session/*`, null],
+  [`${P}/push/*`, null],
   // a person's own notification settings
-  ["/app-api/notify-prefs", null],
-  ["/app-api/client-error", null],
-  ["/app-api/comments/seen", null],
+  [`${P}/notify-prefs`, null],
+  [`${P}/client-error`, null],
+  [`${P}/comments/seen`, null],
 ];
 const nowS = () => Math.floor(Date.now() / 1000);
 
-export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVerifiers) {
+/** Where the app's routes are served and whose session they take: the app's own (`/app-api`, the app session), and
+ *  the dashboard's content pages (`/admin-api/content`, the dashboard session, mounted inside the dashboard's router
+ *  after its own checks). The same handlers and role rules serve both. */
+export interface AppHost {
+  prefix: string;
+  app: App;
+}
+export const PWA_HOST: AppHost = { prefix: "/app-api", app: "pwa" };
+export const CONTENT_HOST: AppHost = { prefix: "/admin-api/content", app: "dashboard" };
+/** The app's own routes, under its host's prefix: signing in, invites, switching workspace, push, notification
+ *  settings, its time zone and names, connecting accounts. The dashboard has its own for these, so its content host
+ *  answers them with a 404. */
+const APP_ONLY = [
+  "/setup/*",
+  "/login/*",
+  "/logout",
+  "/invite/*",
+  "/session/*",
+  "/push/*",
+  "/notify-prefs",
+  "/me/timezone",
+  "/me/name",
+  "/me/display-name",
+  "/connections",
+  "/connect/*",
+  "/client-error",
+];
+
+export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVerifiers, host: AppHost = PWA_HOST) {
   const app = new Hono<Vars>();
+  const P = host.prefix;
+  const NEEDS = needsFor(P);
+  if (host.app !== "pwa")
+    for (const path of APP_ONLY) app.all(`${P}${path}`, (c) => c.json({ error: "not found" }, 404));
   /** The signed-in caller, set by the session check below; a request without one is refused, never defaulted. */
   const me = (c: C): Caller => {
     const caller = c.get("caller");
@@ -131,7 +164,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return u;
   };
   const callerFor = async (c: C, s: Session): Promise<Caller | null> => {
-    const where = await sessionWorkspace(c.env.DB, s);
+    // the dashboard never works as a creator (its router refuses one before this); the app does
+    const where = await sessionWorkspace(c.env.DB, s, host.app === "dashboard" ? { notCreator: true } : {});
     if (!where) return null;
     const scopes = scopesOf(where.role, where.instanceAdmin);
     c.set("connects", mayConnect(where.role));
@@ -198,12 +232,12 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   // ---- public: who am I, setup, login
   // The platforms the app shows: names, what each calls its formats, features and options (no secrets, no accounts).
-  app.get("/app-api/platforms", (c) =>
+  app.get(`${P}/platforms`, (c) =>
     c.json({ platforms: platforms().map(describePlatform), connections: connectSpecs() }),
   );
-  app.get("/app-api/me", async (c) => {
+  app.get(`${P}/me`, async (c) => {
     const n = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys").first<{ n: number }>();
-    const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
+    const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie"), host.app), nowS(), host.app);
     const caller = s && (await callerFor(c, s));
     if (caller) c.set("caller", caller);
     // active accounts of the caller's workspace: none means the app points at the dashboard's setup
@@ -254,7 +288,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   };
 
   // The code is checked here but only used up once a passkey is actually created (a failed attempt keeps it).
-  app.post("/app-api/setup/options", async (c) => {
+  app.post(`${P}/setup/options`, async (c) => {
     const code = String((await body(c)).code ?? "")
       .trim()
       .toUpperCase();
@@ -281,7 +315,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     );
   });
 
-  app.post("/app-api/setup/verify", async (c) => {
+  app.post(`${P}/setup/verify`, async (c) => {
     const b = await body(c);
     // the code's user, whom the challenge names: a code always belongs to someone (made in the dashboard)
     let userId: string | null = null;
@@ -314,13 +348,13 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return signIn(c, user);
   });
 
-  app.post("/app-api/login/options", async (c) => {
+  app.post(`${P}/login/options`, async (c) => {
     const n = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys").first<{ n: number }>();
     if (!n?.n) return c.json({ error: "no passkey yet: set one up first" }, 409);
     return c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "login", null, nowS()));
   });
 
-  app.post("/app-api/login/verify", async (c) => {
+  app.post(`${P}/login/verify`, async (c) => {
     const b = await body(c);
     const ok = await verifyAuthentication(
       c.env.DB,
@@ -336,7 +370,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return signIn(c, ok.userId);
   });
 
-  app.post("/app-api/logout", async (c) => {
+  app.post(`${P}/logout`, async (c) => {
     await endSession(c.env.DB, readCookie(c.req.header("Cookie")));
     c.header("Set-Cookie", sessionCookie("x", 0));
     return c.json({ signedIn: false });
@@ -353,15 +387,15 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }
   };
   app.get(
-    "/app-api/invite/:token",
+    `${P}/invite/:token`,
     accepting((c) => invitePreview(c.env, c.req.param("token") ?? "", nowS(), APP_ROLES)),
   );
   app.post(
-    "/app-api/invite/:token/options",
+    `${P}/invite/:token/options`,
     accepting(async (c) => inviteOptions(c.env, c.req.param("token") ?? "", (await body(c)).name, nowS(), APP_ROLES)),
   );
   app.post(
-    "/app-api/invite/:token/verify",
+    `${P}/invite/:token/verify`,
     accepting(async (c) => {
       const j = await inviteVerify(
         c.env,
@@ -391,12 +425,12 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // ---- everything else needs a session, and a workspace to work in, except for switching to one: someone whose
   // session works nowhere (an instance admin in none) picks one there, as the dashboard's `session` area allows.
   // Tagged by the router, before the check reads it.
-  app.use("/app-api/session/*", async (c, next) => {
+  app.use(`${P}/session/*`, async (c, next) => {
     c.set("noWorkspace", true);
     await next();
   });
-  app.use("/app-api/*", async (c, next) => {
-    const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie")), nowS());
+  app.use(`${P}/*`, async (c, next) => {
+    const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie"), host.app), nowS(), host.app);
     if (!s) return c.json({ error: "sign in" }, 401);
     c.set("session", s);
     const caller = await callerFor(c, s);
@@ -411,7 +445,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       c.set("needs", { scope });
       await next();
     });
-  app.use("/app-api/*", async (c, next) => {
+  app.use(`${P}/*`, async (c, next) => {
     if (c.req.method === "GET") return next();
     const needs = c.get("needs");
     const scope = needs ? needs.scope : "plan";
@@ -430,11 +464,11 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   };
   const num = (v: string | undefined) => (v === undefined ? undefined : Number(v));
   app.get(
-    "/app-api/status",
+    `${P}/status`,
     wrap((c) => ops.status(opctx(c))),
   );
   app.get(
-    "/app-api/queue",
+    `${P}/queue`,
     wrap((c) =>
       ops.queue(opctx(c), {
         days: num(c.req.query("days")),
@@ -446,20 +480,20 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     ),
   );
   app.get(
-    "/app-api/queue/groups",
+    `${P}/queue/groups`,
     wrap((c) => ops.queueFacets(opctx(c), { days: num(c.req.query("days")) })),
   );
   app.get(
-    "/app-api/jobs",
+    `${P}/jobs`,
     wrap((c) => ops.jobs(opctx(c), { days: num(c.req.query("days")) })),
   );
   app.get(
-    "/app-api/notifications",
+    `${P}/notifications`,
     wrap((c) => ops.notifications(opctx(c), { limit: num(c.req.query("limit")) })),
   );
   // Drafts, with short-lived preview links for their media (inbox drops and uploads).
   app.get(
-    "/app-api/drafts",
+    `${P}/drafts`,
     wrap(async (c) => {
       const r = await ops.listDrafts(opctx(c), { status: c.req.query("status") });
       const stores = await mediaStores(c.env, fetcher, me(c).workspaceId);
@@ -498,7 +532,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   );
 
   // The calendar: ?month=YYYY-MM (the workspace's zone); &refresh=1 re-reads YouTube instead of the hour-old cache.
-  app.get("/app-api/calendar", async (c) => {
+  app.get(`${P}/calendar`, async (c) => {
     const tz = await zone(c);
     const month = c.req.query("month") ?? zoneDate(new Date(), tz).slice(0, 7);
     if (!/^\d{4}-\d{2}$/.test(month)) return c.json({ error: "month must be YYYY-MM" }, 400);
@@ -520,17 +554,17 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   // The Stats tab: the accounts' followers and the last 7 days' posts, most viewed first.
   app.get(
-    "/app-api/stats",
+    `${P}/stats`,
     wrap((c) => ops.statsOverview(opctx(c))),
   );
   // An account's page: followers over a period, views per day, what brought followers (#140 reuses the op).
   app.get(
-    "/app-api/stats/channel",
+    `${P}/stats/channel`,
     wrap((c) => ops.channelStats(opctx(c), { account: c.req.query("account") ?? "", days: c.req.query("days") })),
   );
 
   // One day's events, posted or pending (Instagram + YouTube): ?date=YYYY-MM-DD (the workspace's zone, default today).
-  app.get("/app-api/day", async (c) => {
+  app.get(`${P}/day`, async (c) => {
     const tz = await zone(c);
     const date = c.req.query("date") ?? zoneDate(new Date(), tz);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: "date must be YYYY-MM-DD" }, 400);
@@ -548,7 +582,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }
   };
   app.post(
-    "/app-api/drafts/:id/schedule",
+    `${P}/drafts/:id/schedule`,
     owned(async (c) =>
       scheduleDraft(
         c.env,
@@ -564,16 +598,16 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   );
   // Uploads from the app: the store's upload target per file (the browser sends the bytes straight to it), then the draft.
   app.post(
-    "/app-api/uploads/start",
+    `${P}/uploads/start`,
     owned(async (c) => startUpload(c.env, fetcher, await body(c), me(c).workspaceId)),
   );
   app.post(
-    "/app-api/drafts/new",
+    `${P}/drafts/new`,
     owned(async (c) => draftFromUploads(c.env, fetcher, await body(c), nowS(), me(c).workspaceId, userOf(c))),
   );
   // What went wrong on a device (upload failures): kept in the audit log of the caller's workspace, read in the
   // dashboard's audit page.
-  app.post("/app-api/client-error", async (c) => {
+  app.post(`${P}/client-error`, async (c) => {
     const b = await body(c);
     await c.env.DB.prepare(
       "INSERT INTO audit (at, actor, action, target, detail, user_id, workspace_id) VALUES (?1, ?2, 'client_error', NULL, ?3, ?4, ?5)",
@@ -589,7 +623,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return c.json({ ok: true });
   });
   // The media stores, for Settings (read-only: they're set up in the dashboard; no settings or secrets here).
-  app.get("/app-api/media-stores", async (c) => {
+  app.get(`${P}/media-stores`, async (c) => {
     const ws = me(c).workspaceId;
     const rows = await storeRows(c.env.DB, { workspaceId: ws });
     const effective = defaultIds(rows, ws).effective;
@@ -612,7 +646,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     if (!c.get("connects")) throw new ops.ApiError(403, "only the workspace's admins and creators connect accounts");
   };
   app.get(
-    "/app-api/connections",
+    `${P}/connections`,
     wrap(async (c) => {
       connector(c);
       const ws = me(c).workspaceId;
@@ -636,7 +670,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
   app.post(
-    "/app-api/connect/:provider/start",
+    `${P}/connect/:provider/start`,
     wrap(async (c) => {
       connector(c);
       const b = await body(c);
@@ -658,20 +692,20 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
   // The stores the app can upload to (the default first): the upload page offers a choice when there are several.
-  app.get("/app-api/uploads/enabled", async (c) => {
+  app.get(`${P}/uploads/enabled`, async (c) => {
     const stores = await mediaStores(c.env, fetcher, me(c).workspaceId);
     const up = stores.uploadable.sort((a, b) => Number(b === stores.default) - Number(a === stores.default));
     return c.json({ enabled: up.length > 0, stores: up.map((s) => s.id) });
   });
   app.post(
-    "/app-api/item/texts",
+    `${P}/item/texts`,
     owned(async (c) => {
       const b = await body(c);
       return editTexts(c.env, String(b.key ?? ""), b, nowS(), me(c).workspaceId, userOf(c));
     }),
   );
 
-  app.post("/app-api/drafts/:id/refuse", async (c) => {
+  app.post(`${P}/drafts/:id/refuse`, async (c) => {
     const r = await c.env.DB.prepare(
       "UPDATE drafts SET status = 'refused', updated_at = ?1 WHERE id = ?2 AND status = 'draft' AND workspace_id = ?3 RETURNING id",
     )
@@ -689,16 +723,16 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     to: c.req.query("to"),
   });
   app.get(
-    "/app-api/item/metrics",
+    `${P}/item/metrics`,
     wrap((c) => ops.itemMetrics(opctx(c), { key: c.req.query("key") ?? "", ...metricsQuery(c) })),
   );
   app.get(
-    "/app-api/video/metrics",
+    `${P}/video/metrics`,
     wrap((c) => ops.videoMetrics(opctx(c), { video: c.req.query("video") ?? "", ...metricsQuery(c) })),
   );
 
   // One item as it would be published, with short-lived links to preview its media.
-  app.get("/app-api/item", async (c) => {
+  app.get(`${P}/item`, async (c) => {
     const tz = await zone(c);
     const r = await resolveItem(c.env, fetcher, c.req.query("key") ?? "", tz, me(c).workspaceId);
     if (!r) return c.json({ error: "this item isn't in the plan any more" }, 404);
@@ -755,7 +789,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   // Approve: options bind the passkey challenge to a snapshot of what was shown (the page's fingerprint must still match
   // the item); verify re-resolves and compares again.
-  app.post("/app-api/approve/options", async (c) => {
+  app.post(`${P}/approve/options`, async (c) => {
     const b = await body(c);
     const key = String(b.key ?? "");
     const r = await resolveItem(c.env, fetcher, key, await zone(c), me(c).workspaceId);
@@ -770,7 +804,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "approve", snap, nowS(), userOf(c)));
   });
 
-  app.post("/app-api/approve/verify", async (c) => {
+  app.post(`${P}/approve/verify`, async (c) => {
     const b = await body(c);
     const v = await verifyAuthentication(
       c.env.DB,
@@ -802,15 +836,15 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   // Pause and resume the session's workspace (resume needs a passkey: no API key can do it).
   app.post(
-    "/app-api/pause",
+    `${P}/pause`,
     wrap(async (c) => ops.pause(opctx(c), String((await body(c)).reason ?? "paused from the app"))),
   );
   // Resuming can release approved items at once, so it needs a fresh passkey assertion, like approving. The challenge
   // reuses the "approve" purpose, tagged { action: "resume" }; each verify route rejects the other's challenges.
-  app.post("/app-api/resume/options", async (c) =>
+  app.post(`${P}/resume/options`, async (c) =>
     c.json(await authenticationOptions(c.env.DB, c.env.RP_ID, "approve", { action: "resume" }, nowS(), userOf(c))),
   );
-  app.post("/app-api/resume/verify", async (c) => {
+  app.post(`${P}/resume/verify`, async (c) => {
     const b = await body(c);
     const v = await verifyAuthentication(
       c.env.DB,
@@ -830,7 +864,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // Moving a scheduled YouTube video's release date needs a fresh passkey assertion too. The challenge binds the video
   // and the instant ({ action: "release", video, at }), so verify moves exactly what the owner confirmed.
   app.post(
-    "/app-api/youtube/release/options",
+    `${P}/youtube/release/options`,
     wrap(async (c) => {
       const b = await body(c);
       const video = String(b.video ?? "");
@@ -853,7 +887,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       );
     }),
   );
-  app.post("/app-api/youtube/release/verify", async (c) => {
+  app.post(`${P}/youtube/release/verify`, async (c) => {
     const b = await body(c);
     const v = await verifyAuthentication(
       c.env.DB,
@@ -888,7 +922,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   });
   // Hold or release one item (no passkey: holding only stops it; the approval is kept, so releasing restores it).
   app.post(
-    "/app-api/item/hold",
+    `${P}/item/hold`,
     wrap(async (c) => {
       const b = await body(c);
       return ops.planUpdate(opctx(c), { key: String(b.key ?? ""), hold: b.hold === true });
@@ -896,7 +930,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   );
 
   // The comments inbox: others' comments on the workspace's recent posts and Shorts, newest first, with the post's name.
-  app.get("/app-api/comments", async (c) => {
+  app.get(`${P}/comments`, async (c) => {
     const r = await c.env.DB.prepare(
       `SELECT k.id, k.platform, k.account, k.media_id, k.item_key, k.author, k.text, k.at, k.seen, k.reply_text, k.replied_at,
               p.title, p.name, x.permalink
@@ -907,7 +941,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       .all();
     return c.json({ comments: r.results });
   });
-  app.get("/app-api/comments/unseen", async (c) =>
+  app.get(`${P}/comments/unseen`, async (c) =>
     c.json({
       n:
         (
@@ -917,13 +951,13 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         )?.n ?? 0,
     }),
   );
-  app.post("/app-api/comments/seen", async (c) => {
+  app.post(`${P}/comments/seen`, async (c) => {
     await c.env.DB.prepare("UPDATE comments SET seen = 1 WHERE own = 0 AND seen = 0 AND workspace_id = ?1")
       .bind(me(c).workspaceId)
       .run();
     return c.json({ ok: true });
   });
-  app.post("/app-api/comments/:id/reply", async (c) => {
+  app.post(`${P}/comments/:id/reply`, async (c) => {
     const text = String((await body(c)).text ?? "")
       .trim()
       .slice(0, 2000);
@@ -938,7 +972,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // A video's cover frame: ms into the video (Instagram's thumb_offset). Not part of the approval fingerprint,
   // like the location: it's a setting of the post, not its content.
   app.post(
-    "/app-api/item/cover",
+    `${P}/item/cover`,
     wrap(async (c) => {
       const b = await body(c);
       const key = String(b.key ?? "");
@@ -954,7 +988,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // The location from a pasted Instagram location link or a place id.
   // Trial Reels: one Reel's switch (true/false, or null for the account's default) and the account's default.
   app.post(
-    "/app-api/item/trial",
+    `${P}/item/trial`,
     wrap(async (c) => {
       const b = await body(c);
       const key = String(b.key ?? "");
@@ -968,7 +1002,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   );
   // A YouTube video's settings (visibility, made for kids, category); null clears one back to the channel's default.
   app.post(
-    "/app-api/item/youtube",
+    `${P}/item/youtube`,
     wrap(async (c) => {
       const b = await body(c);
       const key = String(b.key ?? "");
@@ -993,7 +1027,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
   app.post(
-    "/app-api/item/location",
+    `${P}/item/location`,
     wrap(async (c) => {
       const b = await body(c);
       const key = String(b.key ?? "");
@@ -1011,7 +1045,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   // The item's display name (the item page): only what the app shows; its key, files and approval are untouched.
   app.post(
-    "/app-api/item/title",
+    `${P}/item/title`,
     wrap(async (c) => {
       const b = await body(c);
       const key = String(b.key ?? "");
@@ -1030,7 +1064,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // Change when an item goes out (the item page). Same rules as plan_update: one item per account per hour, and an
   // approved item needs approving again for the new time. A published item stays where it went out.
   app.post(
-    "/app-api/item/reschedule",
+    `${P}/item/reschedule`,
     wrap(async (c) => {
       const b = await body(c);
       const key = String(b.key ?? "");
@@ -1042,7 +1076,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   // Switch the app's session to another workspace the person can open (session.ts openWorkspace, creators included).
   app.post(
-    "/app-api/session/workspace",
+    `${P}/session/workspace`,
     wrap(async (c) => {
       // the app's session only: the dashboard's keeps its own workspace
       const token = readCookie(c.req.header("Cookie"));
@@ -1056,7 +1090,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // Leaving the app's workspace (session.ts leaveWorkspace): refused for its last admin (409); written in the left
   // workspace's audit before the membership goes.
   app.post(
-    "/app-api/session/leave",
+    `${P}/session/leave`,
     wrap(async (c) => {
       const token = readCookie(c.req.header("Cookie"));
       const id = me(c).workspaceId;
@@ -1074,7 +1108,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // The signed-in user's own time zone (null: the workspace's). Only how times are shown and entered changes: the
   // database keeps UTC, so nothing planned moves.
   app.post(
-    "/app-api/me/timezone",
+    `${P}/me/timezone`,
     wrap(async (c) => {
       const tz = (await body(c)).timezone;
       try {
@@ -1089,7 +1123,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
 
   // The signed-in person's own name (users.name), the same in every workspace; empty goes back to the email's start.
   app.post(
-    "/app-api/me/name",
+    `${P}/me/name`,
     wrap(async (c) => {
       const name = nameOf((await body(c)).name);
       await setUserName(c.env.DB, userOf(c), name);
@@ -1100,7 +1134,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // The name this workspace shows for them. Like the notification settings, only for a member: an instance admin
   // visiting a workspace they're not in has no membership to name.
   app.post(
-    "/app-api/me/display-name",
+    `${P}/me/display-name`,
     wrap(async (c) => {
       const { workspaceId } = me(c);
       const userId = userOf(c);
@@ -1118,7 +1152,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   // Web Push subscriptions for this device: they belong to the signed-in user, in no particular workspace (each
   // workspace's notes reach the members it should, core/push.ts), and only a browser push service's endpoint is taken
   // (Bongsu sends requests to it).
-  app.post("/app-api/push/subscribe", async (c) => {
+  app.post(`${P}/push/subscribe`, async (c) => {
     const b = (await body(c)) as { endpoint?: string; keys?: { p256dh?: string; auth?: string }; device?: string };
     const key = (v: unknown) => typeof v === "string" && /^[A-Za-z0-9_=-]{8,200}$/.test(v);
     if (typeof b.endpoint !== "string" || b.endpoint.length > 1000 || !isPushEndpoint(b.endpoint))
@@ -1137,7 +1171,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     return c.json({ subscribed: true });
   });
   // A test to the caller's own devices only, whatever their notification settings.
-  app.post("/app-api/push/test", async (c) => {
+  app.post(`${P}/push/test`, async (c) => {
     const { userId } = me(c);
     if (!userId) return c.json({ error: "sign in" }, 401);
     return c.json(
@@ -1165,12 +1199,12 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       return c.json({ error: "you get no notifications from a workspace you're not a member of" }, 403);
     return { workspaceId, userId, role: m.role };
   };
-  app.get("/app-api/notify-prefs", async (c) => {
+  app.get(`${P}/notify-prefs`, async (c) => {
     const who = await prefsFor(c);
     if (who instanceof Response) return who;
     return c.json({ groups: await effectivePrefs(c.env.DB, who.workspaceId, who.userId, who.role) });
   });
-  app.put("/app-api/notify-prefs", async (c) => {
+  app.put(`${P}/notify-prefs`, async (c) => {
     const who = await prefsFor(c);
     if (who instanceof Response) return who;
     const b = await body(c);
