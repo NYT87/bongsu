@@ -1,5 +1,7 @@
 // Moving the release date of a scheduled YouTube video: by the owner, or by an agent key the owner opted in.
+
 import { connectionSecret, youtubeAccounts } from "./accounts";
+import { auditDetail } from "./audit-safe";
 import { findUpload } from "./calendar";
 import { ReleaseError, type Upload, YouTube } from "./clients/youtube";
 import { RELEASE_LEAD_S } from "./constants";
@@ -134,7 +136,7 @@ export async function moveRelease(env: Env, fetcher: typeof fetch, req: ReleaseR
       nowS,
       actor.kind === "owner" ? `user:${actor.userId ?? "?"}` : `key:${actor.id}`,
       `youtube:${videoId}`,
-      JSON.stringify({ account, title, from, to }),
+      auditDetail({ account, title, from, to }),
       actor.kind === "owner" ? actor.userId : null,
       req.workspaceId,
     )

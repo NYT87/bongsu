@@ -3,6 +3,7 @@
 // one-time code made in the dashboard's Devices & passkeys); approving needs a fresh passkey assertion every time.
 
 import { findAccount, listAccounts } from "@bongsu/core/accounts";
+import { auditDetail, noEmail } from "@bongsu/core/audit-safe";
 import { calendar } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import { replyToComment } from "@bongsu/core/comments";
@@ -159,8 +160,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         nowS(),
         `user:${who ?? "?"}`,
         action,
-        target,
-        JSON.stringify(detail),
+        noEmail(target),
+        auditDetail(detail),
         who,
         c.get("caller")?.workspaceId ?? null,
       )
@@ -581,7 +582,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       .bind(
         nowS(),
         `user:${userOf(c)}`,
-        JSON.stringify({ msg: String(b.msg ?? "").slice(0, 300), detail: b.detail ?? null }).slice(0, 2000),
+        auditDetail({ msg: String(b.msg ?? "").slice(0, 300), detail: b.detail ?? null }).slice(0, 2000),
         me(c).userId ?? null,
         me(c).workspaceId,
       )

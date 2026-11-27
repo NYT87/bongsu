@@ -16,6 +16,8 @@ interface Entry {
   detail: string | null;
   /** The person who acted (name, else email), when a person did. */
   who: string | null;
+  /** Who a `user:` or `invite:` target is, from the live rows: the audit itself keeps only ids. */
+  target_name: string | null;
 }
 
 /** One log, newest first, 50 at a time: `query` names it (none: the session's workspace). */
@@ -66,7 +68,9 @@ function AuditLog({ query }: { query: Record<string, string> }) {
                     </td>
                     <td data-label="What">
                       {e.action.replaceAll("_", " ")}
-                      {e.target && <div className="muted small mono">{e.target}</div>}
+                      {e.target && (
+                        <div className={`muted small${e.target_name ? "" : " mono"}`}>{e.target_name ?? e.target}</div>
+                      )}
                     </td>
                     <td data-label="Detail" className="small mono muted">
                       {e.detail && e.detail !== "{}" ? e.detail : ""}

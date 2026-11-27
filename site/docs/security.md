@@ -105,7 +105,9 @@ shows which are missing, by name only.
 ## Audit
 
 Actions by people (approve, passkey added, setup code, pause/resume, members, workspaces…) are written to the `audit`
-table, kept 180 days.
+table, kept 180 days. A row names people by id (`user:<id>`, an invite as `invite:<id>`), never by email: the
+dashboard's Audit page shows the name or email from the live account or invite, and every write masks anything shaped
+like an email (`[email]`), so an email doesn't outlive the account it belongs to.
 
 ## Reporting a vulnerability
 

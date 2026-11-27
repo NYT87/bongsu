@@ -3,6 +3,7 @@
 // resume or publish: approval stays with the owner (the app's passkey, or the CLI with a token made with one).
 
 import { findAccount, listAccounts, trialCapable, trialDefaultOn, youtubeAccounts } from "@bongsu/core/accounts";
+import { auditDetail, noEmail } from "@bongsu/core/audit-safe";
 import { channelUploads } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import { METRICS_DENSE_S, METRICS_MAX_POINTS } from "@bongsu/core/constants";
@@ -132,8 +133,8 @@ export async function audit(c: OpCtx, action: string, target: string | null, det
       nowS(c),
       inApp(c) ? `user:${c.caller.id}` : `key:${c.caller.id}`,
       action,
-      target,
-      JSON.stringify(detail),
+      noEmail(target),
+      auditDetail(detail),
       c.caller.userId ?? null,
       c.caller.workspaceId,
     )
