@@ -6,6 +6,7 @@ import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { registerStore } from "@bongsu/core/media/index";
+import { sampleMetrics } from "@bongsu/core/metrics";
 import { pgliteDriver } from "@bongsu/core/pglite";
 import { PostgresDb } from "@bongsu/core/postgres";
 import { runSchedule } from "@bongsu/core/schedules";
@@ -116,6 +117,36 @@ describe("Bongsu on Postgres (PGlite)", () => {
     const at = new Date("2026-10-20T09:30:00Z");
     for (const name of ["instagram", "shorts", "upkeep"] as const) await runSchedule(env, offline, name, at, 300);
     expect((await db.prepare("SELECT COUNT(*) AS n FROM locks").first())?.n).toBe(0);
+  });
+
+  it("stamps a post whose sampling fails, and the next run goes on past it (#160)", async () => {
+    // an Instagram account with no connection: its post has no insights, so the sampler stamps it as failed
+    const at = new Date("2026-10-20T09:30:00Z");
+    const now = Math.floor(at.getTime() / 1000);
+    await db.batch([
+      db.prepare(
+        "INSERT INTO accounts (id, workspace_id, platform, handle, capabilities, settings, created_at, updated_at) VALUES ('demo_travel', 'default', 'instagram', 'demo_travel', '{}', '{}', 0, 0)",
+      ),
+      db
+        .prepare(
+          "INSERT INTO posted (item_key, account, media_id, source, published_at) VALUES ('reel:lisbon', 'demo_travel', 'm1', 'scheduler', ?1)",
+        )
+        .bind(now - 86400),
+    ]);
+    expect(await sampleMetrics(env, { fetch: offline, now: at })).toEqual({ sampled: [] });
+    expect(
+      await db.prepare("SELECT value, updated_at FROM settings WHERE key = 'metrics_failed:reel:lisbon'").first(),
+    ).toEqual({
+      value: String(now),
+      updated_at: now,
+    });
+    // stamped, it waits its interval instead of stopping the next run
+    expect(await sampleMetrics(env, { fetch: offline, now: new Date(at.getTime() + 60_000) })).toEqual({ sampled: [] });
+    await db.batch([
+      db.prepare("DELETE FROM posted WHERE item_key = 'reel:lisbon'"),
+      db.prepare("DELETE FROM settings WHERE key = 'metrics_failed:reel:lisbon'"),
+      db.prepare("DELETE FROM accounts WHERE id = 'demo_travel'"),
+    ]);
   });
 
   it("signs up in the dashboard and uses its pages, keys and tokens", async () => {
