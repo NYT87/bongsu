@@ -4,9 +4,11 @@ import { env, exports } from "cloudflare:workers";
 import { authenticate } from "@bongsu/api/agent/auth";
 import { adminRoutes, FRESH_S } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
+import { createSession } from "@bongsu/api/pwa/session";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { addApproval } from "@bongsu/core/data";
 import type { Env } from "@bongsu/core/env";
+import { sha256Hex } from "@bongsu/core/formats/approved";
 import { beforeEach, describe, expect, it } from "vitest";
 import { clearPlan, joinDefault, testEnv, UNBOOTSTRAP, World } from "./world";
 
@@ -139,10 +141,19 @@ describe("sign-in", () => {
 
   it("a recovery code signs in once", async () => {
     const codes = (await bootstrap()).json.recoveryCodes as string[];
+    // the lost device's session, still alive
+    const lost = await createSession(env.DB, Math.floor(Date.now() / 1000), { userId: me });
     signOut();
     expect(
       (await call("/admin-api/signin/recovery", { email: "owner@example.com", code: codes[0].toLowerCase() })).status,
     ).toBe(200);
+    // a recovery ends every session made before it (#164); the new one works
+    expect(
+      await env.DB.prepare("SELECT 1 FROM sessions WHERE token_hash = ?1")
+        .bind(await sha256Hex(lost))
+        .first(),
+    ).toBeNull();
+    expect((await call("/admin-api/overview")).status).toBe(200);
     signOut();
     expect((await call("/admin-api/signin/recovery", { email: "owner@example.com", code: codes[0] })).status).toBe(401);
     expect((await call("/admin-api/signin/recovery", { email: "other@example.com", code: codes[1] })).status).toBe(401);
@@ -415,10 +426,36 @@ describe("signed in", () => {
       ).status,
     ).toBe(200);
     expect((await call("/admin-api/passkeys/yubikey/rename", { name: "Blue key" })).status).toBe(200);
+    // the phone the revoked passkey was on: its app session, and another dashboard tab
+    const phone = await createSession(env.DB, Math.floor(Date.now() / 1000), { userId: me });
+    const tab = await createSession(env.DB, Math.floor(Date.now() / 1000), { app: "dashboard", userId: me });
     expect((await call("/admin-api/passkeys/laptop-key/revoke", {})).status).toBe(200);
     expect(((await call("/admin-api/passkeys")).json.passkeys as { name: string }[]).map((k) => k.name)).toEqual([
       "Blue key",
     ]);
+    // every other session of theirs ended (#164); this one still works
+    for (const t of [phone, tab])
+      expect(
+        await env.DB.prepare("SELECT 1 FROM sessions WHERE token_hash = ?1")
+          .bind(await sha256Hex(t))
+          .first(),
+      ).toBeNull();
+    expect((await call("/admin-api/overview")).status).toBe(200);
+  });
+
+  it("two revokes at once still leave one passkey (#164)", async () => {
+    await env.DB.prepare(
+      "INSERT INTO passkeys (id, public_key, counter, name, created_at, user_id) VALUES ('second-key', 'AQID', 0, 'phone', 0, ?1)",
+    )
+      .bind(me)
+      .run();
+    const both = await Promise.all([
+      call("/admin-api/passkeys/laptop-key/revoke", {}),
+      call("/admin-api/passkeys/second-key/revoke", {}),
+    ]);
+    expect(both.map((r) => r.status).sort()).toEqual([200, 409]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?1").bind(me).first("n")).toBe(1);
+    expect((await call("/admin-api/passkeys/nope/revoke", {})).status).toBe(404);
   });
 
   it("accounts, settings, connections and the audit log", async () => {

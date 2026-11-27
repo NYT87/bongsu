@@ -12,6 +12,8 @@
   on its routes (`/app-api`), the dashboard's (`bongsu_admin`, 12 hours) only on the dashboard's (`/admin-api`).
 - Approving an item, resuming a paused scheduler and moving a YouTube release date each need a fresh assertion from
   the signed-in user's own passkey, not only a session.
+- Revoking a passkey (Devices & passkeys) signs that person out everywhere else, in the dashboard and the app: a lost
+  phone's session doesn't outlive its key. A recovery-code sign-in ends every earlier session the same way.
 - A recovery code (stored hashed) signs in once when every passkey is lost; an email gets five tries in 15 minutes,
   right or wrong, so the codes can't be guessed.
 

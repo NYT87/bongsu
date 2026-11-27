@@ -103,6 +103,7 @@ import { AcceptError, DASHBOARD_ROLES, inviteOptions, invitePreview, inviteVerif
 import { appRoutes, CONTENT_HOST } from "../pwa/routes";
 import {
   createSession,
+  endOtherSessions,
   endSession,
   leaveWorkspace,
   markVerified,
@@ -569,6 +570,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
             .first()
         : null;
       if (!u || !used) throw new AdminError(401, "that email and recovery code don't match");
+      // a recovery is what follows a lost or stolen device: its sessions end before this one starts
+      await endOtherSessions(c.env.DB, u.id);
       await audit(c, "signin_recovery", `user:${u.id}`, {}, u.id, await signIn(c, u.id));
       return { signedIn: true, recovered: true };
     }),
@@ -1260,14 +1263,24 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       fresh(c);
       const uid = c.get("session").userId;
-      const n = await c.env.DB.prepare("SELECT COUNT(*) AS n FROM passkeys WHERE user_id = ?1")
-        .bind(uid)
-        .first<{ n: number }>();
-      if ((n?.n ?? 0) <= 1) throw new AdminError(409, "that's your only passkey: add another one first");
-      const r = await c.env.DB.prepare("DELETE FROM passkeys WHERE id = ?1 AND user_id = ?2 RETURNING name")
-        .bind(c.req.param("id") ?? "", uid)
+      const id = c.req.param("id") ?? "";
+      // the "keep one" rule inside the delete itself: two revokes at once can't both pass a count made before
+      const r = await c.env.DB.prepare(
+        `DELETE FROM passkeys WHERE id = ?1 AND user_id = ?2
+           AND (SELECT COUNT(*) FROM passkeys WHERE user_id = ?2) > 1 RETURNING name`,
+      )
+        .bind(id, uid)
         .first<{ name: string | null }>();
-      if (!r) throw new AdminError(404, "no such passkey");
+      if (!r) {
+        const mine = await c.env.DB.prepare("SELECT 1 FROM passkeys WHERE id = ?1 AND user_id = ?2")
+          .bind(id, uid)
+          .first();
+        throw mine
+          ? new AdminError(409, "that's your only passkey: add another one first")
+          : new AdminError(404, "no such passkey");
+      }
+      // the device it was on may be lost: every other session of theirs ends, this one stays
+      await endOtherSessions(c.env.DB, uid, c.get("token"));
       await audit(c, "passkey_revoke", null, { name: r.name });
       return { revoked: true };
     }),
