@@ -368,6 +368,7 @@ OAuth flows in progress: the state's hash, the PKCE verifier, who started it. Si
 | `workspace_id` | text | yes |  | the workspace the flow connects into; NULL: the instance's (Drive) |
 | `browser_hash` | text | yes |  | sha256 of the cookie set in the browser that started the flow |
 | `app_scope` | text: workspace / instance | yes |  | whose OAuth app the flow used; NULL: the instance's |
+| `flow_settings` | text | yes |  | JSON the flow saves with its grant (Drive: the root folder as typed) |
 
 ## `passkeys`
 

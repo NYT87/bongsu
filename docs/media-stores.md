@@ -12,8 +12,9 @@ credentials encrypted with `ENCRYPTION_KEY`, the last check, whether it's the de
 environment, apart from `MEDIA_DIR` on Node: the directory the server offers as `local` (the runtime registers it, the
 dashboard only picks it; it never takes a server path).
 
-**Per workspace.** Each workspace has a media folder (`workspace_settings.media_folder`: the slug of the name (`demo-travel`) for a workspace
-created since Phase 13 part 3a, `UPLOADS` for a workspace kept from before it, editable by its admins; Bongsu never moves files) holding `inbox/<project>/`,
+**Per workspace.** Each workspace has a media folder (`workspace_settings.media_folder`: the workspace's id for one made
+since the Drive root folder (a rename never changes it; the slug of the name for one made between Phase 13 part 3a and
+then), `UPLOADS` for a workspace kept from before part 3a, editable by its admins; Bongsu never moves files) holding `inbox/<project>/`,
 `<project>/…`, `_posted/` and the app's `_uploads/`. A workspace's admins can add a store of their own in Settings →
 Media (ids `s3-<ws>` / `drive-<ws>`, `media_store.workspace_id` set); the instance's keep the ids `drive`, `s3`, `local`.
 A workspace's default is its own store if it has one, else the instance's. A file reference must be in the caller's
@@ -49,8 +50,10 @@ guarantees (Drive's md5, an S3 ETag, a sha256) and is only compared for equality
 to a store that isn't set up counts as missing: removing a store means approving its items again (the dashboard says
 how many).
 
-**Paths are logical** (`<media_folder>/inbox/<project>/`, `<media_folder>/_posted/`; `media_folder` is the name's slug, or `UPLOADS` for a workspace kept from before part 3a), relative to the store's root: for Drive, the
-connected account's top folders; for a bucket, its prefix; for a disk, a directory.
+**Paths are logical** (`<media_folder>/inbox/<project>/`, `<media_folder>/_posted/`; `media_folder` as above), relative to the store's root: for Drive, its root folder (`settings.root`, else folders found by name
+anywhere in the Drive and made at the top of My Drive); for a bucket, its prefix; for a disk, a directory. A store's
+test (before it's saved: Connect Google Drive, a bucket's Test and save) makes `<media_folder>/inbox` for every workspace
+it holds (`testStore`); a new workspace, or a changed folder, gets its own in the stores it uses (`makeWorkspaceFolders`).
 
 **Nothing is deleted.** Bongsu only moves files aside. A store without a native move (S3) copies, then removes the
 originals once every copy exists: still a move, and nothing leaves the store.
@@ -124,7 +127,11 @@ Checklist:
 
 The `drive` store (`media/drive.ts`) does everything with one OAuth grant of the owner's, made by **Connect Google
 Drive** with the owner's Google app (`oauth_apps` id `google`, the one YouTube uses) and the scope `drive`: it sees the
-files the owner drops in by hand and can move them. Uploads from the app open a resumable session in the
+files the owner drops in by hand and can move them. Its settings hold an optional **root folder** (`{root: {id, name}}`),
+typed on the Media page (a name at the top of My Drive, or a folder's link or id) and found with the grant: at the start
+of Connect Google Drive it rides in `oauth_states.flow_settings` until the callback has the grant; `saveDriveRoot`
+changes it later. With a root, a workspace's folder is looked up and made only inside it; Connect again keeps it.
+Uploads from the app open a resumable session in the
 workspace's `_uploads` folder, made on first use. The checksum is Drive's md5, which Drive computes a moment after an upload.
 The `/m/` proxy streams the files (Drive has no presigned URLs).
 

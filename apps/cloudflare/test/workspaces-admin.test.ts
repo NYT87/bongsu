@@ -233,14 +233,12 @@ describe("the Workspaces page", () => {
     ]);
   });
 
-  it("gives each workspace a media folder from its name, numbered when another has it, and keeps them unique", async () => {
+  it("gives each workspace a media folder named after its id, whatever its name, and keeps them unique", async () => {
     const a = await createWorkspace(env.DB, { name: "Demo Studio", timezone: "UTC", createdBy: "owner" }, nowS());
     const b = await createWorkspace(env.DB, { name: "Demo Studio", timezone: "UTC", createdBy: "owner" }, nowS());
-    expect((await workspaceSettings(env.DB, a)).mediaFolder).toBe("demo-studio");
-    expect((await workspaceSettings(env.DB, b)).mediaFolder).toBe("demo-studio-2");
-    await expect(setMediaFolder(env.DB, b, "demo-studio", nowS())).rejects.toThrow(
-      "another workspace uses demo-studio",
-    );
+    expect((await workspaceSettings(env.DB, a)).mediaFolder).toBe(a);
+    expect((await workspaceSettings(env.DB, b)).mediaFolder).toBe(b);
+    await expect(setMediaFolder(env.DB, b, a, nowS())).rejects.toThrow(`another workspace uses ${a}`);
     expect(await setMediaFolder(env.DB, b, "Client B", nowS())).toBe("Client B");
     expect((await workspaceSettings(env.DB, b)).mediaFolder).toBe("Client B");
     // the seeded workspace keeps the folder its files are in
@@ -263,11 +261,8 @@ describe("the Workspaces page", () => {
     ).rejects.toThrow("another workspace uses Uploads");
     // a workspace changes its own folder's case
     expect(await setMediaFolder(env.DB, a, "shared media", nowS())).toBe("shared media");
-    // the slug steps over a folder that differs only in case
-    await setMediaFolder(env.DB, b, "Demo-Four", nowS());
     const c = await createWorkspace(env.DB, { name: "Demo Four", timezone: "UTC", createdBy: "owner" }, nowS());
-    expect((await workspaceSettings(env.DB, c)).mediaFolder).toBe("demo-four-2");
-    // and the database refuses it too, whatever writes the row
+    // the database refuses a folder that differs only in case, whatever writes the row
     await expect(
       env.DB.prepare("UPDATE workspace_settings SET media_folder = 'SHARED MEDIA' WHERE workspace_id = ?1")
         .bind(c)

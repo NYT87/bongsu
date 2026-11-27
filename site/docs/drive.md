@@ -16,28 +16,38 @@ steps 2 and 4 are new.
    (see, edit, create and delete your Drive files). It's the scope that lets Bongsu see the files you drop in by hand
    and move them; a narrower one (`drive.file`) only sees what Bongsu made itself.
 3. **Publish the app** (Publishing status → In production), as for [YouTube](youtube.md#1-the-google-cloud-project):
-   while it stays in *Testing*, Google expires its refresh tokens after 7 days. An unverified app of your own works;
-   Google shows an "unverified app" warning when you connect (Advanced → continue).
+   while it stays in *Testing*, Google expires its refresh tokens after 7 days. Google only lets you publish once the
+   app's **Branding** page has a privacy policy link. An unverified app of your own works; Google shows an
+   "unverified app" warning when you connect (Advanced → continue).
 4. **Credentials → your OAuth client → Authorized redirect URIs**: add the Drive URL the dashboard's **OAuth apps**
    page lists on the Google app card, `<PUBLIC_URL>/admin-api/media-stores/drive/callback` (exactly: `https`, no
    trailing slash), next to YouTube's.
 5. Dashboard → **OAuth apps** → Google app: paste the client id and secret if they aren't there yet (stored encrypted:
    the instance needs `ENCRYPTION_KEY`, [Configuration](configuration.md)).
 
-## 2. Connect it
+## 2. Pick a root folder and connect
 
-Dashboard → **Media** → **Connect Google Drive**. Sign in with the Google account whose Drive holds the media and allow
-access; Google sends you back with Drive set up as a store (the first store you add is the default). Bongsu tests it
-first: it finds or makes the workspace's `<folder>/inbox` (its folder is shown in Settings → Media), so reading and writing both work. **Connect again** replaces the grant, for
-example after you revoked it in your Google account.
+Make a folder in your Drive for Bongsu, for example `bongsu` at the top of My Drive. Every workspace gets its own folder
+inside it, and Bongsu makes them: you don't create them by hand.
+
+Dashboard → **Media** → Google Drive: type the **Root folder** (its name, when it's at the top of My Drive, or paste
+the folder's link from Drive), then **Connect Google Drive**. Sign in with the Google account whose Drive holds the
+media and allow access; Google sends you back with Drive set up as a store (the first store you add is the default).
+Before saving it, Bongsu makes each workspace's folder with its `inbox` in the root, so reading and writing both work.
+Left empty, the workspaces' folders go at the top of My Drive instead.
+
+**Connect again** replaces the grant (for example after you revoked it in your Google account) and keeps the root.
+**Save the root folder** moves to another root: the folders are made in the new one, and files already in the old one
+stay where they are (move them yourself).
 
 ## 3. The folders
 
-Each workspace has a media folder: a name made from the workspace's name (its
-admins can change it in Settings → Media), or **`UPLOADS`** for a workspace kept from before this release. Make that folder at the top of the Drive: Bongsu finds it by name, so keep
-only one folder with that name there. The paths below use `UPLOADS`; read it as the workspace's folder. A Drive
+Each workspace has a media folder, named after the workspace's id (`w_…`) so renaming the workspace never changes it.
+Its admins can give it another name in **Settings → Media**, and a workspace kept from before folders had names uses
+**`UPLOADS`**. Bongsu makes the folder with its `inbox` when the Drive is connected, when a workspace is made, and when
+its folder changes. The paths below use `UPLOADS`; read it as the workspace's folder, inside the root folder. A Drive
 connected by the instance serves every workspace, each in its own folder, and a workspace's admins can also connect
-their own Drive in **Settings → Media** (see [the dashboard](the-dashboard.md#settings)).
+their own Drive, with a root folder of its own, in **Settings → Media** (see [the dashboard](the-dashboard.md#settings)).
 
 | Path | Use |
 |---|---|

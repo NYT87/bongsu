@@ -27,25 +27,6 @@ export function checkFolderName(name: string): string {
   return n;
 }
 
-/** A folder name for a workspace's name: lowercase, spaces as dashes, anything else not allowed dropped. */
-export function folderSlug(name: string): string {
-  const s = name
-    .toLowerCase()
-    .replace(/ /g, "-")
-    .replace(/[^a-z0-9_-]/g, "")
-    .slice(0, MAX);
-  return s || "workspace";
-}
-
-/** `base`, else `base-2`, `base-3`… the first no other workspace uses (`exceptWorkspace`'s own doesn't count). */
-export async function uniqueFolder(db: Db, base: string, exceptWorkspace = ""): Promise<string> {
-  for (let n = 1; ; n++) {
-    const suffix = n === 1 ? "" : `-${n}`;
-    const name = `${base.slice(0, MAX - suffix.length)}${suffix}`;
-    if (!(await folderTaken(db, name, exceptWorkspace))) return name;
-  }
-}
-
 /** Whether another workspace has the name as its folder, in any case: a disk on macOS or Windows (the local store)
  *  or a Drive name search would take `uploads` for `UPLOADS`, and so another workspace's files. The unique index is on
  *  LOWER(media_folder) too. */

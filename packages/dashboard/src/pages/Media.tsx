@@ -41,8 +41,12 @@ const storeWhere = (s: StoreInfo) =>
   s.kind === "s3"
     ? `${String(s.settings.bucket ?? "")}${s.settings.prefix ? `/${String(s.settings.prefix)}` : ""} · ${String(s.settings.endpoint ?? "")}`
     : s.kind === "drive"
-      ? "each workspace's folder in the connected Drive"
+      ? `each workspace's folder in ${driveRoot(s)?.name ?? "the top of the connected Drive"}`
       : "the server's media folder";
+
+/** A Drive store's root folder, when it has one. */
+export const driveRoot = (s: { settings: Record<string, unknown> }) =>
+  s.settings.root as { id: string; name: string } | undefined;
 
 /** Where the media live: the stores side by side, one default; Drive with its button, a bucket with a form. */
 export function Media({ go }: Props) {
@@ -69,15 +73,6 @@ export function Media({ go }: Props) {
       await run();
       toast({ ok: true, text: done });
       reload();
-    } catch (e) {
-      setErr(errorText(e));
-    }
-  };
-  const connectDrive = async () => {
-    setErr(null);
-    try {
-      const r = await withFreshCheck(() => api<{ url: string }>("media-stores/drive/start", {}));
-      location.assign(r.url);
     } catch (e) {
       setErr(errorText(e));
     }
@@ -197,21 +192,21 @@ export function Media({ go }: Props) {
           {data.offered.includes("drive") && (
             <Card title={has("drive") ? "Google Drive: connect again" : "Add Google Drive"}>
               <p className="muted">
-                Drop files in each workspace's folder in your Drive (shown in its Settings → Media); Bongsu reads them
-                and moves posted ones to its _posted folder. It connects with your Google app (the one YouTube uses),
-                which needs this page's redirect URL: <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
+                Each workspace gets its own folder in the root folder, made when you connect (its name is shown in the
+                workspace's Settings → Media). Drop files in its inbox; Bongsu reads them and moves posted ones to its
+                _posted folder. It connects with your Google app (the one YouTube uses), which needs this page's
+                redirect URL: <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
               </p>
-              <div className="actions">
-                {data.googleApp ? (
-                  <button type="button" className={has("drive") ? "" : "primary"} onClick={connectDrive}>
-                    {has("drive") ? "Connect again" : "Connect Google Drive"}
-                  </button>
-                ) : (
-                  <button type="button" onClick={() => go("apps")}>
-                    Add your Google app first
-                  </button>
-                )}
-              </div>
+              <DriveForm
+                connected={has("drive")}
+                root={driveRoot(data.stores.find((s) => s.kind === "drive") ?? { settings: {} })}
+                googleApp={data.googleApp}
+                onApps={() => go("apps")}
+                onSaved={() => {
+                  toast({ ok: true, text: "The root folder is saved: each workspace's folder is in it now." });
+                  reload();
+                }}
+              />
             </Card>
           )}
           <Card title={has("s3") ? "S3-compatible bucket: change it" : "Add an S3-compatible bucket"}>
@@ -376,6 +371,94 @@ export function S3Form({
         </button>
         <button className="primary" type="submit" aria-disabled={busy}>
           {busy ? "Testing…" : "Test and save"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+/** Google Drive's root folder and its Connect button: a new Drive is connected with the root typed here; a connected
+ *  one keeps its root on Connect again, and Save moves the workspaces' folders under another (they're made there). */
+export function DriveForm({
+  connected,
+  root,
+  googleApp,
+  onApps,
+  onSaved,
+  path = "media-stores/drive",
+}: {
+  connected: boolean;
+  root?: { id: string; name: string };
+  googleApp: boolean;
+  onApps: () => void;
+  onSaved: () => void;
+  /** The routes' base: the instance's by default, a workspace's own (`settings/media/stores/drive`) on its Settings. */
+  path?: string;
+}) {
+  const [v, setV] = useState(root?.name ?? "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async (f: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      await f();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  // connecting again keeps the saved root unless it was changed here
+  const connect = () =>
+    run(async () => {
+      const typed = !connected || v.trim() !== (root?.name ?? "") ? { root: v } : {};
+      const r = await withFreshCheck(() => api<{ url: string }>(`${path}/start`, typed));
+      location.assign(r.url);
+    });
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    if (v.trim() === (root?.name ?? "")) return;
+    run(async () => {
+      await withFreshCheck(() => api(`${path}/root`, { root: v }));
+      onSaved();
+    });
+  };
+  if (!googleApp)
+    return (
+      <div className="actions">
+        <button type="button" onClick={onApps}>
+          Add your Google app first
+        </button>
+      </div>
+    );
+  return (
+    <form onSubmit={save} className="inset">
+      <Field
+        label="Root folder"
+        help="A folder at the top of My Drive (its name) or any folder's link: each workspace's folder is made inside it. Empty: at the top of My Drive."
+        error={err}
+      >
+        {(p) => (
+          <input
+            {...p}
+            className="mono"
+            value={v}
+            onChange={(e) => setV(e.target.value)}
+            placeholder="bongsu"
+            spellCheck={false}
+          />
+        )}
+      </Field>
+      <div className="actions">
+        {connected && (
+          <button type="submit" aria-disabled={busy || v.trim() === (root?.name ?? "")}>
+            Save the root folder
+          </button>
+        )}
+        <button type="button" className={connected ? "" : "primary"} onClick={connect} aria-disabled={busy}>
+          {connected ? "Connect again" : "Connect Google Drive"}
         </button>
       </div>
     </form>

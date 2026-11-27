@@ -886,6 +886,10 @@
             "instance"
           ],
           "description": "whose OAuth app the flow used; NULL: the instance's"
+        },
+        "flow_settings": {
+          "type": "text",
+          "description": "JSON the flow saves with its grant (Drive: the root folder as typed)"
         }
       }
     },

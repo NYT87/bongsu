@@ -137,7 +137,7 @@ describe("the first run", () => {
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces").first("n")).toBe(0);
   });
 
-  it("numbers a folder from the name when none is sent (an emptied field), and refuses a taken one that is sent", async () => {
+  it("names the folder after the workspace's id when none is sent (an emptied field), and refuses a taken one", async () => {
     await bootstrap();
     const folderOf = async (id: string) =>
       env.DB.prepare("SELECT media_folder FROM workspace_settings WHERE workspace_id = ?1")
@@ -145,8 +145,11 @@ describe("the first run", () => {
         .first("media_folder");
     const make = (folder: string) =>
       call("/admin-api/workspaces", { name: "Demo Studio", timezone: "UTC", admin: "me", folder });
-    expect(await folderOf((await make("")).json.id as string)).toBe("demo-studio");
-    expect(await folderOf((await make("  ")).json.id as string)).toBe("demo-studio-2");
+    for (const empty of ["", "  "]) {
+      const id = (await make(empty)).json.id as string;
+      expect(await folderOf(id)).toBe(id);
+    }
+    expect(await folderOf((await make("demo-studio")).json.id as string)).toBe("demo-studio");
     const taken = await make("demo-studio");
     expect([taken.status, taken.json.error]).toEqual([400, "another workspace uses demo-studio"]);
   });

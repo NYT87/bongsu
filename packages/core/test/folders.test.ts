@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkFolderName, FolderError, folderSlug, mediaPath } from "../src/media/folders";
+import { checkFolderName, FolderError, mediaPath } from "../src/media/folders";
 
 describe("mediaPath", () => {
   it("joins a folder and what's inside it", () => {
@@ -11,22 +11,6 @@ describe("mediaPath", () => {
     for (const rest of ["../client-b/x", "a/../../b", "..", ".", "a/./b", "a//b"])
       expect(() => mediaPath("UPLOADS", rest)).toThrow(FolderError);
     expect(mediaPath("UPLOADS", "a..b/.hidden")).toBe("UPLOADS/a..b/.hidden");
-  });
-});
-
-describe("folderSlug", () => {
-  it("lowercases and turns spaces into dashes", () => {
-    expect(folderSlug("Demo Studio")).toBe("demo-studio");
-  });
-  it("keeps only allowed characters", () => {
-    expect(folderSlug("Ünïcode / x")).toMatch(/^[a-z0-9_-]+$/);
-    expect(folderSlug("Ünïcode / x")).toBe("ncode--x");
-  });
-  it("falls back to workspace", () => {
-    expect(folderSlug("///")).toBe("workspace");
-  });
-  it("cuts to 60", () => {
-    expect(folderSlug("a".repeat(80))).toHaveLength(60);
   });
 });
 

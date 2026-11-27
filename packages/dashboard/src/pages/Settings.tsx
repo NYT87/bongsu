@@ -5,7 +5,7 @@ import { api, apiFile, NAVIGATED, STATE_STALE, when, withFreshCheck } from "../a
 import { GuideLink } from "../docs";
 import { Card, Field, Loading, Page, Pill, useConfirm, useLoad, useToast } from "../ui";
 import { count, errorText, HOURS, type Props, STORE_NAME } from "./common";
-import { S3Form } from "./Media";
+import { DriveForm, driveRoot, S3Form } from "./Media";
 import { AppCard, type OAuthApp } from "./OAuthApps";
 
 // ---- Settings
@@ -420,15 +420,6 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
       setFolderErr(errorText(e));
     }
   };
-  const connectDrive = async () => {
-    setErr(null);
-    try {
-      const r = await withFreshCheck(() => api<{ url: string }>("settings/media/stores/drive/start", {}));
-      location.assign(r.url);
-    } catch (e) {
-      setErr(errorText(e));
-    }
-  };
   const own = (k: string) => data?.stores.find((s) => s.kind === k && s.own);
   const where = (s: OwnStore) =>
     !s.own
@@ -596,22 +587,22 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
           {data.offered.includes("drive") && (
             <Card title={own("drive") ? "Google Drive: connect again" : "Add Google Drive"}>
               <p className="muted">
-                Drop files in {data.folder}/inbox in your Drive; Bongsu reads them and moves posted ones to{" "}
-                {data.folder}/_posted. It connects with a Google app (this workspace's, else the instance's), which
-                needs the redirect URL shown on its OAuth apps tab:{" "}
+                Bongsu makes {data.folder} in the root folder you choose, with its inbox. Drop files in {data.folder}
+                /inbox; Bongsu reads them and moves posted ones to {data.folder}/_posted. It connects with a Google app
+                (this workspace's, else the instance's), which needs the redirect URL shown on its OAuth apps tab:{" "}
                 <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
               </p>
-              <div className="actions">
-                {data.googleApp ? (
-                  <button type="button" className={own("drive") ? "" : "primary"} onClick={connectDrive}>
-                    {own("drive") ? "Connect again" : "Connect Google Drive"}
-                  </button>
-                ) : (
-                  <button type="button" onClick={onApps}>
-                    Add your Google app first
-                  </button>
-                )}
-              </div>
+              <DriveForm
+                path="settings/media/stores/drive"
+                connected={!!own("drive")}
+                root={own("drive") ? driveRoot(own("drive")!) : undefined}
+                googleApp={data.googleApp}
+                onApps={onApps}
+                onSaved={() => {
+                  toast({ ok: true, text: `The root folder is saved: ${data.folder} is in it now.` });
+                  reload();
+                }}
+              />
             </Card>
           )}
           {data.offered.includes("s3") && (

@@ -307,8 +307,13 @@ export class World {
     }
     if (url.hostname === "www.googleapis.com" && url.pathname === "/drive/v3/files" && req.method === "POST") {
       const b = (await req.json()) as { name: string; mimeType: string; parents?: string[] };
-      const id = `id_new_${b.name.replace(/[^A-Za-z0-9]/g, "")}`;
-      this.drive.set(id, { md5: "", mimeType: b.mimeType, name: b.name, parent: b.parents?.[0] });
+      // the first folder of a name keeps the plain id; another of that name (each workspace's inbox) is numbered
+      const base = `id_new_${b.name.replace(/[^A-Za-z0-9]/g, "")}`;
+      let id = base;
+      for (let n = 2; this.drive.has(id); n++) id = `${base}_${n}`;
+      // "root" is My Drive's top, where the fake keeps files without a parent
+      const parent = b.parents?.[0] === "root" ? undefined : b.parents?.[0];
+      this.drive.set(id, { md5: "", mimeType: b.mimeType, name: b.name, parent });
       if (this.driveSearchLag) this.driveUnsearchable.add(id);
       return json({ id });
     }
@@ -333,7 +338,7 @@ export class World {
         .filter(
           ([id, f]) =>
             !f.trashed &&
-            (parent ? f.parent === parent : !f.parent) &&
+            (parent && parent !== "root" ? f.parent === parent : !f.parent) &&
             (!name || (f.name === name && !this.driveUnsearchable.has(id))),
         )
         .map(([id, f]) => ({
