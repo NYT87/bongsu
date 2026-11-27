@@ -1846,6 +1846,12 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     if (!(OWN_KINDS as readonly string[]).includes(k)) throw new AdminError(404, `no store kind ${k}`);
     return k as StoreKind;
   };
+  /** Whether the workspace has a Google app of its own (workspace_oauth_apps), not the instance's it falls back to. */
+  const ownGoogleApp = async (db: Env["DB"], workspaceId: string) =>
+    !!(await db
+      .prepare("SELECT 1 FROM workspace_oauth_apps WHERE workspace_id = ?1 AND id = 'google'")
+      .bind(workspaceId)
+      .first());
   app.get(
     "/admin-api/settings/media",
     wrap(async (c) => {
@@ -1870,7 +1876,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           })),
         ),
         offered: offeredKinds().filter((k) => k !== "local"),
-        googleApp: (await readyAppIds(c.env.DB, w)).has("google"),
+        // a workspace's own Drive connects with its own Google app only (set once, on its OAuth apps tab)
+        ownGoogleApp: await ownGoogleApp(c.env.DB, w),
         encryptionKeySet: !!c.env.ENCRYPTION_KEY,
       };
     }),
@@ -1912,6 +1919,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/settings/media/stores/drive/start",
     wrap(async (c) => {
       fresh(c);
+      // the instance's Google app is for the instance's Drive: a workspace's own Drive needs its own app
+      if (!(await ownGoogleApp(c.env.DB, ws(c))))
+        throw new AdminError(400, "add this workspace's own Google app first (Settings → OAuth apps)");
       const b = await body(c);
       const root = b.root === undefined ? undefined : rootInput(b.root);
       const flow = await startDriveConnect(c.env, c.get("session").userId, ws(c), nowS(), root);

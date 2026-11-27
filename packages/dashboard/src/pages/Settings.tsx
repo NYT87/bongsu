@@ -392,7 +392,8 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
     folder: string;
     stores: OwnStore[];
     offered: string[];
-    googleApp: boolean;
+    /** The workspace has its own Google app: its own Drive connects with it, never with the instance's. */
+    ownGoogleApp: boolean;
     encryptionKeySet: boolean;
   }>("settings/media");
   const { confirm, dialog } = useConfirm();
@@ -616,19 +617,29 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
               </div>
             )}
           </Card>
-          {data.offered.includes("drive") && (
+          {/* a Drive of the workspace's own needs a Google app of its own, set once on the OAuth apps tab */}
+          {data.offered.includes("drive") && !data.ownGoogleApp && (
+            <p className="muted small">
+              To use a Google Drive of this workspace's own, first add its own Google app in{" "}
+              <button type="button" className="link inline" onClick={onApps}>
+                OAuth apps
+              </button>
+              .
+            </p>
+          )}
+          {data.offered.includes("drive") && data.ownGoogleApp && (
             <Card title={own("drive") ? "Google Drive: connect again" : "Add Google Drive"}>
               <p className="muted">
                 Bongsu makes {data.folder} in the root folder you choose, with its inbox. Drop files in {data.folder}
-                /inbox; Bongsu reads them and moves posted ones to {data.folder}/_posted. It connects with a Google app
-                (this workspace's, else the instance's), which needs the redirect URL shown on its OAuth apps tab:{" "}
+                /inbox; Bongsu reads them and moves posted ones to {data.folder}/_posted. It connects with this
+                workspace's own Google app (its OAuth apps tab):{" "}
                 <GuideLink doc="site/docs/drive.md">the Drive guide</GuideLink>.
               </p>
               <DriveForm
                 path="settings/media/stores/drive"
                 connected={!!own("drive")}
                 root={own("drive") ? driveRoot(own("drive")!) : undefined}
-                googleApp={data.googleApp}
+                googleApp={data.ownGoogleApp}
                 onApps={onApps}
                 onSaved={() => {
                   toast({ ok: true, text: `The root folder is saved: ${data.folder} is in it now.` });

@@ -38,6 +38,8 @@ posts, drafts and the inbox carry on. The new name must not be a folder that's a
 folders); pick another, or rename or remove that one in Drive first. The paths below use `UPLOADS`; read it as the workspace's folder, inside the root folder. A Drive
 connected by the instance serves every workspace, each in its own folder, and a workspace's admins can also connect
 their own Drive, with a root folder of its own, in **Settings → Media** (see [the dashboard](the-dashboard.md#settings)).
+A workspace's own Drive connects with the workspace's own Google app, never the instance's: add it once in **Settings →
+OAuth apps**, and **Add Google Drive** appears in Settings → Media.
 
 | Path | Use |
 |---|---|
