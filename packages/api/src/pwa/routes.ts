@@ -149,6 +149,8 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
   const app = new Hono<Vars>();
   const P = host.prefix;
   const NEEDS = needsFor(P);
+  /** The channel a change or an approval is recorded through: a passkey in the app, or in the dashboard. */
+  const BY = host.app === "pwa" ? "owner@app" : "owner@dashboard";
   if (host.app !== "pwa")
     for (const path of APP_ONLY) app.all(`${P}${path}`, (c) => c.json({ error: "not found" }, 404));
   /** The signed-in caller, set by the session check below; a request without one is refused, never defaulted. */
@@ -209,9 +211,9 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     if (value === null) delete options[name];
     else options[name] = value;
     await c.env.DB.prepare(
-      "UPDATE plan_items SET options = ?1, updated_at = ?2, updated_by = 'owner@app' WHERE item_key = ?3 AND workspace_id = ?4",
+      "UPDATE plan_items SET options = ?1, updated_at = ?2, updated_by = ?5 WHERE item_key = ?3 AND workspace_id = ?4",
     )
-      .bind(JSON.stringify(options), nowS(), key, me(c).workspaceId)
+      .bind(JSON.stringify(options), nowS(), key, me(c).workspaceId, BY)
       .run();
     return { ...i, options: JSON.stringify(options) };
   };
@@ -829,7 +831,7 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
         { error: "it changed since you opened it: check the new version, then approve", changed: true },
         409,
       );
-    await writeApproval(c.env, now, new Date(), userOf(c), "owner@app");
+    await writeApproval(c.env, now, new Date(), userOf(c), BY);
     await audit(c, "approve", shown.key, { due_at: shown.dueAt, media: shown.media.length });
     return c.json({ approved: true, key: shown.key, due: r.due });
   });
@@ -1052,9 +1054,9 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
       const title =
         typeof b.title === "string" && b.title.trim() ? b.title.trim().replace(/\s+/g, " ").slice(0, 80) : null;
       const r = await c.env.DB.prepare(
-        "UPDATE plan_items SET title = ?1, updated_at = ?3, updated_by = 'owner@app' WHERE item_key = ?2 AND workspace_id = ?4 RETURNING item_key",
+        "UPDATE plan_items SET title = ?1, updated_at = ?3, updated_by = ?5 WHERE item_key = ?2 AND workspace_id = ?4 RETURNING item_key",
       )
-        .bind(title, key, nowS(), me(c).workspaceId)
+        .bind(title, key, nowS(), me(c).workspaceId, BY)
         .first();
       if (!r) throw new ops.ApiError(404, `${key} isn't planned`);
       return { key, title };
