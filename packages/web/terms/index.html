@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#131f2a" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>Bongsu</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ink: #1b2530;
+        --muted: #55606b;
+        --paper: #fbfaf7;
+        --rule: #d9dde1;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: #e6e9ec;
+          --muted: #9aa5af;
+          --paper: #131f2a;
+          --rule: #2b3946;
+        }
+      }
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      main {
+        max-width: 42rem;
+        margin: 0 auto;
+        padding: 2.5rem 1rem 4rem;
+      }
+      h1 {
+        font-size: 1.75rem;
+        line-height: 1.25;
+        margin: 0 0 0.5rem;
+      }
+      h2 {
+        font-size: 1.1rem;
+        margin: 2rem 0 0.5rem;
+        padding-top: 1rem;
+        border-top: 1px solid var(--rule);
+      }
+      p,
+      li {
+        margin: 0.5rem 0;
+      }
+      .lead {
+        color: var(--muted);
+      }
+      a {
+        color: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Terms of service</h1>
+      <p class="lead">
+        This site runs Bongsu, open-source software that publishes posts and videos on the dates its owners plan, once
+        a person has approved each one. It's run by its owner, not by the Bongsu project: these terms are between you
+        and the person who gave you access to it.
+      </p>
+
+      <h2>Using it</h2>
+      <ul>
+        <li>Access is by invitation of the instance's admins, who can change or end it.</li>
+        <li>
+          Connect only accounts, channels and storage you're allowed to manage, and keep your passkeys and agent keys to
+          yourself.
+        </li>
+        <li>
+          Nothing is published until a person approves it: you're responsible for what you approve and for the media
+          and text it contains.
+        </li>
+      </ul>
+
+      <h2>The platforms' own terms</h2>
+      <p>What you publish through this instance must follow the terms of the platform it goes to, which you accept
+        when you connect an account there:</p>
+      <ul>
+        <li>
+          YouTube: by connecting a channel you agree to the
+          <a href="https://www.youtube.com/t/terms">YouTube Terms of Service</a>; Google's handling of the data is in
+          the <a href="https://policies.google.com/privacy">Google Privacy Policy</a>.
+        </li>
+        <li>
+          Instagram and Threads: the <a href="https://help.instagram.com/581066165581870">Instagram Terms of Use</a>
+          and Meta's policies.
+        </li>
+        <li>Any other network you connect: its own terms.</li>
+      </ul>
+
+      <h2>No warranty</h2>
+      <p>
+        Bongsu is provided as it is, without warranty of any kind (its licence says the same). A platform can refuse,
+        delay or change a post, and an instance can be down when a post is due: keep anything that matters checked.
+      </p>
+
+      <h2>Your data</h2>
+      <p>What this instance keeps and how to withdraw its access are in its <a href="/privacy/">privacy policy</a>.</p>
+    </main>
+  </body>
+</html>
