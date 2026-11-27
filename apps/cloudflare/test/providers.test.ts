@@ -3,7 +3,7 @@
 import { env } from "cloudflare:workers";
 import { findAccount } from "@bongsu/core/accounts";
 import { pollComments, replyToComment } from "@bongsu/core/comments";
-import { decryptSecret } from "@bongsu/core/crypto";
+import { decryptSecret, encryptSecret } from "@bongsu/core/crypto";
 import { mailer } from "@bongsu/core/mail";
 import { instagramFor } from "@bongsu/core/providers/instagram";
 import { RENEW_EVERY_S, refreshConnections } from "@bongsu/core/providers/refresh";
@@ -251,6 +251,42 @@ describe("renewing Instagram tokens", () => {
     const a = await findAccount(env.DB, "demo_cycling", "default", "instagram");
     await (await instagramFor(e, w.fetch, a!))!.verify();
     expect(w.graph.at(-1)?.token).toBe("ig-token-3");
+  });
+
+  it("a reconnect made while the renewal runs keeps its token, and the old token's failure marks nothing (#174)", async () => {
+    const e = await testEnv(env);
+    await connectGraph();
+    const now = Math.floor(AT.getTime() / 1000);
+    // the owner reconnects while the renewal call is out: a new token and a newer updated_at, as finishConnect writes
+    const reconnected = await encryptSecret(
+      e.ENCRYPTION_KEY,
+      JSON.stringify({ access_token: "ig-reconnected", expires_at: now + 5184000 }),
+    );
+    const reconnect = () =>
+      env.DB.prepare("UPDATE connections SET credentials = ?1, updated_at = ?2 WHERE id = 'g_demo_cycling'")
+        .bind(reconnected, now + 1)
+        .run();
+    const during: typeof fetch = async (input, init) => {
+      const r = await w.fetch(input, init);
+      if (new URL(new Request(input, init).url).pathname.includes("refresh_access_token")) await reconnect();
+      return r;
+    };
+    expect(ig(await refreshConnections(e, { fetch: during, now: AT })).renewed).toEqual(["g_demo_cycling"]);
+    expect(await conn()).toMatchObject({ credentials: reconnected, status: "ok" });
+    // and when the old token's renewal fails meanwhile: the reconnected connection isn't marked, nobody is told
+    await env.DB.prepare("UPDATE connections SET last_checked_at = 0 WHERE id = 'g_demo_cycling'").run();
+    w.graphTokens.clear();
+    const failing: typeof fetch = async (input, init) => {
+      const r = await w.fetch(input, init);
+      if (new URL(new Request(input, init).url).pathname.includes("refresh_access_token"))
+        await env.DB.prepare("UPDATE connections SET updated_at = ?1 WHERE id = 'g_demo_cycling'")
+          .bind(now + 2)
+          .run();
+      return r;
+    };
+    expect(ig(await refreshConnections(e, { fetch: failing, now: later(1) })).failed).toEqual([]);
+    expect(await conn()).toMatchObject({ status: "ok", last_error: null });
+    expect(w.notifications).toEqual([]);
   });
 
   it("a refused renewal marks the connection expiring and notifies once; past its expiry, broken", async () => {
