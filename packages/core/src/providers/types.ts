@@ -142,6 +142,9 @@ export interface Provider {
   check(step: Step, run?: RunBudget): Promise<Step>;
   /** `retry`: the publishing call was already made once and its answer lost (the post may be live by our own hand). */
   finish(step: Step, retry?: boolean): Promise<Published>;
+  /** The most outside calls `finish` makes (token refresh, reads and the publishing call); 1 when left out. The tick
+   *  starts it only with that many left, so a run never runs out between "publishing" and the call. */
+  readonly finishCalls?: number;
   /** Removes what a step left on the platform and won't publish (an uploaded private video); best effort. "gone" when
    *  it is gone now, "kept" when it is public (published by hand: never deleted), "failed" otherwise. */
   discard?(step: Step): Promise<Discarded>;

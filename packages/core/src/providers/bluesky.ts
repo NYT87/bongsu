@@ -89,6 +89,8 @@ const rkeyOf = (uri: string) => uri.slice(uri.lastIndexOf("/") + 1);
 export class BlueskyProvider implements Provider {
   readonly id = "bluesky";
   readonly platform = "bluesky";
+  // the sign-in, the record read on a retry, and createRecord
+  readonly finishCalls = 3;
   constructor(
     private creds: BlueskyCredentials,
     private fetcher: typeof fetch,

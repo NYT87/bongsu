@@ -95,6 +95,8 @@ const byHand = (v: VideoState) => v.privacyStatus !== "private" || typeof v.stat
 export class YouTubeProvider implements Provider {
   readonly id = "youtube-data";
   readonly platform = "youtube";
+  // a token refresh, the read, the update and the read-back
+  readonly finishCalls = 4;
   private yt: YouTube;
 
   constructor(

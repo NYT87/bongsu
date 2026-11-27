@@ -207,6 +207,38 @@ describe("YouTube uploads: the tick", () => {
     ]);
   });
 
+  it("starts publishing only with every call of its finish left (#176): short of them, it waits as it was", async () => {
+    // the due-time run, from a fresh upload each time; it answers where its update falls
+    const dueRun = async (limit?: number) => {
+      await env.DB.batch(["audit", "drafts", "jobs"].map((t) => env.DB.prepare(`DELETE FROM ${t}`)));
+      await clearPlan();
+      w = new World();
+      now = T;
+      await setup();
+      await uploadAhead();
+      let n = 0;
+      let update = 0;
+      const counting: typeof fetch = (input, init) => {
+        n++;
+        const r = new Request(input, init);
+        if (r.method === "PUT" && new URL(r.url).pathname === "/youtube/v3/videos") update ||= n;
+        return w.fetch(input, init);
+      };
+      await tick(e, { fetch: counting, now: T, subrequests: limit });
+      return update;
+    };
+    const update = await dueRun();
+    expect(update).toBeGreaterThan(1);
+    await dueRun(update - 1); // every call before the update: the read fits, the update wouldn't
+    const j = await job();
+    expect(j).toMatchObject({ state: "container_created", attempts: 0 });
+    // not marked "may be live": nothing was written, so the next run publishes it
+    expect(JSON.parse(j!.payload).publishing).toBeUndefined();
+    expect(privacy()).toBe("private");
+    await run(at(60));
+    expect(await job()).toMatchObject({ state: "published" });
+  });
+
   it("approved inside the lead uploads at once and publishes when processed", async () => {
     await seedVideo();
     await run(at(-LEAD));
