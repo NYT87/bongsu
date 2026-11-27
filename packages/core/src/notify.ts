@@ -89,11 +89,7 @@ export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifie
   return {
     async send({ group, title, text, target, actions: extra }, workspaceId) {
       console.log(`notify: ${title}: ${text}`);
-      await env.DB.prepare(
-        "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, ?4)",
-      )
-        .bind(nowS, noEmail(target ?? null), auditDetail({ title, text }), workspaceId)
-        .run();
+      await audit(env.DB, nowS, "notify", target ?? null, { title, text }, workspaceId);
       const a = actionsFor(target, extra);
       const url = await topic(workspaceId);
       if (url) {
@@ -136,11 +132,7 @@ export function notifier(env: Env, fetcher: typeof fetch, nowS: number): Notifie
  *  instance isn't any one workspace's. A mail failure is logged; the audit row is already written. */
 export async function notifyInstanceAdmins(env: Env, fetcher: typeof fetch, note: Note, nowS: number) {
   console.log(`notify (instance): ${note.title}: ${note.text}`);
-  await env.DB.prepare(
-    "INSERT INTO audit (at, actor, action, target, detail, workspace_id) VALUES (?1, 'cron', 'notify', ?2, ?3, NULL)",
-  )
-    .bind(nowS, noEmail(note.target ?? null), auditDetail({ title: note.title, text: note.text }))
-    .run();
+  await audit(env.DB, nowS, "notify", note.target ?? null, { title: note.title, text: note.text });
   try {
     const mail = mailer(env, fetcher);
     if (mail.id === "none") return;

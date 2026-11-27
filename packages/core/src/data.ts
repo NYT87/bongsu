@@ -96,10 +96,9 @@ export async function trialFor(
 
 /** "<project folder>/<name>": the part of item_key after "reel:" / "post:" */
 export const shortKey = (key: string) => key.replace(/^(reel|post):/, "");
-export const projectOf = (folder: string) => folder.replace(/\/+$/, "").split("/").pop() ?? "";
 export const lastSeg = (p: string) => p.replace(/\/+$/, "").split("/").pop() ?? "";
 export const makeKey = (cls: "reel" | "post", folder: string, name: string) =>
-  `${cls}:${projectOf(folder)}/${lastSeg(name)}`;
+  `${cls}:${lastSeg(folder)}/${lastSeg(name)}`;
 
 /** An item's due time as wall time in `tz`, "YYYY-MM-DD HH:MM"; null when it isn't scheduled. */
 export const itemDue = (i: Pick<PlanItem, "due_at">, tz: string) =>
