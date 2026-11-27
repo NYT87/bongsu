@@ -30,8 +30,10 @@ Each channel is connected with your own Google OAuth app (one app for every chan
    ![OAuth consent screen: the youtube.force-ssl scope](assets/google/3-consent-scope.png) -->
 
 4. **Publish the app** (Publishing status → In production). While it stays in *Testing*, Google expires its refresh
-   tokens after 7 days and Bongsu loses the channel every week. An unverified app in production works for your own
-   channels; Google only shows an "unverified app" warning on the consent screen (Advanced → continue).
+   tokens after 7 days and Bongsu loses the channel every week. Google only lets you publish once the app's
+   **Branding** page has a privacy policy link: every Bongsu serves one, `<PUBLIC_URL>/privacy/` (put `<PUBLIC_URL>`
+   as the home page beside it, and its domain under **Authorized domains**). An unverified app in production works for
+   your own channels; Google only shows an "unverified app" warning on the consent screen (Advanced → continue).
 
    <!-- screenshot: OAuth consent screen → Audience, Publishing status In production, user type External; blur the project id
    ![OAuth consent screen: publishing status In production](assets/google/4-in-production.png) -->
