@@ -134,7 +134,7 @@ describe("a workspace's media settings", () => {
     expect((await amy("/admin-api/settings/media")).json).toMatchObject({
       folder: "UPLOADS",
       stores: [{ id: "drive", kind: "drive", own: false, default: true, status: "ok", waitingApprovals: 0 }],
-      googleApp: false,
+      ownGoogleApp: false,
     });
 
     const put = (folder: unknown) => amy("/admin-api/settings/media/folder", { folder }, { method: "PUT" });
@@ -397,8 +397,18 @@ describe("a workspace's media settings", () => {
 
   it("a workspace's Connect Google Drive comes back to its Settings, audited in the workspace", async () => {
     const amy = await as("amy", "admin");
-    expect((await amy("/admin-api/settings/media/stores/drive/start", { root: ROOT })).status).toBe(400); // no Google app yet
+    // the instance's Google app doesn't do for a workspace's own Drive: it needs its own
+    await env.DB.prepare(
+      "INSERT INTO oauth_apps (id, client_id, client_secret, updated_at, updated_by) VALUES ('google', 'instance-g', 'x', 0, 'ina') ON CONFLICT (id) DO NOTHING",
+    ).run();
+    expect((await amy("/admin-api/settings/media")).json).toMatchObject({ ownGoogleApp: false });
+    const refused = await amy("/admin-api/settings/media/stores/drive/start", { root: ROOT });
+    expect([refused.status, refused.json.error]).toEqual([
+      400,
+      "add this workspace's own Google app first (Settings → OAuth apps)",
+    ]);
     await amy("/admin-api/settings/oauth-apps/google", { clientId: "own-g", clientSecret: "own-secret" });
+    expect((await amy("/admin-api/settings/media")).json).toMatchObject({ ownGoogleApp: true });
     const start = await amy("/admin-api/settings/media/stores/drive/start", { root: ROOT });
     const flowCookie = start.setCookies.find((c) => c.startsWith("bongsu_oauth="))!.split(";")[0];
     const url = new URL(start.json.url as string);

@@ -227,12 +227,16 @@ Settings has three tabs: **General**, **Media** and **OAuth apps** (`/dashboard/
 made, so a rename never changes it; `UPLOADS` for a workspace kept from before folders had names). A new name renames
 the folder in place in Google Drive and on the server's disk, files and all; a bucket gets a new folder and its files
 stay in the old one. A name a store already has a folder for is refused: folders are never merged. It also sets its own S3
-bucket or Google Drive (with a root folder of its own). A workspace's default store is its own if it has one, else the instance's. A file must be in the
+bucket or Google Drive (with a root folder of its own; **Add Google Drive** shows once the workspace has its own Google
+app in **OAuth apps**, which a Drive of its own always connects with). A workspace's default store is its own if it has one, else the instance's. A file must be in the
 workspace's own store or inside its folder in an instance store, or it's refused with "not in this workspace's media".
 The inbox scans `<folder>/inbox` in each of the workspace's stores, a few workspaces per run in turn.
 
 **OAuth apps** (admins) holds the workspace's own Meta and Google apps, with the same redirect URLs as the instance's. A
-connection uses the workspace's app if it has one, else the instance's, and keeps the one it started with.
+connection uses the workspace's app if it has one, else the instance's, and keeps the one it started with. Without one
+of its own, each app's card says **Uses the instance's app**: nothing to set up. **Add your own** uses the workspace's
+keys instead, and **Remove** goes back to the instance's. The workspace's own Google Drive is the exception: it needs the
+workspace's own Google app.
 
 **General** is the rest of this section.
 

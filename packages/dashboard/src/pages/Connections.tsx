@@ -58,7 +58,7 @@ function useReturn() {
   }, [toast]);
 }
 
-export function Connections({ go }: Props) {
+export function Connections({ state, go }: Props) {
   const toast = useToast();
   const { data, error, reload } = useLoad<{ connections: Connection[]; kinds: ConnectKind[]; appsReady: string[] }>(
     "connections",
@@ -70,9 +70,12 @@ export function Connections({ go }: Props) {
   const kind = (p: string) => data?.kinds.find((k) => k.provider === p);
   /** A greyed-out Connect/Reconnect still answers a click (a tooltip never shows on a phone): it says why and goes
    *  where the fix is. */
+  // where an app is added: the instance's for its admins, else this workspace's own (its admins can't open the admin
+  // dashboard)
+  const apps = state.instanceAdmin ? "admin/apps" : "settings/apps";
   const needApp = (app?: string) => {
     toast({ ok: false, text: `Add your ${APP_NAME[app ?? ""] ?? "OAuth app"} first, then connect.` });
-    go("admin/apps");
+    go(apps);
   };
   const connect = async (provider: string, reconnect?: string) => {
     setErr(null);
@@ -200,7 +203,7 @@ export function Connections({ go }: Props) {
                               ? "Sign in with the account and allow access."
                               : `Needs your ${APP_NAME[k.app ?? ""] ?? "OAuth app"}: `}
                         {!ready && (
-                          <button type="button" className="link inline" onClick={() => go("admin/apps")}>
+                          <button type="button" className="link inline" onClick={() => go(apps)}>
                             add it
                           </button>
                         )}

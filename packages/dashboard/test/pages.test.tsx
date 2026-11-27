@@ -652,9 +652,31 @@ describe("Settings → Media: the workspace's folder", () => {
         },
       ],
       offered: ["drive", "s3"],
-      googleApp: true,
+      ownGoogleApp: true,
       encryptionKeySet: true,
     },
+  });
+
+  it("offers a Drive of the workspace's own only with its own Google app, and points to OAuth apps for it", async () => {
+    fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET settings/media": () => ({ body: { ...media("demo-travel").body, ownGoogleApp: false } }),
+      "GET settings/oauth-apps": { body: { apps: [], encryptionKeySet: true } },
+    });
+    open("settings/media");
+    const user = userEvent.setup();
+    await screen.findByLabelText("Folder");
+    expect(screen.queryByRole("heading", { name: "Add Google Drive" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Add an S3-compatible bucket" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "OAuth apps" }));
+    await waitFor(() => expect(location.pathname).toBe("/dashboard/settings/apps"));
+  });
+
+  it("shows Add Google Drive once the workspace has its own Google app", async () => {
+    fakeApi({ "GET state": () => ({ body: state() }), "GET settings/media": () => media("demo-travel") });
+    open("settings/media");
+    expect(await screen.findByRole("heading", { name: "Add Google Drive" })).toBeTruthy();
+    expect(screen.queryByText(/first add its own Google app/)).toBeNull();
   });
 
   it("renames it, and says where it was renamed and where a new one was made", async () => {
@@ -732,5 +754,43 @@ describe("Devices & passkeys: leaving the workspace", () => {
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Leave" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/make someone else admin first/);
     expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("Connections: where a missing OAuth app is added", () => {
+  const routes = (s: object) => ({
+    "GET state": () => ({ body: { ...state(), ...s } }),
+    "GET connections": () => ({
+      body: {
+        connections: [],
+        appsReady: [],
+        kinds: [
+          {
+            provider: "youtube-google",
+            kind: "oauth",
+            label: "YouTube",
+            platform: "youtube",
+            app: "google",
+            docs: "site/docs/youtube.md",
+          },
+        ],
+      },
+    }),
+    "GET settings/oauth-apps": { body: { apps: [], encryptionKeySet: true } },
+    "GET oauth-apps": { body: { apps: [], encryptionKeySet: true } },
+  });
+
+  it("sends a workspace admin to the workspace's own OAuth apps, not the admin dashboard", async () => {
+    fakeApi(routes({ instanceAdmin: false }));
+    open("connections");
+    await userEvent.setup().click(await screen.findByRole("button", { name: "add it" }));
+    await waitFor(() => expect(location.pathname).toBe("/dashboard/settings/apps"));
+  });
+
+  it("sends an instance admin to the instance's", async () => {
+    fakeApi(routes({ instanceAdmin: true }));
+    open("connections");
+    await userEvent.setup().click(await screen.findByRole("button", { name: "add it" }));
+    await waitFor(() => expect(location.pathname).toBe("/dashboard/admin/apps"));
   });
 });
