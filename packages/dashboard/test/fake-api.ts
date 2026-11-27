@@ -5,7 +5,7 @@ import { vi } from "vitest";
 export type Reply = { status?: number; body?: unknown };
 export type Call = { method: string; path: string; body: unknown };
 
-export function fakeApi(routes: Record<string, Reply | ((body: unknown) => Reply)>) {
+export function fakeApi(routes: Record<string, Reply | ((body: unknown) => Reply | Promise<Reply>)>) {
   const calls: Call[] = [];
   vi.stubGlobal(
     "fetch",
@@ -22,7 +22,8 @@ export function fakeApi(routes: Record<string, Reply | ((body: unknown) => Reply
       calls.push({ method, path, body });
       const route = routes[`${method} ${path}`];
       if (!route) return new Response(JSON.stringify({ error: `no route ${method} ${path}` }), { status: 404 });
-      const r = typeof route === "function" ? route(body) : route;
+      // a route may answer later (a promise), so a test can look at the page while the request is under way
+      const r = typeof route === "function" ? await route(body) : route;
       return new Response(JSON.stringify(r.body ?? {}), { status: r.status ?? 200 });
     }),
   );
