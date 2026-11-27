@@ -154,6 +154,11 @@ jobs:
           case "$DRY_RUN" in 0 | 1) ;; *) echo "the production environment's DRY_RUN is 0 or 1" >&2; exit 1 ;; esac
           host="${PUBLIC_URL#https://}"
           host="${host%%/*}"
+          # The secrets are masked in the log, but wrangler also prints values made from them: the hostname (RP_ID), the
+          # Workers' addresses on the same domain (bongsu-cron.<sub>.workers.dev) and the VAPID key cut to 37 characters.
+          echo "::add-mask::$host"
+          echo "::add-mask::${host#*.}"
+          echo "::add-mask::${VAPID_PUBLIC_KEY:0:37}"
           for f in wrangler.toml wrangler.cron.toml; do
             sed -i \
               -e "s|00000000-0000-0000-0000-000000000000|$D1_DATABASE_ID|" \
