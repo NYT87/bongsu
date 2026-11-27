@@ -3,7 +3,7 @@
 import { startAuthentication } from "@simplewebauthn/browser";
 import { useEffect, useMemo, useState } from "react";
 import { api, type NoteGroup, type NotifyPrefs, notifyPrefs, setNotifyPref } from "./api";
-import { BRAND, ConfirmButton, cachePrune, type Me, Switch, useLoad, useShared } from "./common";
+import { BRAND, ConfirmButton, cachePrune, LegalLinks, type Me, Switch, useLoad, useShared } from "./common";
 import { type Key, t } from "./i18n";
 
 const b64ToBytes = (s: string) =>
@@ -50,6 +50,7 @@ export function VersionInfo({ me }: { me: Me }) {
           </button>
         </p>
       )}
+      <LegalLinks />
     </div>
   );
 }

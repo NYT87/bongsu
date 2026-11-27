@@ -26,6 +26,17 @@ describe("the privacy page", () => {
       expect(html).toContain(s);
     expect(html).toContain("https://developers.google.com/terms/api-services-user-data-policy");
   });
+
+  it("lists its cookies and browser storage, and how long it keeps things", () => {
+    for (const s of ["bongsu_session", "bongsu_admin", "bongsu_oauth", "localStorage", "service worker"])
+      expect(html).toContain(s);
+    expect(html).toContain("No analytics, no ads, no third-party");
+    for (const s of ["180 days", "30 days", "12 hours", "7 days"]) expect(html).toContain(s);
+  });
+
+  it("has a place for the operator's details, as the terms do", () => {
+    expect(html).toContain("<!-- operator -->");
+  });
 });
 
 describe("the terms of service page", () => {
@@ -43,5 +54,9 @@ describe("the terms of service page", () => {
     expect(terms).toContain('href="/privacy/"');
     expect(html).toContain('href="/terms/"');
     expect(html).toContain("https://policies.google.com/privacy");
+  });
+
+  it("has a place for the operator's details", () => {
+    expect(terms).toContain("<!-- operator -->");
   });
 });

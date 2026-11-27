@@ -513,6 +513,13 @@ export const ICON = {
 /** The instance's name (build input BONGSU_APP_NAME, site/docs/configuration.md). */
 export const BRAND = __APP_BRAND__;
 
+/** The instance's privacy policy and terms (privacy/, terms/: pages of their own, outside the app's hash routes). */
+export const LegalLinks = () => (
+  <p className="muted small legal">
+    <a href="/privacy/">{t("legal.privacy")}</a> · <a href="/terms/">{t("legal.terms")}</a>
+  </p>
+);
+
 /** Where the item page's back link goes: the last list page the owner was on (Today when unknown). */
 export let lastList = "#/";
 /** The shell sets it as the owner moves between list pages (an import can't be assigned to). */

@@ -3,7 +3,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { PausedBanner, WorkspaceSheet } from "../src/App";
+import { App, PausedBanner, WorkspaceSheet } from "../src/App";
 import { type DraftsAnswer, type Me, type Shared, SharedCtx } from "../src/common";
 import { DraftsPage } from "../src/Drafts";
 import { ApprovedText, TrialCopy } from "../src/Item";
@@ -40,6 +40,23 @@ describe("the version card", () => {
     unmount();
     render(<VersionInfo me={{ ...base, server: null }} />);
     expect(screen.queryByText(/^Server/)).toBeNull();
+  });
+});
+
+describe("the privacy policy and terms", () => {
+  const links = () => ["Privacy", "Terms"].map((name) => screen.getByRole("link", { name }).getAttribute("href"));
+
+  it("are linked from the sign-in screen", async () => {
+    fakeApi({ "GET me": { body: { signedIn: false, setupNeeded: false, vapidPublicKey: "", locale: "en" } } });
+    render(<App />);
+    await screen.findByRole("button", { name: "Sign in with passkey" });
+    expect(links()).toEqual(["/privacy/", "/terms/"]);
+  });
+
+  it("are linked from Settings, under the version", () => {
+    vi.stubGlobal("fetch", () => new Promise(() => {}));
+    render(<VersionInfo me={base} />);
+    expect(links()).toEqual(["/privacy/", "/terms/"]);
   });
 });
 

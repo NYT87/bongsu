@@ -14,6 +14,7 @@ import {
   dueTime,
   ICON,
   keyTitle,
+  LegalLinks,
   type Me,
   MeCtx,
   needs,
@@ -536,6 +537,7 @@ function SignIn({ me, onDone }: { me: Me; onDone: () => void }) {
           {msg}
         </p>
       )}
+      <LegalLinks />
     </main>
   );
 }

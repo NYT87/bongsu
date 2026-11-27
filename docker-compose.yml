@@ -11,6 +11,8 @@ services:
         # branding, read at build time (site/docs/configuration.md); empty means the defaults
         BONGSU_APP_NAME: ${BONGSU_APP_NAME:-}
         BONGSU_THEME_COLOR: ${BONGSU_THEME_COLOR:-}
+        BONGSU_OPERATOR_NAME: ${BONGSU_OPERATOR_NAME:-}
+        BONGSU_OPERATOR_CONTACT: ${BONGSU_OPERATOR_CONTACT:-}
         BONGSU_COMMIT: ${BONGSU_COMMIT:-}
     # bongsu:local is built from this checkout; BONGSU_IMAGE=ghcr.io/nyt87/bongsu:<version> uses a published release
     # instead (`docker compose pull bongsu`, then `up -d` without --build)
