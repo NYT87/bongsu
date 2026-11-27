@@ -7,7 +7,7 @@ import { decryptSecret, encryptSecret } from "./crypto";
 import type { Db } from "./db";
 import type { Env } from "./env";
 import { sha256Hex } from "./formats/approved";
-import { mailer } from "./mail";
+import { instanceName, mailer } from "./mail";
 import type { Role } from "./roles";
 import { inviteMail } from "./texts/invites";
 import { memberName } from "./workspaces";
@@ -77,6 +77,7 @@ export async function createInvite(
           by: by ?? "An admin",
           url,
           days: INVITE_S / 86400,
+          instance: instanceName(env.PUBLIC_URL),
         }),
       );
       mailed = true;

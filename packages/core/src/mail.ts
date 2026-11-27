@@ -5,6 +5,15 @@
 import type { Db } from "./db";
 import type { Env } from "./env";
 
+/** Where an email says it comes from: the instance's host ("bongsu.example.com"), from PUBLIC_URL. */
+export const instanceName = (publicUrl: string): string => {
+  try {
+    return new URL(publicUrl).host;
+  } catch {
+    return publicUrl;
+  }
+};
+
 export interface Mail {
   to: string[];
   subject: string;
@@ -49,22 +58,23 @@ export function mailer(env: Partial<Env>, fetcher: typeof fetch): Mailer {
   };
 }
 
-/** The emails of a workspace's admins: who hears about its connections. */
+/** The emails of a workspace's admins who get alert emails: who hears about its connections. One who turned them off
+ *  (`users.alert_mail`) still gets the push and the dashboard notice. */
 export async function workspaceAdmins(db: Db, workspaceId: string): Promise<string[]> {
   const r = await db
     .prepare(
       `SELECT u.email FROM memberships m JOIN users u ON u.id = m.user_id
-       WHERE m.workspace_id = ?1 AND m.role = 'admin' AND u.email IS NOT NULL ORDER BY u.email`,
+       WHERE m.workspace_id = ?1 AND m.role = 'admin' AND u.email IS NOT NULL AND u.alert_mail = 1 ORDER BY u.email`,
     )
     .bind(workspaceId)
     .all<{ email: string }>();
   return r.results.map((x) => x.email);
 }
 
-/** The emails of the instance admins: who hears about what's the instance's (the media stores). */
+/** The emails of the instance admins who get alert emails: who hears about what's the instance's (the media stores). */
 export async function instanceAdmins(db: Db): Promise<string[]> {
   const r = await db
-    .prepare("SELECT email FROM users WHERE instance_admin = 1 AND email IS NOT NULL ORDER BY email")
+    .prepare("SELECT email FROM users WHERE instance_admin = 1 AND email IS NOT NULL AND alert_mail = 1 ORDER BY email")
     .all<{ email: string }>();
   return r.results.map((x) => x.email);
 }

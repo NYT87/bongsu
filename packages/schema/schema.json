@@ -1502,6 +1502,12 @@
           "notNull": true,
           "default": 0,
           "description": "runs the instance: workspaces, media stores, OAuth apps"
+        },
+        "alert_mail": {
+          "type": "bool",
+          "notNull": true,
+          "default": 1,
+          "description": "gets the alert emails (0: turned them off)"
         }
       }
     },

@@ -11,6 +11,7 @@ import { errorText, type Props } from "./common";
 interface Passkeys {
   passkeys: { id: string; short: string; name: string | null; created_at: number; last_used_at: number | null }[];
   devices: { device: string | null; created_at: number }[];
+  alertMail: boolean;
 }
 
 interface DeviceCode {
@@ -204,6 +205,7 @@ export function Devices({ state }: Props) {
           <p className="muted">Each signs you in once when every passkey is lost.</p>
         )}
       </Card>
+      {data && <AlertMailCard on={data.alertMail} onSaved={reload} />}
       {state.workspace && (
         <Card title={`Leave ${state.workspace.name}`}>
           <p className="muted">
@@ -290,5 +292,41 @@ function DeviceSetup({ device, onDone }: { device: DeviceCode; onDone: () => voi
         </button>
       </div>
     </div>
+  );
+}
+
+/** The person's own switch for the alert emails: a connection or a media store that broke, for the workspaces they
+ *  admin and the instance alike. The dashboard and the app still show those notices. */
+function AlertMailCard({ on, onSaved }: { on: boolean; onSaved: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const save = async (next: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api("alert-mail", { on: next });
+      onSaved();
+    } catch (e) {
+      setErr(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Card title="Alert emails">
+      <p className="muted">
+        When a connection or a media store you look after breaks, an email tells you, if this instance sends email.
+        Turned off, you still see the notice here and in the app.
+      </p>
+      <label className="check">
+        <input type="checkbox" checked={on} disabled={busy} onChange={(e) => save(e.target.checked)} /> Email me these
+        alerts
+      </label>
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
+    </Card>
   );
 }

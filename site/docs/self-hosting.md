@@ -73,7 +73,8 @@ start). [databases.md](../../docs/databases.md) compares the two and covers back
 
 ## Email (optional)
 
-Connection alerts can also go by email ([configuration.md](configuration.md), `MAILER`). To see them without sending
+Connection alerts can also go by email ([configuration.md](configuration.md), `MAILER`). Each email says why it was
+sent; admins turn alert emails off in Devices & passkeys. To see them without sending
 real mail, the `mail` profile runs Mailpit, which catches every message:
 
 ```sh

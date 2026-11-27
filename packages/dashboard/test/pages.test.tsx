@@ -416,7 +416,8 @@ describe("the admin dashboard", () => {
     fakeApi(routes({ instanceAdmin: false }));
     open("admin/workspaces");
     await heading("Overview");
-    expect(location.pathname).toBe("/dashboard/");
+    // the redirect is an effect after the first render: wait for it rather than read the path at once
+    await waitFor(() => expect(location.pathname).toBe("/dashboard/"));
     expect(within(sidebar()).queryByRole("link", { name: "Admin dashboard" })).toBeNull();
   });
 
@@ -813,6 +814,31 @@ describe("Devices & passkeys: leaving the workspace", () => {
     await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Leave" }));
     expect((await screen.findByRole("alert")).textContent).toMatch(/make someone else admin first/);
     expect(assign).not.toHaveBeenCalled();
+  });
+});
+
+describe("Devices & passkeys: alert emails", () => {
+  it("shows the person's own switch and saves a change", async () => {
+    let on = true;
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET passkeys": () => ({ body: { passkeys: [], devices: [], alertMail: on } }),
+      "POST alert-mail": (b: unknown) => {
+        on = (b as { on: boolean }).on;
+        return { body: { alertMail: on } };
+      },
+    });
+    open("devices");
+    const user = userEvent.setup();
+    const box = await screen.findByRole("checkbox", { name: "Email me these alerts" });
+    expect((box as HTMLInputElement).checked).toBe(true);
+    await user.click(box);
+    await waitFor(() => expect((box as HTMLInputElement).checked).toBe(false));
+    expect(calls.find((c) => c.path === "alert-mail")).toEqual({
+      method: "POST",
+      path: "alert-mail",
+      body: { on: false },
+    });
   });
 });
 

@@ -16,6 +16,8 @@ export const inviteMail = (o: {
   by: string;
   url: string;
   days: number;
+  /** The instance's host, from PUBLIC_URL (mail.ts instanceName). */
+  instance: string;
 }): Mail => ({
   to: [o.to],
   subject: `Bongsu: join ${o.workspace}`,
@@ -26,6 +28,9 @@ export const inviteMail = (o: {
     o.url,
     "",
     "You'll make a passkey (this device's fingerprint, face or PIN), or sign in with yours if you already have one.",
-    "If you didn't expect this, ignore it.",
+    "",
+    "--",
+    `You get this because ${o.by} invited ${o.to} to ${o.workspace} on ${o.instance}.`,
+    `If you didn't expect it, ignore it: nothing happens, no account is made, and the link stops working in ${o.days} days.`,
   ].join("\n"),
 });

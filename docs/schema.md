@@ -622,6 +622,7 @@ People: the first one owns the instance. Email identifies them; passkeys sign th
 | `created_at` | timestamp | no |  |  |
 | `timezone` | text | yes |  |  |
 | `instance_admin` | bool | no | 0 | runs the instance: workspaces, media stores, OAuth apps |
+| `alert_mail` | bool | no | 1 | gets the alert emails (0: turned them off) |
 
 ## `workspace_icons`
 

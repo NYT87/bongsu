@@ -383,6 +383,25 @@ describe("signed in", () => {
     expect(keys.map((k) => k.name)).toEqual(["laptop", "Phone"]);
   });
 
+  it("alert emails: on by default, each person turns their own off", async () => {
+    expect((await call("/admin-api/passkeys")).json.alertMail).toBe(true);
+    expect((await call("/admin-api/alert-mail", { on: "no" })).status).toBe(400);
+    expect((await call("/admin-api/alert-mail", { on: false })).json).toEqual({ alertMail: false });
+    expect((await call("/admin-api/passkeys")).json.alertMail).toBe(false);
+    // only the caller's own row
+    expect(
+      (
+        await env.DB.prepare("SELECT id, alert_mail FROM users ORDER BY id").all<{ id: string; alert_mail: number }>()
+      ).results
+        .filter((u) => u.alert_mail === 0)
+        .map((u) => u.id),
+    ).toEqual([me]);
+    expect(await env.DB.prepare("SELECT detail FROM audit WHERE action = 'alert_mail'").first("detail")).toBe(
+      JSON.stringify({ on: false }),
+    );
+    expect((await call("/admin-api/alert-mail", { on: true })).json).toEqual({ alertMail: true });
+  });
+
   it("passkeys: rename, revoke, but never the last one", async () => {
     expect((await call("/admin-api/passkeys/laptop-key/revoke", {})).status).toBe(409);
     const o = await call("/admin-api/passkeys/options", {});
