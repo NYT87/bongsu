@@ -396,18 +396,19 @@ export function DriveForm({
   path?: string;
 }) {
   const [v, setV] = useState(root?.name ?? "");
-  const [busy, setBusy] = useState(false);
+  // which action is under way: its button says so until it's done (Connect until the browser leaves for Google)
+  const [busy, setBusy] = useState<"save" | "connect" | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const run = async (f: () => Promise<void>) => {
+  const run = async (action: "save" | "connect", f: () => Promise<void>) => {
     if (busy) return;
-    setBusy(true);
+    setBusy(action);
     setErr(null);
     try {
       await f();
+      if (action === "save") setBusy(null);
     } catch (e) {
       setErr(errorText(e));
-    } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
   // required: without one the workspaces' folders would land at the top of My Drive. A Drive connected before root
@@ -417,7 +418,7 @@ export function DriveForm({
   // connecting again keeps the saved root unless it was changed here
   const connect = () => {
     if (missing) return setErr(MISSING);
-    return run(async () => {
+    return run("connect", async () => {
       const typed = !connected || v.trim() !== (root?.name ?? "") ? { root: v } : {};
       const r = await withFreshCheck(() => api<{ url: string }>(`${path}/start`, typed));
       location.assign(r.url);
@@ -427,7 +428,7 @@ export function DriveForm({
     e.preventDefault();
     if (!v.trim()) return setErr(MISSING);
     if (v.trim() === (root?.name ?? "")) return;
-    run(async () => {
+    run("save", async () => {
       await withFreshCheck(() => api(`${path}/root`, { root: v }));
       onSaved();
     });
@@ -463,12 +464,17 @@ export function DriveForm({
       </Field>
       <div className="actions">
         {connected && (
-          <button type="submit" aria-disabled={busy || !v.trim() || v.trim() === (root?.name ?? "")}>
-            Save the root folder
+          <button type="submit" aria-disabled={!!busy || !v.trim() || v.trim() === (root?.name ?? "")}>
+            {busy === "save" ? "Saving…" : "Save the root folder"}
           </button>
         )}
-        <button type="button" className={connected ? "" : "primary"} onClick={connect} aria-disabled={busy || missing}>
-          {connected ? "Connect again" : "Connect Google Drive"}
+        <button
+          type="button"
+          className={connected ? "" : "primary"}
+          onClick={connect}
+          aria-disabled={!!busy || missing}
+        >
+          {busy === "connect" ? "Opening Google…" : connected ? "Connect again" : "Connect Google Drive"}
         </button>
       </div>
     </form>

@@ -400,6 +400,8 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
   const [form, setForm] = useState(false);
   const [folder, setFolder] = useState("");
   const [folderErr, setFolderErr] = useState<string | null>(null);
+  // a rename touches each store (a Drive call or two): the button says it's under way until it's done
+  const [folderBusy, setFolderBusy] = useState(false);
   useEffect(() => {
     if (data) setFolder(data.folder);
   }, [data]);
@@ -423,8 +425,9 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
   };
   const saveFolder = async (e: FormEvent) => {
     e.preventDefault();
-    if (folder.trim() === data?.folder) return; // aria-disabled doesn't stop a submit
+    if (folderBusy || folder.trim() === data?.folder) return; // aria-disabled doesn't stop a submit
     setFolderErr(null);
+    setFolderBusy(true);
     try {
       const r = await api<{ folder: string; renamed: string[]; made: string[] }>(
         "settings/media/folder",
@@ -445,6 +448,8 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
       reload();
     } catch (e) {
       setFolderErr(errorText(e));
+    } finally {
+      setFolderBusy(false);
     }
   };
   const own = (k: string) => data?.stores.find((s) => s.kind === k && s.own);
@@ -490,8 +495,8 @@ function WorkspaceMedia({ onApps }: { onApps: () => void }) {
                 )}
               </Field>
               <div className="actions">
-                <button className="primary" type="submit" aria-disabled={folder.trim() === data.folder}>
-                  Save
+                <button className="primary" type="submit" aria-disabled={folderBusy || folder.trim() === data.folder}>
+                  {folderBusy ? "Renaming…" : "Save"}
                 </button>
               </div>
             </form>

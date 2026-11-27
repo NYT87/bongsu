@@ -264,7 +264,27 @@ describe("Media: Google Drive's root folder", () => {
     expect(connect.getAttribute("aria-disabled")).toBe("false");
   });
 
-  it("shows a connected Drive's root, saves another, and connects again keeping it", async () => {
+  it("says Saving… while the root folder is saved, and Opening Google… once Connect is clicked", async () => {
+    let answer: (r: { body: unknown }) => void = () => {};
+    fakeApi({
+      "GET state": admin,
+      "GET media-stores": stores({ root: { id: "f1", name: "bongsu-media" } }),
+      "POST media-stores/drive/root": () => new Promise((resolve) => (answer = resolve)),
+      "POST media-stores/drive/start": { body: { url: "https://accounts.google.com/o/oauth2/v2/auth?x=3" } },
+    });
+    open("media");
+    const field = await screen.findByLabelText(/^Root folder/);
+    await userEvent.clear(field);
+    await userEvent.type(field, "other");
+    await userEvent.click(screen.getByRole("button", { name: "Save the root folder" }));
+    expect((await screen.findByRole("button", { name: "Saving…" })).getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("button", { name: "Connect again" }).getAttribute("aria-disabled")).toBe("true");
+    answer({ body: { saved: true, settings: { root: { id: "f2", name: "other" } } } });
+    await userEvent.click(await screen.findByRole("button", { name: "Connect again" }));
+    expect(await screen.findByRole("button", { name: "Opening Google…" })).toBeTruthy();
+  });
+
+  it("shows a connected Drive's root, and connects again keeping it", async () => {
     const calls = fakeApi({
       "GET state": admin,
       "GET media-stores": stores({ root: { id: "f1", name: "bongsu-media" } }),
@@ -278,6 +298,16 @@ describe("Media: Google Drive's root folder", () => {
     await userEvent.click(screen.getByRole("button", { name: "Connect again" }));
     await waitFor(() => expect(assign).toHaveBeenCalled());
     expect(calls.find((c) => c.path === "media-stores/drive/start")?.body).toEqual({}); // the saved root stays
+  });
+
+  it("saves another root folder for a connected Drive", async () => {
+    const calls = fakeApi({
+      "GET state": admin,
+      "GET media-stores": stores({ root: { id: "f1", name: "bongsu-media" } }),
+      "POST media-stores/drive/root": { body: { saved: true, settings: { root: { id: "f2", name: "other" } } } },
+    });
+    open("media");
+    const field = await screen.findByLabelText(/^Root folder/);
     await userEvent.clear(field);
     await userEvent.type(field, "other");
     await userEvent.click(screen.getByRole("button", { name: "Save the root folder" }));
@@ -680,6 +710,27 @@ describe("Settings → Media: the workspace's folder", () => {
       ),
     ).toBeTruthy();
     expect(calls.find((c) => c.path === "settings/media/folder")?.body).toEqual({ folder: "demo-trips" });
+  });
+
+  it("says the rename is under way until it's done: the button reads Renaming… and takes no second click", async () => {
+    let answer: (r: { body: unknown }) => void = () => {};
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET settings/media": () => media("demo-travel"),
+      "PUT settings/media/folder": () => new Promise((resolve) => (answer = resolve)),
+    });
+    open("settings/media");
+    const field = await screen.findByLabelText("Folder");
+    await waitFor(() => expect(field).toHaveProperty("value", "demo-travel"));
+    await userEvent.clear(field);
+    await userEvent.type(field, "demo-trips");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    const pending = await screen.findByRole("button", { name: "Renaming…" });
+    expect(pending.getAttribute("aria-disabled")).toBe("true");
+    await userEvent.click(pending);
+    expect(calls.filter((c) => c.path === "settings/media/folder")).toHaveLength(1);
+    answer({ body: { folder: "demo-trips", renamed: ["drive"], made: [], failed: [] } });
+    expect(await screen.findByRole("button", { name: "Save" })).toBeTruthy();
   });
 
   it("shows the refusal of a name a store already has, and keeps the field", async () => {
