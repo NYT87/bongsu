@@ -47,6 +47,7 @@ import {
   finishDriveConnect,
   makeWorkspaceFolders,
   removeStore,
+  renameWorkspaceFolder,
   rootInput,
   StoreError,
   s3Credentials,
@@ -89,7 +90,6 @@ import {
   NameError,
   sessionWorkspace,
   setDisplayName,
-  setMediaFolder,
   setWorkspaceSettings,
   workspaceRef,
   workspaceSettings,
@@ -1840,11 +1840,10 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   app.put(
     "/admin-api/settings/media/folder",
     wrap(async (c) => {
-      const folder = await setMediaFolder(c.env.DB, ws(c), String((await body(c)).folder ?? ""), nowS());
-      await audit(c, "media_folder", folder, { folder });
-      // the new folder in the stores the workspace uses; one that fails makes it on first use
-      const { failed } = await makeWorkspaceFolders(c.env, fetcher, ws(c));
-      return { folder, failed };
+      // renamed in place where a store can, made new where it can't; never onto a name a store already has
+      const r = await renameWorkspaceFolder(c.env, fetcher, ws(c), String((await body(c)).folder ?? ""), nowS());
+      await audit(c, "media_folder", r.folder, { folder: r.folder, renamed: r.renamed, made: r.made });
+      return r;
     }),
   );
   /** The settings and keys a workspace's bucket form sends (its saved keys when both are left empty). */

@@ -9,11 +9,12 @@ import { nextFiring, parseCron } from "@bongsu/core/cron";
 import type { Env } from "@bongsu/core/env";
 import { utcIso } from "@bongsu/core/formats/time";
 import { scanInbox } from "@bongsu/core/inbox";
+import { mediaStores } from "@bongsu/core/media/index";
 import { saveStore } from "@bongsu/core/media/manage";
 import { createWorkspace } from "@bongsu/core/people";
 import { runDue } from "@bongsu/core/schedules";
 import { beforeEach, describe, expect, it } from "vitest";
-import { seedMediaStore, TEST_S3_KEYS, TEST_S3_SETTINGS, testEnv, World } from "./world";
+import { seedMediaStore, TEST_DRIVE_GRANT, TEST_S3_KEYS, TEST_S3_SETTINGS, testEnv, World } from "./world";
 
 const nowS = () => Math.floor(Date.now() / 1000);
 const fake: Verifiers = {
@@ -137,7 +138,8 @@ describe("a workspace's media settings", () => {
     });
 
     const put = (folder: unknown) => amy("/admin-api/settings/media/folder", { folder }, { method: "PUT" });
-    expect((await put("demo-a")).json).toEqual({ folder: "demo-a", failed: [] });
+    // no UPLOADS folder in the instance's Drive yet: nothing to rename, so the new one is made
+    expect((await put("demo-a")).json).toEqual({ folder: "demo-a", renamed: [], made: ["drive"], failed: [] });
     expect((await amy("/admin-api/settings/media")).json.folder).toBe("demo-a");
     const taken = await put("demo-studio"); // the other workspace's
     expect(taken.status).toBe(400);
@@ -239,6 +241,66 @@ describe("a workspace's media settings", () => {
     });
     const local = await ina("/admin-api/media-stores/s3/test", { ...S3_FORM, endpoint: "http://127.0.0.1:9000" });
     expect(local.status).toBe(200);
+  });
+
+  it("renames the folder in place in Drive, files and ids kept, and never onto a name a store already has", async () => {
+    const amy = await as("amy", "admin");
+    const put = (folder: string) => amy("/admin-api/settings/media/folder", { folder }, { method: "PUT" });
+    const file = w.drivePut("UPLOADS/inbox/trip/a.mp4", { md5: "m", mimeType: "video/mp4" });
+    const top = [...w.drive.entries()].find(([, f]) => f.name === "UPLOADS" && !f.parent)![0];
+    w.drivePut("taken-name/keep.txt", { md5: "k", mimeType: "text/plain" });
+    const folderNow = () =>
+      env.DB.prepare("SELECT media_folder FROM workspace_settings WHERE workspace_id = 'default'").first(
+        "media_folder",
+      );
+
+    const refused = await put("taken-name");
+    expect([refused.status, refused.json.error]).toEqual([
+      400,
+      "Google Drive already has a folder named taken-name: pick a name it doesn't use",
+    ]);
+    expect([w.drive.get(top)!.name, await folderNow()]).toEqual(["UPLOADS", "UPLOADS"]); // nothing changed
+
+    expect((await put("demo-renamed")).json).toEqual({
+      folder: "demo-renamed",
+      renamed: ["drive"],
+      made: [],
+      failed: [],
+    });
+    expect(w.drive.get(top)!.name).toBe("demo-renamed"); // the same folder
+    expect([...w.drive.values()].filter((f) => f.name === "UPLOADS")).toEqual([]); // no new one beside it
+    const store = (await mediaStores(e, w.fetch, "default")).get("drive")!;
+    expect((await store.resolve("demo-renamed/inbox/trip/a.mp4"))?.id).toBe(file);
+    expect(await store.inside(file, "demo-renamed")).toBe(true); // still this workspace's media
+  });
+
+  it("puts the folders already renamed back when a store refuses its rename", async () => {
+    const amy = await as("amy", "admin");
+    const FOLDER = "application/vnd.google-apps.folder";
+    w.drivePut("UPLOADS/inbox/a.txt", { md5: "a", mimeType: "text/plain" }); // the instance's Drive: at the top
+    w.drive.set("ws-root-id", { md5: "", mimeType: FOLDER, name: "our media" });
+    // the workspace's own Drive, its folder in its own root: renamed after the instance's ("drive" < "drive-default")
+    await saveStore(
+      e,
+      w.fetch,
+      { workspaceId: "default" },
+      "drive",
+      { root: { id: "ws-root-id", name: "our media" } },
+      TEST_DRIVE_GRANT,
+      "amy",
+      0,
+    );
+    const [instanceFolder] = [...w.drive.entries()].find(([, f]) => f.name === "UPLOADS" && !f.parent)!;
+    const [ownFolder] = [...w.drive.entries()].find(([, f]) => f.name === "UPLOADS" && f.parent === "ws-root-id")!;
+    w.driveRenameRefused.add(ownFolder);
+    const r = await amy("/admin-api/settings/media/folder", { folder: "demo-next" }, { method: "PUT" });
+    expect([r.status, r.json.error]).toEqual([400, expect.stringMatching(/^couldn't rename the folder: .*403/)]);
+    expect([w.drive.get(instanceFolder)!.name, w.drive.get(ownFolder)!.name]).toEqual(["UPLOADS", "UPLOADS"]);
+    expect(
+      await env.DB.prepare("SELECT media_folder FROM workspace_settings WHERE workspace_id = 'default'").first(
+        "media_folder",
+      ),
+    ).toBe("UPLOADS");
   });
 
   it("changes that ask for a fresh passkey check refuse without one", async () => {

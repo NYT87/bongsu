@@ -80,6 +80,21 @@ describe("media store conformance: local (a directory)", () => {
     expect(await (await store.stream(a)).text()).toBe("one");
   });
 
+  it("renames a workspace's folder in place, ids kept, and never onto a folder that exists", async () => {
+    const root = join(tmp, "store-rename");
+    const store = new LocalStore(root);
+    const a = await putFile(store, root, "UPLOADS/inbox/a.mp4", "one");
+    const folder = (await store.resolve("UPLOADS"))!.id;
+    await putFile(store, root, "taken/keep.txt", "k");
+    await expect(store.renameFolder("UPLOADS", "taken")).rejects.toThrow(/exists already/);
+    await store.renameFolder("UPLOADS", "demo-renamed");
+    expect(await store.resolve("UPLOADS")).toBeNull();
+    expect((await store.resolve("demo-renamed"))?.id).toBe(folder);
+    expect((await store.resolve("demo-renamed/inbox/a.mp4"))?.id).toBe(a);
+    expect(await (await store.stream(a)).text()).toBe("one");
+    await expect(store.renameFolder("UPLOADS", "x")).rejects.toThrow(/no folder/);
+  });
+
   it("keeps one checksum per file: a change replaces it, a deleted file's goes on the next walk (#98)", async () => {
     const root = join(tmp, "store-sums");
     const store = new LocalStore(root);

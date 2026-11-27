@@ -58,6 +58,9 @@ export interface MediaStore {
   /** Moves a file or a folder (with its contents) into the folder at a path, created when missing. Throws MediaRefused
    *  when the store says no. */
   move(id: string, toFolderPath: string): Promise<void>;
+  /** Renames the folder at a path (its last part becomes `name`) in place: it and everything inside keep their ids.
+   *  Without it (a bucket, where a folder is a key prefix), a workspace's changed folder is a new one. */
+  renameFolder?(path: string, name: string): Promise<void>;
   /** A URL the platform can fetch directly for `ttlS` seconds (presigned). Without it, the signed /m/ proxy streams. */
   publicUrl?(id: string, ttlS: number): Promise<string>;
   /** Where the browser uploads a new file into a folder path. Without it, the app hides the upload button. */

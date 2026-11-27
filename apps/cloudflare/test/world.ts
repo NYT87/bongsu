@@ -44,6 +44,8 @@ export class World {
   private driveUnsearchable = new Set<string>();
   /** Drive answers every write with 403 (a service account without edit rights). */
   driveRefuses = false;
+  /** Drive answers a rename of these ids with 403 (one store of several failing midway). */
+  driveRenameRefused = new Set<string>();
   drive = new Map<
     string,
     {
@@ -325,9 +327,14 @@ export class World {
       const f = this.drive.get(decodeURIComponent(url.pathname.split("/").pop()!));
       if (!f) return new Response("404", { status: 404 });
       if (this.driveRefuses) return new Response("403", { status: 403 });
+      const id = decodeURIComponent(url.pathname.split("/").pop()!);
+      const b = ((await req.text()) || "{}") as string;
+      const name = (JSON.parse(b) as { name?: string }).name;
+      if (name !== undefined && this.driveRenameRefused.has(id)) return new Response("403", { status: 403 });
+      if (name !== undefined) f.name = name;
       const add = url.searchParams.get("addParents");
       if (add) f.parent = add;
-      return json({ id: url.pathname.split("/").pop() });
+      return json({ id });
     }
     if (url.hostname === "www.googleapis.com" && url.pathname === "/drive/v3/files") {
       this.driveQueries++;
