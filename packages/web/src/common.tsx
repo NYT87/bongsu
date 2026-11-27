@@ -1,7 +1,16 @@
 // What the app's screens share: the types the server answers with, loading and its cache, time zones, the
 // platforms and channels, the shared state, icons and the small pieces several screens show.
 
-import { createContext, type ReactNode, useCallback, useContext, useEffect, useLayoutEffect, useState } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { api, HttpError, type QueueItem, type YouTubeSettings, type YouTubeTexts } from "./api";
 import { dateLocale, t } from "./i18n";
 
@@ -610,10 +619,20 @@ export function ConfirmButton({
 }) {
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
+  // The question replaces the button in place, so the focus would fall back to the page: it moves to Cancel when the
+  // question opens and back to the button when it closes, for keyboard and screen reader users.
+  const button = useRef<HTMLButtonElement>(null);
+  const cancel = useRef<HTMLButtonElement>(null);
+  const asked = useRef(false);
+  useEffect(() => {
+    if (asking) cancel.current?.focus();
+    else if (asked.current) button.current?.focus();
+    asked.current = asking;
+  }, [asking]);
   const cls = tone === "danger" ? "danger" : "";
   if (!asking)
     return (
-      <button className={`${cls}${full ? " full" : ""}`} onClick={() => setAsking(true)}>
+      <button ref={button} className={`${cls}${full ? " full" : ""}`} onClick={() => setAsking(true)}>
         {label}
       </button>
     );
@@ -623,7 +642,7 @@ export function ConfirmButton({
         <strong>{confirm}</strong> {detail}
       </p>
       <div className="row">
-        <button onClick={() => setAsking(false)} disabled={busy}>
+        <button ref={cancel} onClick={() => setAsking(false)} disabled={busy}>
           {t("common.cancel")}
         </button>
         <button

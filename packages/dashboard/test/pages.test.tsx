@@ -3,6 +3,7 @@
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { axeProblems } from "../../web/test/axe";
 import { App } from "../src/App";
 import { fakeApi } from "./fake-api";
 
@@ -843,5 +844,54 @@ describe("Connections: where a missing OAuth app is added", () => {
     open("connections");
     await userEvent.setup().click(await screen.findByRole("button", { name: "add it" }));
     await waitFor(() => expect(location.pathname).toBe("/dashboard/admin/apps"));
+  });
+});
+
+describe("accessibility (axe): no serious or critical violation", () => {
+  const routes = {
+    "GET state": () => ({ body: state() }),
+    "GET overview": { status: 500, body: { error: "not needed here" } },
+    "GET members": () => ({ body: { members: people, invites: [] } }),
+    "GET settings": () => ({
+      body: {
+        name: ws.name,
+        timezone: "UTC",
+        digestHour: 8,
+        dryRun: false,
+        publicUrl: "https://bongsu.example.com",
+        ntfy: { set: false, host: null },
+        encryptionKeySet: true,
+        iconUrl: null,
+        server: { version: "0.7.0", commit: null },
+      },
+    }),
+  };
+
+  it("on the sign-in screen", async () => {
+    fakeApi({ "GET state": () => ({ body: { ...state(), signedIn: false } }) });
+    open("");
+    await screen.findByRole("heading", { name: "Sign in" });
+    expect(await axeProblems()).toEqual([]);
+  });
+
+  it("in the shell, on the Overview", async () => {
+    fakeApi(routes);
+    open("");
+    await screen.findByRole("heading", { level: 1, name: "Overview" });
+    expect(await axeProblems()).toEqual([]);
+  });
+
+  it("on Members", async () => {
+    fakeApi(routes);
+    open("members");
+    await screen.findByText("ada@example.com", { exact: false });
+    expect(await axeProblems()).toEqual([]);
+  });
+
+  it("on Settings", async () => {
+    fakeApi(routes);
+    open("settings");
+    await screen.findByRole("heading", { name: "Version" });
+    expect(await axeProblems()).toEqual([]);
   });
 });
