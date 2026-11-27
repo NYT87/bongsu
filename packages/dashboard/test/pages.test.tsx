@@ -448,8 +448,10 @@ describe("the workspace switcher", () => {
       ["Demo Traveladmin", "true"],
       ["Demo Runningeditor", "false"],
     ]);
-    // the keyboard starts on the current one
-    expect(document.activeElement).toBe(items[0]);
+    // the keyboard starts in the search
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("searchbox", { name: "Find a workspace" })),
+    );
     expect(items[1].querySelector("img.ws-avatar")?.getAttribute("src")).toBe("/icons/w2.png");
     await user.click(items[1]);
     await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
@@ -460,23 +462,87 @@ describe("the workspace switcher", () => {
     });
   });
 
-  it("moves with the arrow keys, and Escape closes it and goes back to the token", async () => {
+  it("moves with the arrow keys from the search into the list and back, and Escape closes it", async () => {
     fakeApi(routes(two()));
     open("");
     const user = userEvent.setup();
     const token = await screen.findByRole("button", { name: /Switch workspace/ });
     token.focus();
     await user.keyboard("{ArrowDown}");
+    const search = screen.getByRole("searchbox", { name: "Find a workspace" });
+    await waitFor(() => expect(document.activeElement).toBe(search));
     const items = within(screen.getByRole("menu")).getAllByRole("menuitemradio");
-    await waitFor(() => expect(document.activeElement).toBe(items[0]));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(items[0]);
     await user.keyboard("{ArrowDown}");
     expect(document.activeElement).toBe(items[1]);
     await user.keyboard("{ArrowDown}");
     expect(document.activeElement).toBe(items[0]);
+    // up from the first workspace: back to the search
+    await user.keyboard("{ArrowUp}");
+    expect(document.activeElement).toBe(search);
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("menu")).toBeNull();
     expect(document.activeElement).toBe(token);
     expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("filters the list as you type, ignoring case and accents, and says so when nothing matches", async () => {
+    const three = {
+      ...two(),
+      workspaces: [...two().workspaces, { id: "w3", name: "Café Crew", role: "admin", iconUrl: null }],
+    };
+    fakeApi(routes(three));
+    open("");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Switch workspace/ }));
+    const names = () =>
+      within(screen.getByRole("menu"))
+        .getAllByRole("menuitemradio")
+        .map((i) => i.querySelector(".ws-name")?.textContent);
+    expect(names()).toEqual(["Demo Travel", "Demo Running", "Café Crew"]);
+    await user.keyboard("RUN");
+    expect(names()).toEqual(["Demo Running"]);
+    await user.clear(screen.getByRole("searchbox"));
+    await user.keyboard("cafe");
+    expect(names()).toEqual(["Café Crew"]);
+    await user.keyboard("zzz");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe("No workspace matches “cafezzz”.");
+  });
+
+  it("Enter in the search picks the first match", async () => {
+    const calls = fakeApi(routes(two()));
+    open("");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: /Switch workspace/ }));
+    await user.keyboard("running{Enter}");
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.find((c) => c.method === "POST")?.body).toEqual({ id: "w2" });
+  });
+
+  it("opens with ⌘K or Ctrl+K, the search focused and empty", async () => {
+    fakeApi(routes(two()));
+    open("");
+    const user = userEvent.setup();
+    await screen.findByRole("button", { name: /Switch workspace/ });
+    await user.keyboard("{Control>}k{/Control}");
+    const search = await screen.findByRole("searchbox", { name: "Find a workspace" });
+    await waitFor(() => expect(document.activeElement).toBe(search));
+    await user.keyboard("run{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    await user.keyboard("{Meta>}k{/Meta}");
+    await waitFor(() => expect(screen.getByRole("searchbox")).toHaveProperty("value", ""));
+    expect(within(screen.getByRole("menu")).getAllByRole("menuitemradio")).toHaveLength(2);
+  });
+
+  it("has no shortcut with a single workspace", async () => {
+    fakeApi(routes(state()));
+    open("");
+    const user = userEvent.setup();
+    await screen.findByText("Demo Travel", { selector: ".ws-name" });
+    await user.keyboard("{Control>}k{/Control}");
+    expect(screen.queryByRole("searchbox")).toBeNull();
   });
 });
 

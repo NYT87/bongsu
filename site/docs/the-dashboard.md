@@ -188,7 +188,8 @@ workspace in its **Workspace** list to read that workspace's log instead, as its
 The top of the sidebar shows the workspace you work in: its icon (a coloured placeholder until it has one), its name and
 your role there. Someone who can open more than one workspace also sees an up-and-down arrow there: it opens the list
 of their workspaces, the current one checked; choose another and the dashboard reloads there, with the role they have
-in it. The arrow shows for people who are members of several workspaces and for instance admins, who can open all of
+in it. Type in **Find a workspace** at the top of the list to narrow it by name (case and accents don't matter); Enter
+opens the first match. **⌘K** (Ctrl+K on Windows and Linux) opens the list with the search ready, from any page. The arrow shows for people who are members of several workspaces and for instance admins, who can open all of
 them; a person in a single workspace sees only its name.
 
 ## Workspaces
