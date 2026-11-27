@@ -428,6 +428,27 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(await resolveItem(await testEnv(env), w.fetch, key, "UTC", "default")).not.toBeNull();
   });
 
+  it("the dashboard's content routes see only the user's workspace", async () => {
+    const { key } = await seedReel(w, { approve: false }); // the default workspace's
+    const token = await createSession(env.DB, Math.floor(Date.now() / 1000), { app: "dashboard", userId: "bea" });
+    const post = async (path: string, body: unknown) =>
+      (
+        await exports.default.fetch(`https://scheduler.test${path}`, {
+          method: "POST",
+          headers: { Cookie: `bongsu_admin=${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        })
+      ).status;
+    expect((await as("bea", "dashboard", `/admin-api/content/item?key=${encodeURIComponent(key)}`)).status).toBe(404);
+    expect(await post("/admin-api/content/item/texts", { key, caption: "Taken" })).toBe(404);
+    expect(await post("/admin-api/content/item/hold", { key, hold: true })).toBe(404);
+    expect(await post("/admin-api/content/approve/options", { key })).toBe(404);
+    const queue = JSON.stringify((await as("bea", "dashboard", "/admin-api/content/queue")).json);
+    expect(queue).not.toContain(key);
+    // its owner, in the default workspace, finds it there
+    expect((await as("owner", "dashboard", `/admin-api/content/item?key=${encodeURIComponent(key)}`)).status).toBe(200);
+  });
+
   it("an owner's CLI token of workspace B can't see another workspace's item to approve it", async () => {
     const { key } = await seedReel(w, { approve: false }); // the default workspace's
     const token = "bongsu_beaclibeaclibeaclibeaclibe";
