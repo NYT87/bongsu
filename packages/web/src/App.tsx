@@ -401,7 +401,7 @@ export function WorkspaceSheet({ me, onClose, onSwitched }: { me: Me; onClose: (
     try {
       await switchWorkspace(id);
       cachePrune(true); // the day's cache is the old workspace's
-      location.hash = "#/queue";
+      location.hash = "#/"; // the new workspace starts on Today, its home
       onSwitched();
     } catch (e) {
       setErr(e instanceof HttpError && e.status === 403 ? t("workspace.gone") : (e as Error).message);

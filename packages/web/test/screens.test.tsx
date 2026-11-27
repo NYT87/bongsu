@@ -101,7 +101,8 @@ describe("the workspace picker", () => {
     expect(row("Demo Running").querySelector("img")).toBeNull();
   });
 
-  it("marks where the session is, and a click on another moves the session there", async () => {
+  it("marks where the session is, and a click on another moves the session there, to Today", async () => {
+    location.hash = "#/stats";
     const calls = fakeApi({ "POST session/workspace": { body: { ok: true, id: "w2" } } });
     const onSwitched = vi.fn();
     render(<WorkspaceSheet me={me} onClose={() => {}} onSwitched={onSwitched} />);
@@ -109,6 +110,7 @@ describe("the workspace picker", () => {
     await userEvent.setup().click(within(row("Demo Running")).getByRole("button"));
     await waitFor(() => expect(onSwitched).toHaveBeenCalledOnce());
     expect(calls).toEqual([{ method: "POST", path: "session/workspace", body: { id: "w2" } }]);
+    expect(location.hash).toBe("#/");
   });
 
   it("says so when the person is no longer in the workspace they chose", async () => {
