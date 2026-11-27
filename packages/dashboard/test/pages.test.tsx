@@ -272,3 +272,58 @@ describe("Media: Google Drive's root folder", () => {
     );
   });
 });
+
+describe("Workspaces: a new workspace's admin", () => {
+  const routes = (made: (body: unknown) => { body: unknown }) => ({
+    "GET state": () => ({ body: { ...state(), instanceAdmin: true } }),
+    "GET workspaces": { body: { workspaces: [] } },
+    "GET scheduler": { status: 500, body: { error: "not needed here" } },
+    "GET users": {
+      body: {
+        users: [
+          { id: "u1", email: "ada@example.com", name: "Ada" },
+          { id: "u2", email: "ben@example.com", name: "Ben" },
+        ],
+      },
+    },
+    "POST workspaces": made,
+  });
+
+  it("picks an account on the instance: no radios, the account is sent, and it's its admin right away", async () => {
+    const calls = fakeApi(routes(() => ({ body: { id: "w2", admin: "u2" } })));
+    open("workspaces");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Create a workspace" }));
+    expect(screen.queryByRole("radio")).toBeNull();
+    const picker = screen.getByLabelText("Its admin") as HTMLSelectElement;
+    // me first, then the other accounts (not me twice), then someone new
+    await waitFor(() =>
+      expect([...picker.options].map((o) => o.textContent)).toEqual([
+        "Me",
+        "Ben (ben@example.com)",
+        "Someone new: invite them by email",
+      ]),
+    );
+    await user.type(screen.getByLabelText("Name"), "Demo Running");
+    await user.selectOptions(picker, "ben@example.com");
+    await user.click(screen.getByRole("button", { name: "Create the workspace" }));
+    expect(await screen.findByText("Demo Running is ready: ben@example.com is its admin.")).toBeTruthy();
+    expect(calls.find((c) => c.method === "POST")?.body).toMatchObject({
+      name: "Demo Running",
+      admin: "ben@example.com",
+    });
+  });
+
+  it("invites someone new by email and shows their link", async () => {
+    const calls = fakeApi(routes(() => ({ body: { id: "w2", invite: { url: "https://bongsu.example.com/i/x" } } })));
+    open("workspaces");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Create a workspace" }));
+    await user.type(screen.getByLabelText("Name"), "Client");
+    await user.selectOptions(screen.getByLabelText("Its admin"), "new");
+    await user.type(screen.getByLabelText("Their email"), " New@Example.com ");
+    await user.click(screen.getByRole("button", { name: "Create the workspace" }));
+    expect(await screen.findByText("Invite link for new@example.com")).toBeTruthy();
+    expect(calls.find((c) => c.method === "POST")?.body).toMatchObject({ admin: "new@example.com" });
+  });
+});

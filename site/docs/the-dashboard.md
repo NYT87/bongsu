@@ -26,8 +26,8 @@ instance: its workspaces, its media stores and its OAuth apps, and who works in 
 
 A new instance has no workspace and no one in it. The first visit to `/dashboard` asks for the `SETUP_TOKEN`, your name
 and email and a passkey; that makes you the instance admin, who belongs to no workspace yet. The dashboard then asks
-you to **Create your first workspace**: a name, its time zone and its first admin, you preselected or someone else by
-email (they get an invite link). Once you're its admin it opens on **Get started**; otherwise it waits on the
+you to **Create your first workspace**: a name, its time zone and its admin: you (preselected), another account
+on the instance (its admin right away), or someone new by email (they get an invite link). Once you're its admin it opens on **Get started**; otherwise it waits on the
 **Workspaces** page. An instance admin who is a member of no workspace (the instance's workspaces are clients',
 say) signs in to the Instance pages, Devices & passkeys and the instance's Audit, and opens a workspace from
 **Workspaces**.
@@ -184,8 +184,8 @@ several workspaces and for instance admins, who can open all of them. A person i
 
 Instance admins see an **Instance** group under the sidebar's sections: **Workspaces**, **Media** and **OAuth apps**.
 **Workspaces** lists every workspace with its **Members**, **Accounts**, when it was **Created** and its **Status**.
-**Create a workspace** takes a name, a time zone and its first admin: you, or someone invited by email (copy their
-link). **Open** works in that workspace, as its admin, until you open another (the sidebar's switcher does the same).
+**Create a workspace** takes a name, a time zone and its admin: you, an account already on the instance
+(its admin right away), or someone new invited by email (copy their link). **Open** works in that workspace, as its admin, until you open another (the sidebar's switcher does the same).
 **Rename** changes its name (its own admins can also rename it in **Settings**), and **Add an admin** makes an invite
 link for a new admin.
 

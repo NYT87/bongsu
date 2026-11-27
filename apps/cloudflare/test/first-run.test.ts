@@ -4,6 +4,7 @@ import { env } from "cloudflare:workers";
 import { adminRoutes, FRESH_S } from "@bongsu/api/dashboard/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import type { Env } from "@bongsu/core/env";
+import { createUser } from "@bongsu/core/people";
 import { beforeEach, describe, expect, it } from "vitest";
 import { World } from "./world";
 
@@ -176,6 +177,34 @@ describe("the first run", () => {
     expect((await call("/admin-api/state")).json).toMatchObject({ noWorkspace: false, role: "admin" });
     const token = invite.url.split("/").pop();
     expect((await call(`/admin-api/invite/${token}`)).json).toEqual({ workspace: "Demo Running", role: "admin" });
+  });
+
+  it("makes an account already on the instance the new workspace's admin right away, with no invite", async () => {
+    await bootstrap();
+    const ben = await createUser(env.DB, { email: "ben@example.com", name: "Ben" }, 0);
+    // the accounts the form picks from: the instance admin and Ben
+    expect(((await call("/admin-api/users")).json.users as { email: string }[]).map((u) => u.email).sort()).toEqual([
+      "ben@example.com",
+      "first@example.com",
+    ]);
+    const made = await call("/admin-api/workspaces", {
+      name: "Demo Running",
+      timezone: "UTC",
+      admin: "Ben@Example.com",
+    });
+    expect(made.status).toBe(200);
+    expect(made.json).toEqual({ id: made.json.id, admin: ben });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM invites").first("n")).toBe(0);
+    expect(
+      await env.DB.prepare("SELECT workspace_id, user_id, role FROM memberships")
+        .all()
+        .then((r) => r.results),
+    ).toEqual([{ workspace_id: made.json.id, user_id: ben, role: "admin" }]);
+    // the instance admin's session stays where it was: the workspace is Ben's
+    expect(await env.DB.prepare("SELECT workspace_id FROM sessions").first("workspace_id")).toBeNull();
+    expect(await env.DB.prepare("SELECT target, workspace_id FROM audit WHERE action = 'member_role'").first()).toEqual(
+      { target: `user:${ben}`, workspace_id: made.json.id },
+    );
   });
 
   it("signs in again in no workspace: the passkey check works there, then a workspace can be made", async () => {
