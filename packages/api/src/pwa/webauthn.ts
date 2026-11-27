@@ -83,7 +83,8 @@ export async function registrationOptions(db: Db, rpID: string, nowS: number, da
       id: r.id,
       transports: r.transports ? JSON.parse(r.transports) : undefined,
     })),
-    authenticatorSelection: { residentKey: "preferred", userVerification: "required" },
+    // discoverable: signing in without an email (the app, an invite) lists no passkeys and finds it on the device
+    authenticatorSelection: { residentKey: "required", userVerification: "required" },
   });
   return { options, challengeId: await saveChallenge(db, options.challenge, "setup", data, nowS) };
 }
@@ -142,15 +143,21 @@ export async function authenticationOptions(
   nowS: number,
   userId?: string,
 ) {
-  // a user's own passkeys (the dashboard signs in by email); every passkey for the PWA's single owner
-  const keys = await db
-    .prepare("SELECT id, transports FROM passkeys WHERE CAST(?1 AS TEXT) IS NULL OR user_id = ?1")
-    .bind(userId ?? null)
-    .all<{ id: string; transports: string | null }>();
+  // a user's own passkeys (the dashboard signs in by email, an action is confirmed by its user); with no user (the
+  // app's sign-in, an invite) none are listed: the device offers its own discoverable passkeys, and a stranger learns
+  // nothing about who has one here
+  const keys = userId
+    ? (
+        await db
+          .prepare("SELECT id, transports FROM passkeys WHERE user_id = ?1")
+          .bind(userId)
+          .all<{ id: string; transports: string | null }>()
+      ).results
+    : [];
   const options = await generateAuthenticationOptions({
     rpID,
     userVerification: "required",
-    allowCredentials: keys.results.map((r) => ({
+    allowCredentials: keys.map((r) => ({
       id: r.id,
       transports: r.transports ? JSON.parse(r.transports) : undefined,
     })),

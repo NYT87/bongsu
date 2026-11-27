@@ -2,7 +2,9 @@
 
 ## Sign-in
 
-- Everyone signs in with passkeys (WebAuthn). The relying party is `RP_ID`, the app's hostname.
+- Everyone signs in with passkeys (WebAuthn). The relying party is `RP_ID`, the app's hostname. Passkeys are
+  discoverable (the device finds its own for this site), so signing in without an email lists none: nobody can ask
+  the instance which passkeys it knows.
 - The first person on a new instance signs up with the `SETUP_TOKEN` and becomes the instance admin. The token is
   useless once a user exists. Anyone else joins through an invite (below).
 - Later devices get a one-time code (15 minutes, stored hashed) from a signed-in session.
