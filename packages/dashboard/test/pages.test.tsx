@@ -77,12 +77,10 @@ describe("Settings: the Icon card", () => {
     open("settings");
     const user = userEvent.setup();
     expect(await screen.findByText("No icon: the app's own is used.")).toBeTruthy();
-    expect(sidebar().querySelector("img.workspace-icon")).toBeNull();
+    expect(sidebar().querySelector("img.ws-avatar")).toBeNull();
     await user.upload(screen.getByLabelText("Upload an icon"), png());
     expect(await screen.findByText("Icon saved.")).toBeTruthy();
-    await waitFor(() =>
-      expect(sidebar().querySelector("img.workspace-icon")?.getAttribute("src")).toBe("/icons/w1.png"),
-    );
+    await waitFor(() => expect(sidebar().querySelector("img.ws-avatar")?.getAttribute("src")).toBe("/icons/w1.png"));
     expect(document.querySelector("img.icon-preview")?.getAttribute("src")).toBe("/icons/w1.png");
     expect(calls.find((c) => c.method === "PUT")?.body).toEqual({ type: "image/png", name: "mark.png" });
   });
@@ -98,7 +96,7 @@ describe("Settings: the Icon card", () => {
     const card = (await screen.findByText("The icon must be square.")).closest(".card") as HTMLElement;
     expect(within(card).getByRole("heading", { name: "Icon" })).toBeTruthy();
     expect(screen.queryByText("Icon saved.")).toBeNull();
-    expect(sidebar().querySelector("img.workspace-icon")).toBeNull();
+    expect(sidebar().querySelector("img.ws-avatar")).toBeNull();
   });
 
   it("removes the icon, and the sidebar drops it", async () => {
@@ -112,10 +110,10 @@ describe("Settings: the Icon card", () => {
       },
     });
     open("settings");
-    await waitFor(() => expect(sidebar().querySelector("img.workspace-icon")).not.toBeNull());
+    await waitFor(() => expect(sidebar().querySelector("img.ws-avatar")).not.toBeNull());
     await userEvent.setup().click(await screen.findByRole("button", { name: "Remove" }));
     expect(await screen.findByText("Icon removed.")).toBeTruthy();
-    await waitFor(() => expect(sidebar().querySelector("img.workspace-icon")).toBeNull());
+    await waitFor(() => expect(sidebar().querySelector("img.ws-avatar")).toBeNull());
     expect(calls.some((c) => c.method === "DELETE" && c.path === "settings/icon")).toBe(true);
   });
 });
@@ -402,6 +400,83 @@ describe("the admin dashboard", () => {
     ).toEqual(["Workspaces", "Media", "OAuth apps", "Audit", "Devices & passkeys"]);
     // no workspace to go back to
     expect(within(sidebar()).queryByRole("navigation", { name: "Dashboards" })).toBeNull();
+  });
+});
+
+describe("the workspace switcher", () => {
+  const two = () => ({
+    ...state(),
+    workspaces: [
+      { id: "w1", name: ws.name, role: "admin", iconUrl: null },
+      { id: "w2", name: "Demo Running", role: "editor", iconUrl: "/icons/w2.png" },
+    ],
+  });
+  const routes = (s: object) => ({
+    "GET state": { body: s },
+    "GET overview": { status: 500, body: { error: "not needed here" } },
+    "POST session/workspace": { body: { id: "w2" } },
+  });
+  const assign = vi.fn();
+  beforeEach(() => {
+    assign.mockReset();
+    vi.spyOn(window.location, "assign").mockImplementation(assign);
+  });
+
+  it("with one workspace, is its token: a placeholder image (not the app's mark), the name and the role, no menu", async () => {
+    fakeApi(routes(state()));
+    open("");
+    const token = (await screen.findByText("Demo Travel", { selector: ".ws-name" })).closest(
+      ".ws-token",
+    ) as HTMLElement;
+    expect(token.tagName).toBe("DIV");
+    expect(within(token).getByText("admin")).toBeTruthy();
+    expect(token.querySelector("span.ws-avatar")).not.toBeNull();
+    expect(sidebar().querySelector("img[src='/favicon.svg']")).toBeNull();
+    expect(token.querySelector(".ws-chevrons")).toBeNull();
+  });
+
+  it("with several, opens a menu that checks the current one, and picking another switches to it", async () => {
+    const calls = fakeApi(routes(two()));
+    open("");
+    const user = userEvent.setup();
+    const token = await screen.findByRole("button", { name: "Workspace: Demo Travel. Switch workspace" });
+    expect(token.getAttribute("aria-expanded")).toBe("false");
+    await user.click(token);
+    const menu = screen.getByRole("menu", { name: "Workspaces" });
+    const items = within(menu).getAllByRole("menuitemradio");
+    expect(items.map((i) => [i.textContent, i.getAttribute("aria-checked")])).toEqual([
+      ["Demo Traveladmin", "true"],
+      ["Demo Runningeditor", "false"],
+    ]);
+    // the keyboard starts on the current one
+    expect(document.activeElement).toBe(items[0]);
+    expect(items[1].querySelector("img.ws-avatar")?.getAttribute("src")).toBe("/icons/w2.png");
+    await user.click(items[1]);
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.find((c) => c.method === "POST")).toEqual({
+      method: "POST",
+      path: "session/workspace",
+      body: { id: "w2" },
+    });
+  });
+
+  it("moves with the arrow keys, and Escape closes it and goes back to the token", async () => {
+    fakeApi(routes(two()));
+    open("");
+    const user = userEvent.setup();
+    const token = await screen.findByRole("button", { name: /Switch workspace/ });
+    token.focus();
+    await user.keyboard("{ArrowDown}");
+    const items = within(screen.getByRole("menu")).getAllByRole("menuitemradio");
+    await waitFor(() => expect(document.activeElement).toBe(items[0]));
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(items[1]);
+    await user.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(items[0]);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(document.activeElement).toBe(token);
+    expect(assign).not.toHaveBeenCalled();
   });
 });
 

@@ -118,41 +118,117 @@ main[tabindex="-1"]:focus {
 .brand img {
   border-radius: 8px;
 }
-/* the sidebar's workspace: its name, or a labelled select when the person has several */
+/* the admin dashboard's label under the brand */
 .workspace {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   padding: 0 8px 12px;
   font-size: 13px;
-}
-.workspace > :not(.workspace-icon) {
-  flex: 1;
-  min-width: 0;
-}
-.workspace-icon {
-  flex: none;
-  border-radius: 5px;
 }
 .icon-preview {
   display: block;
   margin: 0 0 12px;
   border-radius: 14px;
 }
-.workspace label {
-  display: block;
-  margin: 0 0 4px;
-  color: var(--muted);
-}
-.workspace select {
-  min-height: 38px;
-  font-size: 14px;
-}
 .workspace-name {
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* the workspace token (Switcher.tsx): its image, its name cut short, the person's role; with several workspaces a
+   button that opens their menu */
+.ws-switcher {
+  position: relative;
+}
+.ws-token {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  margin: 0 0 12px;
+  padding: 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+}
+button.ws-token {
+  cursor: pointer;
+}
+button.ws-token:hover,
+button.ws-token[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--line) 50%, transparent);
+}
+.ws-avatar {
+  flex: none;
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.ws-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-role {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 80%, transparent);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+}
+.ws-chevrons,
+.ws-check {
+  flex: none;
+  color: var(--muted);
+}
+.ws-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% - 8px);
+  left: 0;
+  width: max(100%, 280px);
+  max-height: 60vh;
+  overflow: auto;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+  box-shadow: 0 12px 32px rgb(15 23 42 / 0.14);
+}
+.ws-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+.ws-menu button:hover,
+.ws-menu button:focus-visible,
+.ws-menu button[aria-checked="true"] {
+  background: color-mix(in srgb, var(--line) 50%, transparent);
+}
+.ws-menu .ws-name {
+  font-weight: 500;
 }
 .nav a {
   display: block;
@@ -342,6 +418,15 @@ button.icon-btn:hover {
     order: 3;
     flex-basis: 100%;
     padding: 8px 0 0;
+  }
+  /* the workspace token takes the brand's place in the top bar, beside the menu button */
+  .ws-switcher,
+  .sidebar > .ws-token {
+    flex: 1;
+    min-width: 0;
+  }
+  .ws-token {
+    margin: 0;
   }
   .menu-btn {
     display: inline-flex;
