@@ -354,7 +354,7 @@ describe("the admin dashboard", () => {
       nav()
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["Workspaces", "Media", "OAuth apps"]);
+    ).toEqual(["Workspaces", "Media", "OAuth apps", "Audit"]);
     await user.click(within(sidebar()).getByRole("link", { name: "Back to Demo Travel" }));
     await heading("Overview");
     expect(location.pathname).toBe("/dashboard/");
@@ -375,7 +375,7 @@ describe("the admin dashboard", () => {
     expect(location.pathname).toBe("/dashboard/admin/apps");
   });
 
-  it("is where an instance admin in no workspace is, with their devices and the instance's audit", async () => {
+  it("is where an instance admin in no workspace is, with their devices", async () => {
     fakeApi(routes({ instanceAdmin: true, noWorkspace: true, workspace: null, workspaces: [], role: null }));
     open("");
     await heading("Workspaces");
@@ -383,8 +383,59 @@ describe("the admin dashboard", () => {
       nav()
         .getAllByRole("link")
         .map((a) => a.textContent),
-    ).toEqual(["Workspaces", "Media", "OAuth apps", "Devices & passkeys", "Audit"]);
+    ).toEqual(["Workspaces", "Media", "OAuth apps", "Audit", "Devices & passkeys"]);
     // no workspace to go back to
     expect(within(sidebar()).queryByRole("navigation", { name: "Dashboards" })).toBeNull();
+  });
+});
+
+describe("Audit", () => {
+  const entry = (id: number, action: string) => ({
+    id,
+    at: 0,
+    actor: "user:u1",
+    action,
+    target: null,
+    detail: null,
+    who: "Ada",
+  });
+  const routes = (s: object) => ({
+    "GET state": { body: { ...state(), ...s } },
+    "GET workspaces": {
+      body: {
+        workspaces: [
+          { id: "w1", name: "Demo Travel" },
+          { id: "w2", name: "Demo Running" },
+        ],
+      },
+    },
+    "GET audit": { body: { entries: [entry(3, "settings_save")] } },
+    "GET audit?instance=1": { body: { entries: [entry(2, "workspace_create")] } },
+    "GET audit?workspace=w2": { body: { entries: [entry(1, "invite_create")] } },
+  });
+
+  it("is the workspace's own log in the workspace, with no switch to another", async () => {
+    const calls = fakeApi(routes({ instanceAdmin: true }));
+    open("audit");
+    expect(await screen.findByText("settings save")).toBeTruthy();
+    expect(screen.queryByLabelText("Which log")).toBeNull();
+    expect(calls.filter((c) => c.path.startsWith("audit")).map((c) => c.path)).toEqual(["audit"]);
+  });
+
+  it("reads the instance's log in the admin dashboard, then any workspace's picked there", async () => {
+    const calls = fakeApi(routes({ instanceAdmin: true }));
+    open("admin/audit");
+    // no workspace picked at first: the instance's own log
+    expect(await screen.findByText("workspace create")).toBeTruthy();
+    const pick = screen.getByLabelText("Workspace") as HTMLSelectElement;
+    expect(pick.value).toBe("");
+    await waitFor(() => expect(pick.options.length).toBe(3));
+    await userEvent.setup().selectOptions(pick, "w2");
+    expect(await screen.findByText("invite create")).toBeTruthy();
+    expect(screen.queryByText("workspace create")).toBeNull();
+    expect(calls.filter((c) => c.path.startsWith("audit")).map((c) => c.path)).toEqual([
+      "audit?instance=1",
+      "audit?workspace=w2",
+    ]);
   });
 });
