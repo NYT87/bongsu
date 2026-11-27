@@ -1,5 +1,30 @@
 # @bongsu/cloudflare
 
+## 0.8.0
+
+### Minor Changes
+
+- ef27c6f: Google Drive gets a root folder: type a folder's name or paste its link on the Media page (or a workspace's Settings → Media) before Connect Google Drive, and every workspace's folder, with its inbox, is made inside it; Save the root folder moves to another later. Bongsu now makes a workspace's folder itself in each store when the store is connected, the workspace is made or its folder changes, instead of failing when it's missing. A new workspace's folder is named after its id, so renaming the workspace never changes it. Run the migrations (0026 adds `oauth_states.flow_settings`).
+- ad92046: Settings shows the version: the dashboard's Settings page gets a Version card with the app's release and commit beside the server's, and the app's Settings adds the server's line under its own. `pnpm run deploy` and the Docker image pass the commit (`BONGSU_COMMIT`).
+
+### Patch Changes
+
+- Updated dependencies [37cba23]
+- Updated dependencies [ee96ff0]
+- Updated dependencies [da9d415]
+- Updated dependencies [50efcdf]
+- Updated dependencies [ef27c6f]
+- Updated dependencies [1eb0dca]
+- Updated dependencies [233aa37]
+- Updated dependencies [bd3b3b9]
+- Updated dependencies [19db664]
+- Updated dependencies [d3de96e]
+- Updated dependencies [ad92046]
+- Updated dependencies [0d0f8b1]
+- Updated dependencies [6a4a95f]
+  - @bongsu/api@0.8.0
+  - @bongsu/core@0.8.0
+
 ## 0.7.0
 
 ### Patch Changes
