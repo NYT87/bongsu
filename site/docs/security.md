@@ -56,7 +56,7 @@ The instance admin is a flag on a user, not a membership. The first person has i
 another member or take it away (**Make instance admin** on the dashboard's Members page, with their passkey), never
 from the last one. A workspace's admins invite people with a one-time link (7
 days; it's looked up by its hash, and kept only encrypted with `ENCRYPTION_KEY` so an admin can copy it again while
-it's pending), change roles and remove members; a removed member's sessions, CLI tokens and devices in
+it's pending), change roles and remove members; a removed member's sessions, CLI tokens, the agent keys they made and devices in
 that workspace go at once, and a workspace always keeps one admin. Accepting an invite never says whether its email
 already has an account. Archiving a workspace (instance admins) stops it completely: nothing publishes, its keys and
 members are refused, its comments and metrics are no longer read, and its data stays. A workspace's audit log shows

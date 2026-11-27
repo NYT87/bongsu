@@ -511,6 +511,24 @@ describe("members", () => {
     expect(await admins()).toBe(1);
   });
 
+  it("revokes the agent keys a removed admin made, and keeps the other admins' (#165)", async () => {
+    const ada = await dash("ada");
+    expect((await ada("/admin-api/members/eda", { role: "admin" })).status).toBe(200);
+    const eda = await dash("eda", "default");
+    const made = await eda("/admin-api/keys", { name: "eda's agent", scopes: ["plan"] });
+    expect(made.status).toBe(200);
+    const kept = await ada("/admin-api/keys", { name: "ada's agent", scopes: ["plan"] });
+    const key = (r: { json: Record<string, unknown> }) => `Bearer ${String(r.json.key)}`;
+    expect((await authenticate(env.DB, key(made), nowS()))?.workspaceId).toBe("default");
+
+    expect((await ada("/admin-api/members/eda/remove", {})).status).toBe(200);
+    // the key Eda copied stops working, revoked (kept, marked) on the Keys page; Ada's still works
+    expect(await authenticate(env.DB, key(made), nowS())).toBeNull();
+    const keys = (await ada("/admin-api/keys")).json.keys as { id: string; revoked_at: number | null }[];
+    expect(keys.find((k) => k.id === made.json.id)?.revoked_at).toBeGreaterThan(0);
+    expect((await authenticate(env.DB, key(kept), nowS()))?.workspaceId).toBe("default");
+  });
+
   it("cuts a removed member off at once", async () => {
     // Eda: an editor in the default workspace, also a member of B
     await env.DB.prepare(
