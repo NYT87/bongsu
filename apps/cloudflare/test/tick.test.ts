@@ -254,6 +254,17 @@ describe("tick: timings follow the interval", () => {
     expect((await jobs())[0]).toMatchObject({ state: "failed", last_error: "Instagram never finished processing" });
   });
 
+  it("holds a container that is ready past the catch-up window instead of publishing it late", async () => {
+    await seedReel(w);
+    igHappyPath(w);
+    const e = await testEnv(env);
+    await tick(e, { fetch: w.fetch, now: AT }); // the container; the workspace is then paused for 7 h
+    await tick(e, { fetch: w.fetch, now: later(7 * 60) });
+    expect((await jobs())[0]).toMatchObject({ state: "held", last_error: "missed the catch-up window" });
+    expect(w.calls.filter((c) => c.slug === "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH")).toEqual([]);
+    expect(w.notifications.at(-1)?.title).toContain(KEY);
+  });
+
   it("at the default 5 minutes, gives up on the 25th poll, as when the polls were counted", async () => {
     await seedReel(w);
     igHappyPath(w, Array(30).fill("IN_PROGRESS"));

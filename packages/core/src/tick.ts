@@ -965,11 +965,7 @@ async function stepPending(c: Ctx, job: JobRow, p: Payload) {
   if (p.trial) return stepTrialPending(c, job, p);
   // a job still pending after its publishing call (Bluesky's post is made in finish, its answer lost): it may be live
   const live = mayBeLive(job, p) ? await platformOf(c, p, job.workspace_id) : undefined;
-  if (c.nowS - job.due_at > CATCH_UP_S) {
-    await c.setJob(job.id, { state: "held", last_error: "missed the catch-up window", notified: true });
-    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600, live), job.workspace_id);
-    return;
-  }
+  if (c.nowS - job.due_at > CATCH_UP_S) return holdMissed(c, job, p, live);
   const r = await recheck(c, job, p);
   if (r) return settle(c, job, p, r);
 
@@ -1179,6 +1175,14 @@ async function stepContainer(c: Ctx, job: JobRow, before: Payload) {
     return pollWait(c, job, pr, { ...p, step: next });
   }
   if (leadOf(pr.platform) > 0) return stepAhead(c, job, { ...p, step: next }, pr, next, progressed(step, next));
+  // a container ready long after its due time (the workspace was paused, the scheduler stuck) isn't published late
+  if (c.nowS - job.due_at > CATCH_UP_S)
+    return holdMissed(
+      c,
+      job,
+      { ...p, step: next },
+      mayBeLive(job, p) ? await platformOf(c, p, job.workspace_id) : undefined,
+    );
   const r = await recheck(c, job, p);
   if (r) return settle(c, job, p, r);
   // the texts or media may have changed while the container was processing: nothing goes live unapproved
@@ -1203,14 +1207,23 @@ async function stepAhead(c: Ctx, job: JobRow, p: Payload, pr: Provider, step: St
   }
   // a publishing call that went unanswered (retried here) may have made it public: the notes send the owner to check
   const live = mayBeLive(job, p) ? await platformOf(c, p, job.workspace_id) : undefined;
-  if (c.nowS - job.due_at > CATCH_UP_S) {
-    await c.setJob(job.id, { state: "held", last_error: "missed the catch-up window", notified: true, payload: p });
-    await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600, live), job.workspace_id);
-    return;
-  }
+  if (c.nowS - job.due_at > CATCH_UP_S) return holdMissed(c, job, p, live);
   const v = await verify(c, p, job.workspace_id, job.item_key);
   if (v.problem) return refuse(c, job, v.problem, p, live);
   return publish(c, job, p, pr, step);
+}
+
+/** Past the catch-up window a due job is held, not posted late (the scheduler was paused or stuck): the owner posts
+ *  it by hand or reschedules. A late Trial Reel copy isn't worth a note. */
+async function holdMissed(c: Ctx, job: JobRow, p: Payload, live?: string) {
+  if (p.trial)
+    return c.setJob(job.id, {
+      state: "held",
+      last_error: "trial copy not posted within the catch-up window",
+      payload: p,
+    });
+  await c.setJob(job.id, { state: "held", last_error: "missed the catch-up window", notified: true, payload: p });
+  await c.note.send(N.jobHeld(job.item_key, CATCH_UP_S / 3600, live), job.workspace_id);
 }
 
 /** The upload session is gone (expired, or YouTube forgot it): the job starts again from start on the next run, with
