@@ -36,12 +36,14 @@ export class World {
   ytReplies: { parent: string; text: string }[] = [];
   /** Drive list queries made (findPath walks one per path level). */
   driveQueries = 0;
+  /** The most files one Drive listing page holds (Drive's own cap is 1000): a test lowers it to list over pages. */
+  drivePage = 1000;
   /** Drive stats (a file's metadata by id) made. */
   driveStats = 0;
   /** Drive's search lags a create: while true, a folder made now isn't found by a search for its name (listing a
    *  folder's contents still sees it). */
   driveSearchLag = false;
-  private driveUnsearchable = new Set<string>();
+  driveUnsearchable = new Set<string>();
   /** Drive answers every write with 403 (a service account without edit rights). */
   driveRefuses = false;
   /** Drive answers a rename of these ids with 403 (one store of several failing midway). */
@@ -357,7 +359,11 @@ export class World {
           modifiedTime: f.modified ?? "2026-10-01T00:00:00Z",
           parents: f.parent ? [f.parent] : [],
         }));
-      return json({ files });
+      // pages as Drive does: at most pageSize (and drivePage) files each, and nextPageToken only when `fields` asks
+      const size = Math.min(Number(url.searchParams.get("pageSize") ?? 100), this.drivePage);
+      const from = Number(url.searchParams.get("pageToken") ?? 0);
+      const next = from + size < files.length && /nextPageToken/.test(url.searchParams.get("fields") ?? "");
+      return json({ files: files.slice(from, from + size), ...(next ? { nextPageToken: String(from + size) } : {}) });
     }
     if (url.hostname === "www.googleapis.com" && url.pathname.startsWith("/drive/v3/files/")) {
       const id = decodeURIComponent(url.pathname.split("/").pop()!);
