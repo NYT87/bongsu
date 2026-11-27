@@ -177,9 +177,11 @@ outside any workspace.
 
 ## Switching workspaces
 
-Someone who can open more than one workspace sees a switcher at the top of the sidebar, naming the one they work in:
-choose another and the dashboard reloads there, with the role they have in it. It shows for people who are members of
-several workspaces and for instance admins, who can open all of them. A person in a single workspace sees no switcher.
+The top of the sidebar shows the workspace you work in: its icon (a coloured placeholder until it has one), its name and
+your role there. Someone who can open more than one workspace also sees an up-and-down arrow there: it opens the list
+of their workspaces, the current one checked; choose another and the dashboard reloads there, with the role they have
+in it. The arrow shows for people who are members of several workspaces and for instance admins, who can open all of
+them; a person in a single workspace sees only its name.
 
 ## Workspaces
 

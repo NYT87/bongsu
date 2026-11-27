@@ -25,7 +25,8 @@ nothing loaded from third parties, as the PWA).
 
 ## Layout
 
-- **Sidebar + content**, desktop first. A 232px sidebar with the instance name, the sections and, at the bottom, the
+- **Sidebar + content**, desktop first. A 232px sidebar with the workspace token (its image, name and the person's role; with several workspaces, a
+  Vercel-style menu of them), the sections and, at the bottom, the
   signed-in user (name and email, cut short with an ellipsis) with a sign-out icon button on its right; the content column is at most 960px wide, 32px from the sidebar. Under 900px the sidebar becomes a top bar with a
   menu button (no horizontal scroll at 375px).
 - Sections, in this order: **Overview** · **Connections** · **OAuth apps** · **Accounts** · **Videos** · **Devices & passkeys** · **Keys & tokens** ·
