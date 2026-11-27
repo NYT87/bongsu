@@ -10,47 +10,15 @@ Each channel is connected with your own Google OAuth app (one app for every chan
 
 ## 1. The Google Cloud project
 
-1. [console.cloud.google.com](https://console.cloud.google.com): create a project (or reuse the one for Drive,
-   [drive.md](drive.md)).
-
-   <!-- screenshot: console.cloud.google.com, the project picker's New project form with a demo name (bongsu-demo); blur the organisation and billing account
-   ![Google Cloud: creating a project](assets/google/1-project.png) -->
-
-2. **APIs & Services → Library**: enable **YouTube Data API v3**.
-
-   <!-- screenshot: APIs & Services → Library → YouTube Data API v3, its page with the Enable button (or Manage once enabled); blur the project id in the header
-   ![The YouTube Data API v3 in the API Library](assets/google/2-youtube-api.png) -->
-
-3. **APIs & Services → OAuth consent screen**: user type **External**, an app name and your email. Add two scopes:
-   `https://www.googleapis.com/auth/youtube.force-ssl` (manage your YouTube account: needed to post comments) and
-   `https://www.googleapis.com/auth/yt-analytics.readonly` (view your YouTube Analytics reports: the subscribers a
-   video brought). Enable the **YouTube Analytics API** in the Library too, next to the Data API.
-
-   <!-- screenshot: OAuth consent screen, the Data access / scopes list showing .../auth/youtube.force-ssl added; blur the support email and the project id
-   ![OAuth consent screen: the youtube.force-ssl scope](assets/google/3-consent-scope.png) -->
-
-4. **Publish the app** (Publishing status → In production). While it stays in *Testing*, Google expires its refresh
-   tokens after 7 days and Bongsu loses the channel every week. Google only lets you publish once the app's
-   **Branding** page has a privacy policy link: every Bongsu serves one, `<PUBLIC_URL>/privacy/` (put `<PUBLIC_URL>`
-   as the home page beside it, and its domain under **Authorized domains**). An unverified app in production works for
-   your own channels; Google only shows an "unverified app" warning on the consent screen (Advanced → continue).
-
-   <!-- screenshot: OAuth consent screen → Audience, Publishing status In production, user type External; blur the project id
-   ![OAuth consent screen: publishing status In production](assets/google/4-in-production.png) -->
-
-5. **Credentials → Create credentials → OAuth client ID**, type **Web application**. Under **Authorized redirect URIs**
-   add the URL the admin dashboard's **OAuth apps** page shows on the Google app card,
-   `<PUBLIC_URL>/admin-api/connect/youtube/callback` (exactly: `https`, no trailing slash). Create it and copy the
-   client id and secret.
-
-   <!-- screenshot: Credentials → Create OAuth client ID, type Web application, Authorized redirect URIs with https://bongsu.example.com/admin-api/connect/youtube/callback (type that demo URL in); never capture the client secret dialog
-   ![OAuth client ID: Web application with the redirect URI](assets/google/5-oauth-client.png) -->
+Make the Google app with [The Google app](google-app.md): the **YouTube Data API v3** and **YouTube Analytics API**,
+the scopes `https://www.googleapis.com/auth/youtube.force-ssl` (uploads, details and comments) and
+`https://www.googleapis.com/auth/yt-analytics.readonly` (the subscribers a video brought), and the redirect URI
+`<PUBLIC_URL>/admin-api/connect/youtube/callback`. If you made it for Drive already, add those to it.
 
 ## 2. Connect the channel from the dashboard
 
-1. Admin dashboard → **OAuth apps** → Google app: paste the client id and secret, **Save** (the secret is stored encrypted:
-   the Worker needs `ENCRYPTION_KEY`, any long random string set once with `pnpm exec wrangler secret put
-   ENCRYPTION_KEY`).
+1. Admin dashboard → **OAuth apps** → Google app: paste the client id and secret, **Save** (the secret is stored encrypted
+   with the instance's `ENCRYPTION_KEY`, [Configuration](configuration.md#secrets)).
 2. **Connections** → YouTube channel → **Connect**. Sign in with the Google account that owns the channel (for a brand
    channel, pick it when Google asks) and allow access. Google sends you back with the channel connected.
 
@@ -64,7 +32,7 @@ keeps its id, plan and history, and the refresh token is stored encrypted in the
 
 **Reconnect for subscriber numbers.** A channel connected before the analytics scope was asked for has no
 subscribers-gained numbers: its video pages say "not available until the channel is reconnected with analytics".
-Add the scope to the consent screen if it isn't there, then **Reconnect** the channel from the dashboard; the new
+Add the scope on the Google app's **Data Access** page if it isn't there ([The Google app](google-app.md#4-the-scopes)), then **Reconnect** the channel from the dashboard; the new
 grant carries both scopes and the next samples bring the numbers.
 
 ## 3. Without the dashboard (secrets)

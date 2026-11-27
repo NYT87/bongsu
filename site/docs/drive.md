@@ -7,23 +7,10 @@ posted media aside. Nothing is ever deleted. Drive is one of the media stores: y
 
 ## 1. The Google app
 
-Drive connects with the same Google OAuth app as YouTube: one app for both. If you made it for YouTube already, only
-steps 2 and 4 are new.
-
-1. [console.cloud.google.com](https://console.cloud.google.com): create a project (or reuse it), then **APIs &
-   Services → Library**: enable the **Google Drive API**.
-2. **APIs & Services → OAuth consent screen → Data access**: add the scope `https://www.googleapis.com/auth/drive`
-   (see, edit, create and delete your Drive files). It's the scope that lets Bongsu see the files you drop in by hand
-   and move them; a narrower one (`drive.file`) only sees what Bongsu made itself.
-3. **Publish the app** (Publishing status → In production), as for [YouTube](youtube.md#1-the-google-cloud-project):
-   while it stays in *Testing*, Google expires its refresh tokens after 7 days. Google only lets you publish once the
-   app's **Branding** page has a privacy policy link. An unverified app of your own works; Google shows an
-   "unverified app" warning when you connect (Advanced → continue).
-4. **Credentials → your OAuth client → Authorized redirect URIs**: add the Drive URL the admin dashboard's **OAuth apps**
-   page lists on the Google app card, `<PUBLIC_URL>/admin-api/media-stores/drive/callback` (exactly: `https`, no
-   trailing slash), next to YouTube's.
-5. Admin dashboard → **OAuth apps** → Google app: paste the client id and secret if they aren't there yet (stored encrypted:
-   the instance needs `ENCRYPTION_KEY`, [Configuration](configuration.md)).
+Drive connects with the same Google OAuth app as YouTube: one app for both. Make it with
+[The Google app](google-app.md): the **Google Drive API**, the scope `https://www.googleapis.com/auth/drive`, and the
+redirect URI `<PUBLIC_URL>/admin-api/media-stores/drive/callback`. If you made it for YouTube already, add those three
+to it (Library, Data Access, and the client's **Authorized redirect URIs**).
 
 ## 2. Pick a root folder and connect
 

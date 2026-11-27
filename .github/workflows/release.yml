@@ -2,7 +2,8 @@
 # - with pending changesets, opens or updates the "Version Packages" pull request (versions + each CHANGELOG.md);
 # - once that is merged, tags the new versions, creates their GitHub releases, publishes the packages that aren't
 #   private (the CLI, `bongsu`, on npm with provenance) and, when the product's version moved, pushes the Docker image
-#   to GHCR.
+#   to GHCR and, where the repository turns it on (vars.CLOUDFLARE_DEPLOY), deploys the Cloudflare Workers
+#   (site/docs/deploy-cloudflare.md, "Deploy every release with GitHub Actions").
 name: Release
 
 on:
@@ -26,6 +27,14 @@ jobs:
     outputs:
       published: ${{ steps.changesets.outputs.published }}
       packages: ${{ steps.changesets.outputs.published-packages }}
+      # the product's version moved: a package of the fixed group (.changeset/config.json) got its tag in this run
+      product: >-
+        ${{ steps.changesets.outputs.published == 'true' && (
+        contains(steps.changesets.outputs.published-packages, '"@bongsu/core"') ||
+        contains(steps.changesets.outputs.published-packages, '"@bongsu/api"') ||
+        contains(steps.changesets.outputs.published-packages, '"@bongsu/cloudflare"') ||
+        contains(steps.changesets.outputs.published-packages, '"@bongsu/web"') ||
+        contains(steps.changesets.outputs.published-packages, '"@bongsu/dashboard"')) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -65,12 +74,7 @@ jobs:
   # got its tag in this run; they share @bongsu/core's version.
   docker:
     needs: release
-    if: >-
-      needs.release.outputs.published == 'true' && (contains(needs.release.outputs.packages, '"@bongsu/core"') ||
-      contains(needs.release.outputs.packages, '"@bongsu/api"') ||
-      contains(needs.release.outputs.packages, '"@bongsu/cloudflare"') ||
-      contains(needs.release.outputs.packages, '"@bongsu/web"') ||
-      contains(needs.release.outputs.packages, '"@bongsu/dashboard"'))
+    if: needs.release.outputs.product == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -107,3 +111,70 @@ jobs:
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # The instance's Cloudflare Workers at the released commit, where the repository turns it on (the variable
+  # CLOUDFLARE_DEPLOY = true) and its `production` environment holds the values: secrets, so a public repository's logs
+  # show them as ***. Required reviewers on that environment make the job wait for an approval.
+  deploy-cloudflare:
+    needs: release
+    if: needs.release.outputs.product == 'true' && vars.CLOUDFLARE_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+    concurrency:
+      group: deploy-cloudflare
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+        with:
+          cache: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # the templates' placeholders replaced in both configs; one left over (a secret not set) stops the deploy
+      - name: Write the wrangler configs
+        working-directory: apps/cloudflare
+        env:
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+          VAPID_PUBLIC_KEY: ${{ secrets.VAPID_PUBLIC_KEY }}
+          VAPID_SUBJECT: ${{ secrets.VAPID_SUBJECT }}
+          DRY_RUN: ${{ vars.DRY_RUN }}
+        run: |
+          for v in D1_DATABASE_ID PUBLIC_URL VAPID_PUBLIC_KEY VAPID_SUBJECT; do
+            [ -n "${!v}" ] || { echo "the production environment has no $v secret" >&2; exit 1; }
+          done
+          case "$DRY_RUN" in 0 | 1) ;; *) echo "the production environment's DRY_RUN is 0 or 1" >&2; exit 1 ;; esac
+          host="${PUBLIC_URL#https://}"
+          host="${host%%/*}"
+          for f in wrangler.toml wrangler.cron.toml; do
+            sed -i \
+              -e "s|00000000-0000-0000-0000-000000000000|$D1_DATABASE_ID|" \
+              -e "s|^PUBLIC_URL = \"https://bongsu.example.com\"|PUBLIC_URL = \"$PUBLIC_URL\"|" \
+              -e "s|^RP_ID = \"bongsu.example.com\"|RP_ID = \"$host\"|" \
+              -e "s|REPLACE_WITH_YOUR_VAPID_PUBLIC_KEY|$VAPID_PUBLIC_KEY|" \
+              -e "s|mailto:owner@example.com|$VAPID_SUBJECT|" \
+              -e "s|^DRY_RUN = \"1\"|DRY_RUN = \"$DRY_RUN\"|" \
+              "$f"
+            if grep -nE '0{8}-0{4}|example\.com|REPLACE_WITH' "$f"; then echo "$f: a value is missing" >&2; exit 1; fi
+          done
+      - name: Apply the migrations
+        working-directory: apps/cloudflare
+        run: pnpm exec wrangler d1 migrations apply bongsu --remote
+      - name: Deploy both Workers
+        working-directory: apps/cloudflare
+        run: pnpm run deploy
+      # tables there and no secret missing; `ok` waits for a media store, so it isn't required
+      - name: Check /health
+        env:
+          PUBLIC_URL: ${{ secrets.PUBLIC_URL }}
+        run: |
+          curl -sS "$PUBLIC_URL/health" >health.json
+          jq -e '(.missing_secrets | length == 0) and (.tables | length > 0)' health.json

@@ -5,19 +5,20 @@ import { type FormEvent, useEffect, useState } from "react";
 import type { State } from "../App";
 import { api, withFreshCheck } from "../api";
 import { Brand, Card, Field, Loading, SecretOnce } from "../ui";
-import { errorText, ROLE_HELP } from "./common";
+import { AdminPicker, adminOf, errorText, ROLE_HELP } from "./common";
 
 // ---- No workspace yet
 
 /** Signed in, in no workspace. An instance admin creates the first one (the first run: a name, a time zone and its
- *  first admin, them or someone invited by email); anyone else waits for an invite. In place of the sidebar. */
+ *  admin: them, another account on the instance, or someone invited by email); anyone else waits for an invite. In
+ *  place of the sidebar. */
 export function FirstWorkspace({
   state,
   onDone,
   onSignOut,
 }: {
   state: State;
-  /** `invited`: its first admin is someone else, so it waits on the Workspaces page. */
+  /** `invited`: its admin is someone else, so it waits on the Workspaces page. */
   onDone: (invited: boolean) => void;
   onSignOut: () => void;
 }) {
@@ -25,7 +26,7 @@ export function FirstWorkspace({
   const here = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const [name, setName] = useState("");
   const [tz, setTz] = useState(here);
-  const [adminIsMe, setAdminIsMe] = useState(true);
+  const [adminChoice, setAdminChoice] = useState("me");
   const [email, setEmail] = useState("");
   const [link, setLink] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -78,15 +79,15 @@ export function FirstWorkspace({
     try {
       // making someone an admin asks for a fresh passkey check
       const r = await withFreshCheck(() =>
-        api<{ invite?: { url: string } }>("workspaces", {
+        api<{ invite?: { url: string }; admin?: string }>("workspaces", {
           name,
           timezone: tz,
-          admin: adminIsMe ? "me" : email.trim().toLowerCase(),
+          admin: adminOf(adminChoice, email),
         }),
       );
-      // their link, to copy, before going on
+      // their link, to copy, before going on; another account made its admin: it waits on the Workspaces page too
       if (r.invite) setLink(r.invite.url);
-      else onDone(false);
+      else onDone(!!r.admin);
     } catch (e) {
       setErr(errorText(e));
     } finally {
@@ -114,24 +115,13 @@ export function FirstWorkspace({
               </select>
             )}
           </Field>
-          <fieldset>
-            <legend>Its first admin</legend>
-            <label className="check">
-              <input type="radio" name="admin" checked={adminIsMe} onChange={() => setAdminIsMe(true)} />
-              <span>Me</span>
-            </label>
-            <label className="check">
-              <input type="radio" name="admin" checked={!adminIsMe} onChange={() => setAdminIsMe(false)} />
-              <span>
-                Someone else <span className="muted">who gets an invite link</span>
-              </span>
-            </label>
-          </fieldset>
-          {!adminIsMe && (
-            <Field label="Their email">
-              {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
-            </Field>
-          )}
+          <AdminPicker
+            myEmail={state.user?.email ?? null}
+            choice={adminChoice}
+            onChoice={setAdminChoice}
+            email={email}
+            onEmail={setEmail}
+          />
           {err && (
             <p className="error" role="alert">
               {err}
