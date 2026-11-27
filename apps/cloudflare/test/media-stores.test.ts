@@ -805,9 +805,30 @@ describe("several stores side by side", () => {
         from: "Bongsu <bongsu@example.com>",
         to: ["owner@example.com"],
         subject: "Bongsu: a media store needs attention",
-        text: expect.stringMatching(/^drive: [\s\S]*\/dashboard\/admin\/media$/),
+        text: expect.stringMatching(/^drive: [\s\S]*\/dashboard\/admin\/media\n/),
       }),
     ]);
+    expect(w.mails[0].text).toContain("You get this because you're an instance admin on scheduler.test.");
+    expect(w.mails[0].text).toContain("https://scheduler.test/dashboard/devices");
+  });
+
+  it("leaves out an instance admin who turned alert emails off, and still logs the notice", async () => {
+    const m = await testEnv(env, {
+      MAILER: "resend",
+      MAIL_FROM: "Bongsu <bongsu@example.com>",
+      RESEND_API_KEY: "re_test",
+    } as Partial<Env>);
+    await env.DB.prepare("UPDATE users SET alert_mail = 0 WHERE email = 'owner@example.com'").run();
+    w.googleRefuse = true;
+    clearTokenCache();
+    expect(await checkStores(m, { fetch: w.fetch, now: AT })).toEqual({ checked: [], broken: ["drive"] });
+    expect(w.mails).toEqual([]);
+    expect(
+      await env.DB.prepare("SELECT COUNT(*) AS n FROM audit WHERE action = 'notify' AND workspace_id IS NULL").first(
+        "n",
+      ),
+    ).toBeGreaterThan(0);
+    await env.DB.prepare("UPDATE users SET alert_mail = 1 WHERE email = 'owner@example.com'").run();
   });
 
   it("pays the instance admins' mail from the run's reserve, as the other notes", async () => {

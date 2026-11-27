@@ -287,10 +287,29 @@ describe("renewing Instagram tokens", () => {
         from: "Bongsu <bongsu@example.com>",
         to: ["owner@example.com"],
         subject: "Bongsu: a connection needs attention",
-        text: expect.stringMatching(/Invalid OAuth[\s\S]*\/dashboard\/connections$/),
+        text: expect.stringMatching(/Invalid OAuth[\s\S]*\/dashboard\/connections\n/),
       }),
     ]);
+    // the footer says why it came and where to stop it
+    expect(w.mails[0].text).toContain("You get this because you're an admin of ");
+    expect(w.mails[0].text).toContain(" on scheduler.test.");
+    expect(w.mails[0].text).toContain("https://scheduler.test/dashboard/devices");
     await env.DB.prepare("UPDATE users SET email = NULL WHERE id = 'owner'").run();
+  });
+
+  it("an admin who turned alert emails off gets none, but the notice still goes out", async () => {
+    const e = await testEnv(env, {
+      MAILER: "resend",
+      MAIL_FROM: "Bongsu <bongsu@example.com>",
+      RESEND_API_KEY: "re_test",
+    });
+    await env.DB.prepare("UPDATE users SET email = 'owner@example.com', alert_mail = 0 WHERE id = 'owner'").run();
+    await connectGraph();
+    w.graphTokens.delete("ig-token-1");
+    await refreshConnections(e, { fetch: w.fetch, now: AT });
+    expect(w.notifications.map((n) => n.title)).toEqual(["A connection needs attention"]);
+    expect(w.mails).toEqual([]);
+    await env.DB.prepare("UPDATE users SET email = NULL, alert_mail = 1 WHERE id = 'owner'").run();
   });
 
   it("the Mailer: none unless MAILER is set; a misconfigured one says what's missing", async () => {

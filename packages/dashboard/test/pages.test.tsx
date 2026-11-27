@@ -808,6 +808,31 @@ describe("Devices & passkeys: leaving the workspace", () => {
   });
 });
 
+describe("Devices & passkeys: alert emails", () => {
+  it("shows the person's own switch and saves a change", async () => {
+    let on = true;
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET passkeys": () => ({ body: { passkeys: [], devices: [], alertMail: on } }),
+      "POST alert-mail": (b: unknown) => {
+        on = (b as { on: boolean }).on;
+        return { body: { alertMail: on } };
+      },
+    });
+    open("devices");
+    const user = userEvent.setup();
+    const box = await screen.findByRole("checkbox", { name: "Email me these alerts" });
+    expect((box as HTMLInputElement).checked).toBe(true);
+    await user.click(box);
+    await waitFor(() => expect((box as HTMLInputElement).checked).toBe(false));
+    expect(calls.find((c) => c.path === "alert-mail")).toEqual({
+      method: "POST",
+      path: "alert-mail",
+      body: { on: false },
+    });
+  });
+});
+
 describe("Connections: where a missing OAuth app is added", () => {
   const routes = (s: object) => ({
     "GET state": () => ({ body: { ...state(), ...s } }),

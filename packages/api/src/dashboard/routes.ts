@@ -160,6 +160,8 @@ const AREAS: Record<string, Area> = {
   passkeys: { noWorkspace: true },
   devices: { noWorkspace: true },
   "recovery-codes": { noWorkspace: true },
+  // the person's own alert emails: an instance admin in no workspace still gets the instance's
+  "alert-mail": { noWorkspace: true },
   audit: { noWorkspace: true },
   // switching workspaces: someone whose session works nowhere (an instance admin in none) picks one here
   session: { noWorkspace: true },
@@ -1097,10 +1099,28 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       )
         .bind(uid)
         .all<{ device: string | null; created_at: number }>();
+      const me = await c.env.DB.prepare("SELECT alert_mail FROM users WHERE id = ?1")
+        .bind(uid)
+        .first<{ alert_mail: number }>();
       return {
         passkeys: keys.results.map((k) => ({ ...k, id: k.id, short: k.id.slice(0, 8) })),
         devices: devices.results,
+        alertMail: !!me?.alert_mail,
       };
+    }),
+  );
+  // The person's own switch for the alert emails (a connection or a media store that broke): every workspace and the
+  // instance alike. Off, the push and the dashboard notice still go out.
+  app.post(
+    "/admin-api/alert-mail",
+    wrap(async (c) => {
+      const { on } = await body(c);
+      if (typeof on !== "boolean") throw new AdminError(400, "on must be true or false");
+      await c.env.DB.prepare("UPDATE users SET alert_mail = ?1 WHERE id = ?2")
+        .bind(on ? 1 : 0, c.get("session").userId)
+        .run();
+      await audit(c, "alert_mail", null, { on });
+      return { alertMail: on };
     }),
   );
   // Add a device: a one-time code (and its link, for a QR code) the device opens to create its passkey and sign in.

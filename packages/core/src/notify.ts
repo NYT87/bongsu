@@ -8,9 +8,10 @@
 import type { Db } from "./db";
 import type { Env } from "./env";
 import { iconHashes, iconUrl } from "./icon";
-import { instanceAdmins, mailer } from "./mail";
+import { instanceAdmins, instanceName, mailer } from "./mail";
 import { postNtfy, workspaceNtfy } from "./ntfy";
 import { sendPush } from "./push";
+import { alertMailFooter } from "./texts/mail";
 import type { Note } from "./texts/notifications";
 import { workspaceRef, workspacesOf } from "./workspaces";
 
@@ -145,7 +146,16 @@ export async function notifyInstanceAdmins(env: Env, fetcher: typeof fetch, note
     const to = await instanceAdmins(env.DB);
     if (!to.length) return; // nobody to write to: the audit row stands
     const link = note.mail ? `\n\n${env.PUBLIC_URL.replace(/\/$/, "")}${note.mail.page}` : "";
-    await mail.send({ to, subject: note.mail?.subject ?? `Bongsu: ${note.title}`, text: `${note.text}${link}` });
+    const footer = alertMailFooter({
+      who: "an instance admin",
+      instance: instanceName(env.PUBLIC_URL),
+      publicUrl: env.PUBLIC_URL,
+    });
+    await mail.send({
+      to,
+      subject: note.mail?.subject ?? `Bongsu: ${note.title}`,
+      text: `${note.text}${link}\n${footer}`,
+    });
   } catch (e) {
     console.log(`mail: ${(e as Error).message}`);
   }

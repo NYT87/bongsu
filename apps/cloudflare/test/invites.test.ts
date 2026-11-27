@@ -117,6 +117,12 @@ describe("invites", () => {
     expect(w.mails).toEqual([
       expect.objectContaining({ to: ["cleo@example.com"], text: expect.stringContaining(String(made.json.url)) }),
     ]);
+    // why it came, and that ignoring it does nothing
+    expect(w.mails[0].text).toContain("You get this because Ada invited cleo@example.com to ");
+    expect(w.mails[0].text).toContain(" on bongsu.test.");
+    expect(w.mails[0].text).toContain(
+      "ignore it: nothing happens, no account is made, and the link stops working in 7 days.",
+    );
     // listed as pending, its link copyable again (the token is kept only encrypted)
     const list = await ada("/admin-api/members");
     expect(list.json.invites).toEqual([

@@ -8,9 +8,11 @@ import type { Connection } from "../accounts";
 import { BudgetSpent, canAfford, noteFetch, type StepDeps } from "../budget";
 import { encryptSecret } from "../crypto";
 import type { Env } from "../env";
-import { mailer, workspaceAdmins } from "../mail";
+import { instanceName, mailer, workspaceAdmins } from "../mail";
 import { notifier } from "../notify";
+import { alertMailFooter } from "../texts/mail";
 import { connectionMailSubject, connectionProblem } from "../texts/notifications";
+import { workspaceRef } from "../workspaces";
 import { providerRegistration } from "./index";
 import { ConnectionBroken } from "./types";
 
@@ -108,12 +110,21 @@ export async function refreshConnections(env: Env, deps: StepDeps): Promise<{ re
     try {
       const mail = mailer(env, noteFetch(deps));
       if (mail.id !== "none")
-        for (const ws of new Set(problems.map((p) => p.workspaceId)))
-          await mail.send({
-            to: await workspaceAdmins(env.DB, ws),
-            subject: connectionMailSubject,
-            text: `${say(problems.filter((p) => p.workspaceId === ws))}\n\n${env.PUBLIC_URL.replace(/\/$/, "")}/dashboard/connections`,
+        for (const ws of new Set(problems.map((p) => p.workspaceId))) {
+          const to = await workspaceAdmins(env.DB, ws);
+          if (!to.length) continue; // every admin turned the emails off: the notice above stands
+          const name = (await workspaceRef(env.DB, ws))?.name ?? ws;
+          const footer = alertMailFooter({
+            who: `an admin of ${name}`,
+            instance: instanceName(env.PUBLIC_URL),
+            publicUrl: env.PUBLIC_URL,
           });
+          await mail.send({
+            to,
+            subject: connectionMailSubject,
+            text: `${say(problems.filter((p) => p.workspaceId === ws))}\n\n${env.PUBLIC_URL.replace(/\/$/, "")}/dashboard/connections\n${footer}`,
+          });
+        }
     } catch (e) {
       console.log(`mail: ${(e as Error).message}`);
     }
