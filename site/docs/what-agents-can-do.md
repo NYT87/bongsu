@@ -81,4 +81,4 @@ a key any more, revoke it in **Keys & tokens**.
 Agents work best when you tell them the plan: which account, which day, what the post is for. A post's media are files in your own
 storage, and you check them when you approve. Several posts a day on one account are fine, at different hours.
 
-Next: [Connect Claude](connect-claude.md), the [API reference](api-reference.md).
+Next: [Connect an agent](connect-an-agent.md), the [API reference](api-reference.md).

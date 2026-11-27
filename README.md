@@ -103,7 +103,7 @@ The guides are at **[nyt87.github.io/bongsu/docs](https://nyt87.github.io/bongsu
 - Accounts: [Instagram](site/docs/instagram-graph.md) (or [through Composio](site/docs/instagram-composio.md)),
   [YouTube](site/docs/youtube.md), [Google Drive](site/docs/drive.md)
 - Using it: [the app](site/docs/the-app.md), [the dashboard](site/docs/the-dashboard.md),
-  [connect Claude](site/docs/connect-claude.md), [what agents can do](site/docs/what-agents-can-do.md)
+  [connect an agent](site/docs/connect-an-agent.md) (Claude, Codex, any MCP client), [what agents can do](site/docs/what-agents-can-do.md)
 - Running it: [configuration](site/docs/configuration.md), [updating](site/docs/updating.md),
   [backups](site/docs/backups.md), [security](site/docs/security.md), [FAQ](site/docs/faq.md)
 

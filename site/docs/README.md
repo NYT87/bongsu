@@ -21,7 +21,7 @@ Guides for people who run Bongsu: install it, connect your accounts, use it, giv
 | [Captions and checks](captions-and-checks.md) | The texts of a post, what the caption check catches, what blocks approval |
 | [The dashboard](the-dashboard.md) | Connections, accounts, devices and passkeys, keys and tokens, settings |
 | **Agents** | |
-| [Connect Claude](connect-claude.md) | Create a key, add Bongsu to Claude Code, a first plan, other MCP clients |
+| [Connect an agent](connect-an-agent.md) | Create a key, add Bongsu to Claude Code, Codex or any MCP client, the REST API, a first plan |
 | [What agents can do](what-agents-can-do.md) | Scopes, what an agent never does, why a change needs approval, times, limits |
 | [API reference](api-reference.md) | Keys and scopes, MCP, the tools and REST endpoints |
 | [The command line](cli.md) | The `bongsu` command: login, queue, texts, approve, export, MCP bridge, secrets |
