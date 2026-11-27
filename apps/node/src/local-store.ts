@@ -194,6 +194,15 @@ export class LocalStore implements MediaStore {
     return e.id;
   }
 
+  async renameFolder(path: string, name: string) {
+    const rel = path.split("/").filter(Boolean).join("/");
+    if (!(await this.entry(rel))?.folder) throw new Error(`no folder ${path}`);
+    const target = join(dirname(this.abs(rel)), name);
+    if (await stat(target).catch(() => null)) throw new Error(`${name} exists already`);
+    await this.guard(() => rename(this.abs(rel), target));
+    this.paths.clear(); // the paths remembered below it changed; the ids (inodes) didn't
+  }
+
   async move(id: string, toFolderPath: string) {
     const rel = await this.pathOf(id);
     if (rel === null) throw new Error(`no file or folder ${id}`);

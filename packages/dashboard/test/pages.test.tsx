@@ -455,3 +455,82 @@ describe("Audit", () => {
     ]);
   });
 });
+
+describe("Settings → Media: the workspace's folder", () => {
+  const media = (folder: string) => ({
+    body: {
+      folder,
+      stores: [
+        {
+          id: "drive",
+          kind: "drive",
+          own: false,
+          default: true,
+          status: "ok",
+          lastError: null,
+          lastCheckedAt: null,
+          settings: {},
+          waitingApprovals: 0,
+        },
+        {
+          id: "s3",
+          kind: "s3",
+          own: false,
+          default: false,
+          status: "ok",
+          lastError: null,
+          lastCheckedAt: null,
+          settings: {},
+          waitingApprovals: 0,
+        },
+      ],
+      offered: ["drive", "s3"],
+      googleApp: true,
+      encryptionKeySet: true,
+    },
+  });
+
+  it("renames it, and says where it was renamed and where a new one was made", async () => {
+    let folder = "demo-travel";
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET settings/media": () => media(folder),
+      "PUT settings/media/folder": (b) => {
+        folder = (b as { folder: string }).folder;
+        return { body: { folder, renamed: ["drive"], made: ["s3"], failed: [] } };
+      },
+    });
+    open("settings/media");
+    const field = await screen.findByLabelText("Folder");
+    await waitFor(() => expect(field).toHaveProperty("value", "demo-travel")); // the saved name, filled in
+    expect(screen.getByText(/renames the folder in Google Drive/)).toBeTruthy();
+    await userEvent.clear(field);
+    await userEvent.type(field, "demo-trips");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      await screen.findByText(
+        "The media folder is demo-trips. Renamed in Google Drive: its files stay in it. Made new in S3-compatible bucket: files in the old folder stay there.",
+      ),
+    ).toBeTruthy();
+    expect(calls.find((c) => c.path === "settings/media/folder")?.body).toEqual({ folder: "demo-trips" });
+  });
+
+  it("shows the refusal of a name a store already has, and keeps the field", async () => {
+    fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET settings/media": () => media("demo-travel"),
+      "PUT settings/media/folder": {
+        status: 400,
+        body: { error: "Google Drive already has a folder named taken: pick a name it doesn't use" },
+      },
+    });
+    open("settings/media");
+    const field = await screen.findByLabelText("Folder");
+    await waitFor(() => expect(field).toHaveProperty("value", "demo-travel"));
+    await userEvent.clear(field);
+    await userEvent.type(field, "taken");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect((await screen.findByRole("alert")).textContent).toMatch(/already has a folder named taken/);
+    expect(field).toHaveProperty("value", "taken");
+  });
+});

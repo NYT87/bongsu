@@ -247,8 +247,9 @@ key prefixes (under its folder, if it has one), the server's media directory.
 
 `<folder>` is the workspace's media folder: the workspace's id (`w_…`) unless another name was given when it was made
 (`UPLOADS` for a workspace kept from before folders had names), editable by its admins in Settings → Media. Bongsu
-makes `<folder>/inbox` in every store the workspace uses when the store is connected, the workspace is made or its
-folder changes; it never moves files when the folder changes.
+makes `<folder>/inbox` in every store the workspace uses when the store is connected or the workspace is made. A
+changed folder is renamed in place in Google Drive and on the server's disk (files and ids kept); a bucket gets a new
+folder and its files stay in the old one. The new name must not be a folder a store already has.
 
 ## Tunable limits (`packages/core/src/constants.ts`)
 

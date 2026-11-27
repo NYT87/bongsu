@@ -32,8 +32,10 @@ stay where they are (move them yourself).
 
 Each workspace has a media folder, named after the workspace's id (`w_…`) so renaming the workspace never changes it.
 Its admins can give it another name in **Settings → Media**, and a workspace kept from before folders had names uses
-**`UPLOADS`**. Bongsu makes the folder with its `inbox` when the Drive is connected, when a workspace is made, and when
-its folder changes. The paths below use `UPLOADS`; read it as the workspace's folder, inside the root folder. A Drive
+**`UPLOADS`**. Bongsu makes the folder with its `inbox` when the Drive is connected and when a workspace is made.
+Changing the name in Settings → Media **renames the folder in Drive**, files and all: their ids stay, so approved
+posts, drafts and the inbox carry on. The new name must not be a folder that's already there (Bongsu never merges two
+folders); pick another, or rename or remove that one in Drive first. The paths below use `UPLOADS`; read it as the workspace's folder, inside the root folder. A Drive
 connected by the instance serves every workspace, each in its own folder, and a workspace's admins can also connect
 their own Drive, with a root folder of its own, in **Settings → Media** (see [the dashboard](the-dashboard.md#settings)).
 

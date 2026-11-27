@@ -221,6 +221,21 @@ export class DriveStore implements MediaStore {
     return id;
   }
 
+  async renameFolder(path: string, name: string) {
+    const f = await this.resolve(path);
+    if (!f?.folder) throw new Error(`drive: no folder ${path}`);
+    const r = await this.o.fetch(`${API}/${encodeURIComponent(f.id)}?fields=id`, {
+      method: "PATCH",
+      headers: { ...(await this.auth()), "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    });
+    if (r.status === 403) throw new MediaRefused(`Drive refused renaming ${path} (403)`);
+    if (!r.ok) throw new Error(`drive rename ${path}: ${r.status}`);
+    // the paths remembered under the old name point at the same folders, now under another
+    for (const k of folderIds.keys())
+      if (k === `${this.id}:${path}` || k.startsWith(`${this.id}:${path}/`)) folderIds.delete(k);
+  }
+
   async move(id: string, toFolderPath: string) {
     const f = await this.get(id);
     if (!f) throw new Error(`drive move ${id}: gone`);

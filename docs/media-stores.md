@@ -14,7 +14,9 @@ dashboard only picks it; it never takes a server path).
 
 **Per workspace.** Each workspace has a media folder (`workspace_settings.media_folder`: the workspace's id for one made
 since the Drive root folder (a rename never changes it; the slug of the name for one made between Phase 13 part 3a and
-then), `UPLOADS` for a workspace kept from before part 3a, editable by its admins; Bongsu never moves files) holding `inbox/<project>/`,
+then), `UPLOADS` for a workspace kept from before part 3a, editable by its admins: `renameWorkspaceFolder` renames it in place in each store with `renameFolder` (Drive, local:
+ids kept), makes a new one in the others (a bucket: its files stay), and refuses a name any store already has, checked in
+every store before anything changes; a failed rename puts the ones done back) holding `inbox/<project>/`,
 `<project>/…`, `_posted/` and the app's `_uploads/`. A workspace's admins can add a store of their own in Settings →
 Media (ids `s3-<ws>` / `drive-<ws>`, `media_store.workspace_id` set); the instance's keep the ids `drive`, `s3`, `local`.
 A workspace's default is its own store if it has one, else the instance's. A file reference must be in the caller's
