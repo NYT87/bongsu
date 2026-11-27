@@ -11,6 +11,7 @@ import { Devices } from "./pages/Devices";
 import { AcceptInvite, FirstWorkspace } from "./pages/FirstRun";
 import { GetStarted } from "./pages/GetStarted";
 import { Keys } from "./pages/Keys";
+import { Me } from "./pages/Me";
 import { Media } from "./pages/Media";
 import { Members } from "./pages/Members";
 import { OAuthApps } from "./pages/OAuthApps";
@@ -71,6 +72,8 @@ const OUTSIDE: readonly string[] = ["devices"];
 const NO_WORKSPACE: readonly string[] = ["devices"];
 /** Pages reached from other pages, not the sidebar. */
 const HIDDEN = [["start", "Get started", GetStarted]] as const;
+/** The person's own page, from their name at the bottom of the sidebar, in either dashboard. */
+const ME = ["me", "You", Me] as const;
 
 /** After a section change, the new page's heading takes focus, so the keyboard and screen readers start there (not on
  *  the sidebar link). The first load leaves focus alone. */
@@ -221,7 +224,7 @@ function Shell({
     : manages(state)
       ? SECTIONS
       : SECTIONS.filter(([s]) => !ADMINS_ONLY.includes(s));
-  const hidden = manages(state) && !admin ? HIDDEN : [];
+  const hidden = [...(manages(state) && !admin ? HIDDEN : []), ME];
   const current = [...sections, ...hidden].find(([s]) => s === section) ?? sections[0];
   const nav = (s: string) => (e: MouseEvent) => {
     e.preventDefault();
@@ -285,10 +288,15 @@ function Shell({
         )}
         {/* Who is signed in, and the way out: an icon button with its name for screen readers and as a tooltip. */}
         <div className="user">
-          <div className="who">
+          <a
+            className="who"
+            href="/dashboard/me"
+            aria-current={current[0] === "me" ? "page" : undefined}
+            onClick={nav("me")}
+          >
             <div className="name">{state.user?.name ?? state.user?.email}</div>
             <div className="muted">{state.user?.email}</div>
-          </div>
+          </a>
           <button
             type="button"
             className="icon-btn"

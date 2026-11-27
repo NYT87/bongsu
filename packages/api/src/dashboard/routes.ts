@@ -91,6 +91,7 @@ import {
   NameError,
   sessionWorkspace,
   setDisplayName,
+  setUserName,
   setWorkspaceSettings,
   workspaceRef,
   workspaceSettings,
@@ -162,6 +163,9 @@ const AREAS: Record<string, Area> = {
   passkeys: { noWorkspace: true },
   devices: { noWorkspace: true },
   "recovery-codes": { noWorkspace: true },
+  // the person's own page: their name and their workspaces (an instance admin in no workspace reaches it too; anyone
+  // else in none comes with account deletion, #143)
+  me: { noWorkspace: true },
   // the person's own alert emails: an instance admin in no workspace still gets the instance's
   "alert-mail": { noWorkspace: true },
   audit: { noWorkspace: true },
@@ -1092,6 +1096,47 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     }),
   );
 
+  // ---- the person's own page (AREAS: me): their name, and the workspaces they're a member of, each with their role
+  // and a way to leave
+  app.get(
+    "/admin-api/me",
+    wrap(async (c) => {
+      const uid = c.get("session").userId;
+      const u = await c.env.DB.prepare("SELECT email, name FROM users WHERE id = ?1")
+        .bind(uid)
+        .first<{ email: string | null; name: string | null }>();
+      const ws = await c.env.DB.prepare(
+        `SELECT w.id, w.name, m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+         WHERE m.user_id = ?1 AND w.archived_at IS NULL ORDER BY w.name, w.id`,
+      )
+        .bind(uid)
+        .all<{ id: string; name: string; role: string }>();
+      return { email: u?.email ?? null, name: u?.name ?? null, workspaces: ws.results };
+    }),
+  );
+  app.post(
+    "/admin-api/me/name",
+    wrap(async (c) => {
+      const uid = c.get("session").userId;
+      const name = personName((await body(c)).name);
+      await setUserName(c.env.DB, uid, name);
+      await audit(c, "user_name", `user:${uid}`, { name });
+      return { name };
+    }),
+  );
+  // Leaving one of their workspaces (pwa/session.ts leaveWorkspace): refused for its last admin (409), 404 when they
+  // aren't a member there. The row goes in the left workspace's audit, where its admins see it.
+  app.post(
+    "/admin-api/me/workspaces/:id/leave",
+    wrap(async (c) => {
+      const id = c.req.param("id") ?? "";
+      const me = c.get("session").userId;
+      await leaveWorkspace(c.env.DB, c.get("token"), me, id, nowS());
+      await audit(c, "member_leave", `user:${me}`, {}, me, id);
+      return { left: id };
+    }),
+  );
+
   // ---- devices and passkeys
   app.get(
     "/admin-api/passkeys",
@@ -1638,18 +1683,6 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const w = await open(c, String((await body(c)).id ?? ""));
       if (!w) throw new AdminError(403, "you can't open that workspace");
       return { ok: true, id: w.id };
-    }),
-  );
-  // Leaving the session's workspace (pwa/session.ts leaveWorkspace): refused for its last admin (409). The row goes in
-  // the left workspace's audit, where its admins see it.
-  app.post(
-    "/admin-api/session/leave",
-    wrap(async (c) => {
-      const id = ws(c);
-      const me = c.get("session").userId;
-      await leaveWorkspace(c.env.DB, c.get("token"), me, id, nowS());
-      await audit(c, "member_leave", `user:${me}`, {}, me, id);
-      return { left: id };
     }),
   );
   // The Workspaces page's "open", from before the switcher: an alias of the switch above, with its own answers (404,
