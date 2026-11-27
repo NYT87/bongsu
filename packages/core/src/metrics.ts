@@ -265,12 +265,13 @@ export async function settingsLike(env: Env, prefix: string) {
 async function stampFailure(env: Env, itemKeys: string[], nowS: number) {
   for (let i = 0; i < itemKeys.length; i += 50) {
     const keys = itemKeys.slice(i, i + 50);
-    const now = keys.length + 1;
-    const rows = keys.map((_, j) => `(?${j + 1}, ?${now}, ?${now})`).join(", ");
+    // the time twice, as text for `value` and as a number for `updated_at`: Postgres refuses one parameter of two types
+    const [text, at] = [keys.length + 1, keys.length + 2];
+    const rows = keys.map((_, j) => `(?${j + 1}, ?${text}, ?${at})`).join(", ");
     await env.DB.prepare(
       `INSERT INTO settings (key, value, updated_at) VALUES ${rows} ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
     )
-      .bind(...keys.map((k) => FAILED + k), String(nowS))
+      .bind(...keys.map((k) => FAILED + k), String(nowS), nowS)
       .run();
   }
 }
