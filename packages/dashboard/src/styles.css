@@ -7,6 +7,8 @@
   --accent-ink: #166534;
   --ok-ink: #166534;
   --warn-ink: #92400e;
+  /* muted text on a grey tint (the switcher's role pill): --muted reaches only ~4.0:1 there, ~4.3:1 in dark mode */
+  --muted-ink: #475569;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --radius: 12px;
   --sidebar: 232px;
@@ -16,6 +18,7 @@
     --accent-ink: var(--accent);
     --ok-ink: var(--ok);
     --warn-ink: var(--warn);
+    --muted-ink: #cbd5e1;
   }
 }
 * {
@@ -183,7 +186,7 @@ button.ws-token[aria-expanded="true"] {
   padding: 1px 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--line) 80%, transparent);
-  color: var(--muted);
+  color: var(--muted-ink);
   font-size: 11px;
   font-weight: 500;
 }
@@ -576,10 +579,11 @@ button.primary,
 button.danger {
   color: var(--bad);
 }
+/* the banner's red, the same in both themes: white on dark mode's lighter --bad is only ~2.8:1 */
 button.danger.filled {
-  background: var(--bad);
-  border-color: var(--bad);
-  color: #fff;
+  background: var(--banner-bad);
+  border-color: var(--banner-bad);
+  color: var(--on-banner);
 }
 button.link {
   border: 0;
