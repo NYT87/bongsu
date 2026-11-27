@@ -252,7 +252,7 @@ interface Candidate {
 const FAILED = "metrics_failed:";
 
 /** Settings rows whose key starts with `prefix` (its `_` is LIKE's any-character, harmless: the keys are exact). */
-async function settingsLike(env: Env, prefix: string) {
+export async function settingsLike(env: Env, prefix: string) {
   const r = await env.DB.prepare("SELECT key, value, updated_at FROM settings WHERE key LIKE ?1")
     .bind(`${prefix}%`)
     .all<{ key: string; value: string; updated_at: number }>();

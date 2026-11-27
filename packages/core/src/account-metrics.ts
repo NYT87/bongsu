@@ -14,6 +14,7 @@ import {
 } from "./constants";
 import type { Env } from "./env";
 import { zoneToUnix } from "./formats/time";
+import { settingsLike } from "./metrics";
 import { providerFor } from "./providers/index";
 import { YouTubeProvider } from "./providers/youtube";
 import { callerZone } from "./workspaces";
@@ -132,13 +133,7 @@ export async function sampleAccounts(env: Env, deps: StepDeps): Promise<{ sample
       }>()
     ).results.map((r) => [r.account, r.at]),
   );
-  const failed = new Map(
-    (
-      await env.DB.prepare("SELECT key, updated_at FROM settings WHERE key LIKE ?1")
-        .bind(`${FAILED}%`)
-        .all<{ key: string; updated_at: number }>()
-    ).results.map((r) => [r.key.slice(FAILED.length), r.updated_at]),
-  );
+  const failed = new Map([...(await settingsLike(env, FAILED))].map(([k, r]) => [k, r.updated_at]));
   const due = accounts
     .map((a) => {
       const l = last.get(a.id);

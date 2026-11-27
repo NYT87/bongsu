@@ -5,7 +5,7 @@ import type { Env } from "@bongsu/core/env";
 import { runDue } from "@bongsu/core/schedules";
 
 // The global fetch must be called unbound (see index.ts): clients call `this.fetcher(…)`.
-export const realFetch: typeof fetch = (input, init) => fetch(input, init);
+const realFetch: typeof fetch = (input, init) => fetch(input, init);
 
 export default {
   async fetch(): Promise<Response> {

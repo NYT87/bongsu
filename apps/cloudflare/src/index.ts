@@ -5,7 +5,7 @@ import type { Env } from "@bongsu/core/env";
 
 // The global fetch must be called unbound: clients call `this.fetcher(…)`, and the runtime throws "Illegal
 // invocation" when fetch runs with a client as `this`. So clients always get this wrapper, never `fetch` itself.
-export const realFetch: typeof fetch = (input, init) => fetch(input, init);
+const realFetch: typeof fetch = (input, init) => fetch(input, init);
 
 export const app = createApp(realFetch);
 
