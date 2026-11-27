@@ -47,16 +47,17 @@ export async function createInvite(
   fetcher: typeof fetch,
   o: { workspaceId: string; email: string; role: Role; invitedBy: string },
   nowS: number,
-): Promise<{ url: string; mailed: boolean }> {
+): Promise<{ url: string; mailed: boolean; id: string }> {
   const t = token();
   const email = o.email.trim().toLowerCase();
   // without the key the link is shown once, as before: copying it again needs the token kept, encrypted
   const kept = env.ENCRYPTION_KEY ? await encryptSecret(env.ENCRYPTION_KEY, t) : null;
+  const hash = await sha256Hex(t);
   await env.DB.prepare(
     `INSERT INTO invites (token_hash, workspace_id, email, role, invited_by, created_at, expires_at, token_enc)
      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)`,
   )
-    .bind(await sha256Hex(t), o.workspaceId, email, o.role, o.invitedBy, nowS, nowS + INVITE_S, kept)
+    .bind(hash, o.workspaceId, email, o.role, o.invitedBy, nowS, nowS + INVITE_S, kept)
     .run();
   const url = inviteUrl(env, o.role, t);
   let mailed = false;
@@ -83,8 +84,12 @@ export async function createInvite(
   } catch (e) {
     console.warn(`invite mail: ${(e as Error).message}`);
   }
-  return { url, mailed };
+  // id: how the lists and the audit name the invite (inviteId), never by its email
+  return { url, mailed, id: inviteId(hash) };
 }
+
+/** An invite's id in the lists and the audit: the start of its token's hash (`invite:<id>` as an audit target). */
+export const inviteId = (tokenHash: string) => tokenHash.slice(0, 16);
 
 /** A pending invite's link again, from its kept token: null when its token wasn't kept (made before, or without
  *  ENCRYPTION_KEY). `stored` is the invite's token_enc. */

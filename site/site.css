@@ -697,6 +697,10 @@ a {
 .footer p {
   margin: 0;
 }
+.footer-privacy {
+  flex-basis: 100%;
+  font-size: 14px;
+}
 .footer-name {
   display: flex;
   align-items: center;

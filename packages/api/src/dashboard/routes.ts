@@ -12,6 +12,7 @@ import {
   trialDefaultOn,
   youtubeAccounts,
 } from "@bongsu/core/accounts";
+import { auditDetail, noEmail } from "@bongsu/core/audit-safe";
 import { channelUploads } from "@bongsu/core/calendar";
 import { ReleaseError } from "@bongsu/core/clients/youtube";
 import {
@@ -98,6 +99,7 @@ import {
 import { type Context, Hono } from "hono";
 import { scopesOf, withinAttempts } from "../agent/auth";
 import { AcceptError, DASHBOARD_ROLES, inviteOptions, invitePreview, inviteVerify } from "../pwa/invite";
+import { appRoutes, CONTENT_HOST } from "../pwa/routes";
 import {
   createSession,
   endSession,
@@ -328,8 +330,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         nowS(),
         `user:${userId ?? c.get("session")?.userId ?? "?"}`,
         action,
-        target,
-        JSON.stringify(detail),
+        noEmail(target),
+        auditDetail(detail),
         userId ?? c.get("session")?.userId ?? null,
         workspaceId === undefined ? (c.get("workspace") ?? null) : workspaceId,
       )
@@ -493,7 +495,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       const id = claimed.userId;
       const recoveryCodes = await newRecoveryCodes(c, id);
       await signIn(c, id);
-      await audit(c, "bootstrap", `user:${id}`, { email: claimed.email }, id, null);
+      // the person is the row's user and target: their email stays in users, not the audit (#142)
+      await audit(c, "bootstrap", `user:${id}`, {}, id, null);
       return { signedIn: true, recoveryCodes };
     }),
   );
@@ -718,6 +721,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     if (!admin && area.notEditors) return c.json({ error: "only an admin of the workspace can see this" }, 403);
     await next();
   });
+
+  // The app's content routes for the dashboard's content pages (#145): the same handlers and role rules as /app-api,
+  // behind the checks above (the dashboard session, its workspace, creators sent to the app). Not an AREAS page:
+  // editors plan here, and the app's own rules (approve, pause, resume by role; a passkey on each) apply.
+  app.route("/", appRoutes(fetcher, verifiers, CONTENT_HOST));
 
   // A fresh passkey check, for the changes that ask for one.
   app.post(
@@ -1011,8 +1019,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         { workspaceId: ws(c), email, role, invitedBy: c.get("session").userId },
         nowS(),
       );
-      await audit(c, "invite_create", email, { role, mailed: r.mailed });
-      return r;
+      await audit(c, "invite_create", `invite:${r.id}`, { role, mailed: r.mailed });
+      return { url: r.url, mailed: r.mailed };
     }),
   );
   // A pending invite's link again, to copy: like making one, a fresh passkey check, and in the audit.
@@ -1029,7 +1037,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       if (!r) throw new AdminError(404, "no pending invite with that id");
       const url = await keptInviteUrl(c.env, { role: r.role, stored: r.token_enc });
       if (!url) throw new AdminError(409, "this invite's link wasn't kept: revoke it and invite them again");
-      await audit(c, "invite_link_copy", r.email, { role: r.role });
+      await audit(c, "invite_link_copy", `invite:${c.req.param("id")}`, { role: r.role });
       return { url };
     }),
   );
@@ -1044,7 +1052,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         .bind(nowS(), c.req.param("id") ?? "", ws(c))
         .first<{ email: string; role: string }>();
       if (!r) throw new AdminError(404, "no pending invite with that id");
-      await audit(c, "invite_revoke", r.email, { role: r.role });
+      await audit(c, "invite_revoke", `invite:${c.req.param("id")}`, { role: r.role });
       return { revoked: true };
     }),
   );
@@ -1494,10 +1502,17 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // Workspaces page (spec section 0.4), where "open" goes into it
       if (user === me) await setSessionWorkspace(c.env.DB, c.get("token"), id);
       // the instance's row: the request may have no workspace, and the new one isn't where it was made
-      await audit(c, "workspace_create", id, { name, timezone, admin }, me, null);
-      if (invite) await audit(c, "invite_create", admin, { role: "admin", mailed: invite.mailed }, me, id);
+      // its admin by id: "me", the account made admin, or the invite (#142: no email in the audit)
+      const adminRef = user === me ? "me" : user ? `user:${user}` : `invite:${invite?.id}`;
+      await audit(c, "workspace_create", id, { name, timezone, admin: adminRef }, me, null);
+      if (invite)
+        await audit(c, "invite_create", `invite:${invite.id}`, { role: "admin", mailed: invite.mailed }, me, id);
       else if (user !== me) await audit(c, "member_role", `user:${user}`, { role: "admin" }, me, id);
-      return invite ? { id, invite } : user === me ? { id } : { id, admin: user };
+      return invite
+        ? { id, invite: { url: invite.url, mailed: invite.mailed } }
+        : user === me
+          ? { id }
+          : { id, admin: user };
     }),
   );
   app.get(
@@ -1568,7 +1583,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
         { workspaceId: id, email, role: "admin", invitedBy: c.get("session").userId },
         nowS(),
       );
-      await audit(c, "invite_create", email, { role: "admin", mailed: r.mailed }, undefined, id);
+      await audit(c, "invite_create", `invite:${r.id}`, { role: "admin", mailed: r.mailed }, undefined, id);
       return { url: r.url };
     }),
   );
@@ -2192,8 +2207,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // who: the person who acted, when a person did (their name, else their email; in a workspace's list, as that
       // workspace names them, below)
       const r = await c.env.DB.prepare(
-        `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id, COALESCE(u.name, u.email) AS who
+        `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id, COALESCE(u.name, u.email) AS who,
+           COALESCE(i.email, t.name, t.email) AS target_name
          FROM audit a LEFT JOIN users u ON u.id = a.user_id
+         LEFT JOIN users t ON a.target = 'user:' || t.id
+         LEFT JOIN invites i ON i.workspace_id = a.workspace_id AND a.target = 'invite:' || substr(i.token_hash, 1, 16)
          WHERE (CAST(?1 AS BIGINT) IS NULL OR a.id < ?1)
            AND (a.workspace_id = ?2 OR (CAST(?2 AS TEXT) IS NULL AND a.workspace_id IS NULL))
          ORDER BY a.id DESC LIMIT 50`,
@@ -2208,6 +2226,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           detail: string | null;
           user_id: string | null;
           who: string | null;
+          /** a user: or invite: target, named from the live rows (the audit keeps ids, never emails: #142) */
+          target_name: string | null;
         }>();
       // every row here is that workspace's (the query's filter), so it names them all
       if (workspace) {
