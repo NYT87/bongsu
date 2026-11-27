@@ -183,6 +183,18 @@ describe("threads publishing", () => {
     await run(0, 5, 10, 15);
     expect(w.threadsPosts).toHaveLength(1);
   });
+
+  it("a job that may be live fails with a note to check it, never to publish it by hand (#159)", async () => {
+    await publish({ caption: "Answer lost" });
+    w.threadsLoseAnswer = true;
+    await run(0, 5, 10, 15, 20, 25, 30);
+    expect(w.threadsPosts).toHaveLength(1);
+    expect(await job()).toMatchObject({ state: "failed" });
+    const note = w.notifications.find((n) => n.title.endsWith(": failed"));
+    expect(note?.body).toMatch(/It may already be public on Threads: it was kept, so check it there\./);
+    // the old note told the owner it was private, to publish by hand: a second post
+    expect(w.notifications.map((n) => n.body).join("\n")).not.toMatch(/publish it by hand/);
+  });
 });
 
 describe("threads replies, results and the connection", () => {
