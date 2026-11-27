@@ -99,6 +99,7 @@ import {
 import { type Context, Hono } from "hono";
 import { scopesOf, withinAttempts } from "../agent/auth";
 import { AcceptError, DASHBOARD_ROLES, inviteOptions, invitePreview, inviteVerify } from "../pwa/invite";
+import { appRoutes, CONTENT_HOST } from "../pwa/routes";
 import {
   createSession,
   endSession,
@@ -720,6 +721,11 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     if (!admin && area.notEditors) return c.json({ error: "only an admin of the workspace can see this" }, 403);
     await next();
   });
+
+  // The app's content routes for the dashboard's content pages (#145): the same handlers and role rules as /app-api,
+  // behind the checks above (the dashboard session, its workspace, creators sent to the app). Not an AREAS page:
+  // editors plan here, and the app's own rules (approve, pause, resume by role; a passkey on each) apply.
+  app.route("/", appRoutes(fetcher, verifiers, CONTENT_HOST));
 
   // A fresh passkey check, for the changes that ask for one.
   app.post(

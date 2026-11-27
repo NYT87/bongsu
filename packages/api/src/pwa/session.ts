@@ -47,7 +47,7 @@ export function sessionCookie(token: string, maxAge?: number, app: App = "pwa"):
   return `${COOKIE[app]}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge ?? SESSION_S[app]}`;
 }
 
-export function readCookie(header: string | null | undefined, app: App = "pwa"): string | null {
+export function readCookie(header: string | null | undefined, app: App): string | null {
   return cookieValue(header, COOKIE[app]);
 }
 
