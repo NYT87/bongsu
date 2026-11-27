@@ -410,15 +410,22 @@ export function DriveForm({
       setBusy(false);
     }
   };
+  // required: without one the workspaces' folders would land at the top of My Drive. A Drive connected before root
+  // folders (none saved) can still connect again as it is.
+  const missing = !v.trim() && !(connected && !root);
+  const MISSING = "Type the root folder first: a folder's name at the top of My Drive, or its link.";
   // connecting again keeps the saved root unless it was changed here
-  const connect = () =>
-    run(async () => {
+  const connect = () => {
+    if (missing) return setErr(MISSING);
+    return run(async () => {
       const typed = !connected || v.trim() !== (root?.name ?? "") ? { root: v } : {};
       const r = await withFreshCheck(() => api<{ url: string }>(`${path}/start`, typed));
       location.assign(r.url);
     });
+  };
   const save = (e: FormEvent) => {
     e.preventDefault();
+    if (!v.trim()) return setErr(MISSING);
     if (v.trim() === (root?.name ?? "")) return;
     run(async () => {
       await withFreshCheck(() => api(`${path}/root`, { root: v }));
@@ -436,8 +443,8 @@ export function DriveForm({
   return (
     <form onSubmit={save} className="inset">
       <Field
-        label="Root folder"
-        help="A folder at the top of My Drive (its name) or any folder's link: each workspace's folder is made inside it. Empty: at the top of My Drive."
+        label="Root folder (required)"
+        help="Make a folder in your Drive for Bongsu, then type its name (when it's at the top of My Drive) or paste its link. Each workspace's folder is made inside it."
         error={err}
       >
         {(p) => (
@@ -445,19 +452,22 @@ export function DriveForm({
             {...p}
             className="mono"
             value={v}
-            onChange={(e) => setV(e.target.value)}
-            placeholder="bongsu"
+            onChange={(e) => {
+              setV(e.target.value);
+              if (err === MISSING) setErr(null);
+            }}
+            required
             spellCheck={false}
           />
         )}
       </Field>
       <div className="actions">
         {connected && (
-          <button type="submit" aria-disabled={busy || v.trim() === (root?.name ?? "")}>
+          <button type="submit" aria-disabled={busy || !v.trim() || v.trim() === (root?.name ?? "")}>
             Save the root folder
           </button>
         )}
-        <button type="button" className={connected ? "" : "primary"} onClick={connect} aria-disabled={busy}>
+        <button type="button" className={connected ? "" : "primary"} onClick={connect} aria-disabled={busy || missing}>
           {connected ? "Connect again" : "Connect Google Drive"}
         </button>
       </div>

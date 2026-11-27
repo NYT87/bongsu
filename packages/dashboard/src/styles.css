@@ -560,6 +560,12 @@ select {
   background: var(--bg);
   color: var(--fg);
 }
+/* a placeholder is a hint, never a value: muted and italic, so an empty field doesn't read as a filled one */
+input::placeholder {
+  color: var(--muted);
+  font-style: italic;
+  opacity: 1;
+}
 /* a box or a dot keeps its own size: the full-width field rule above would stretch it across its label's row */
 input[type="checkbox"],
 input[type="radio"] {
