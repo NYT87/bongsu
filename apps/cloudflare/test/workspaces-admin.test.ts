@@ -148,6 +148,29 @@ afterEach(async () => {
 });
 
 describe("the Workspaces page", () => {
+  it("a workspace's admin archives it from Settings, only it, with a fresh passkey check; only an instance admin restores it (#138)", async () => {
+    const archived = async (id: string) =>
+      (await env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = ?1").bind(id).first("archived_at")) !== null;
+    // an editor can't (Settings is the admins'), nor an admin whose passkey check is old
+    expect((await (await dash("eda", "b"))("/admin-api/settings/archive", {})).status).toBe(403);
+    expect((await (await dash("bob", "b", { stale: true }))("/admin-api/settings/archive", {})).status).toBe(403);
+    expect(await archived("b")).toBe(false);
+    // B's admin archives B: the one their session works in, never another (the default workspace stays)
+    const bob = await dash("bob", "b");
+    expect((await bob("/admin-api/settings/archive", {})).json).toEqual({ archived: true });
+    expect([await archived("b"), await archived("default")]).toEqual([true, false]);
+    const rows = await env.DB.prepare(
+      "SELECT target, workspace_id, user_id FROM audit WHERE action = 'workspace_archive'",
+    ).all();
+    expect(rows.results).toEqual([{ target: "b", workspace_id: "b", user_id: "bob" }]);
+    // bob's session no longer works in it (he's in no other workspace), and he can't restore it
+    expect((await bob("/admin-api/state")).json).toMatchObject({ workspace: null, noWorkspace: true });
+    expect((await bob("/admin-api/workspaces/b/restore", {})).status).toBe(403);
+    // the instance admin restores it, from the Workspaces page
+    expect((await (await dash("ina"))("/admin-api/workspaces/b/restore", {})).json).toEqual({ restored: true });
+    expect(await archived("b")).toBe(false);
+  });
+
   it("archives a workspace: nothing publishes, its keys and members are refused, restoring brings it back", async () => {
     const reel = await seedReelB();
     const ina = await dash("ina");

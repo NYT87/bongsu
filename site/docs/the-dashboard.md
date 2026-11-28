@@ -217,7 +217,8 @@ link for a new admin.
 **Archive** stops a workspace completely: nothing in it publishes, its agent keys and CLI tokens stop working, its
 members can't open it, it gets no daily digest and its comments and metrics are no longer read. Its plan, texts, accounts and people stay, and **Restore** brings it
 back as it was (posts that came due meanwhile go out only within the catch-up window). Archiving, restoring and adding
-an admin ask for your passkey again.
+an admin ask for your passkey again. A workspace's own admins can archive it too (**Settings → Archive this
+workspace**); only an instance admin restores one.
 
 **Scheduler** is a read-only section for instance admins. For each run (Instagram, Shorts, upkeep): its cron
 expression, the variable that sets it or "default", its next time in your zone, and its last run (when, the calls it
@@ -267,3 +268,7 @@ page only shows its server afterwards. Each workspace has its own; changing or r
 **Instance** shows the address and whether publishing is **Live** or in **Dry run**. To go live, change `DRY_RUN` where
 the instance is configured and deploy again; see [Configuration](configuration.md). The instance's name and colour are
 set when the app is built, see [Branding](configuration.md#branding).
+**Archive this workspace** (admins, with your passkey and a confirm) stops it completely, as archiving from the admin
+dashboard does: nothing in it publishes, its agent keys and CLI tokens stop working and its members can't open it.
+Nothing is deleted, but only an instance admin can restore it. The dashboard then opens your next workspace, if you
+have one.

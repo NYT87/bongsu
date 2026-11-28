@@ -656,6 +656,18 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(
       await env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = 'default'").first("archived_at"),
     ).toBeNull();
+    // archiving from Settings (#138) archives her own workspace, whatever the body says
+    expect((await send("bea", "dashboard", "/admin-api/settings/archive", { workspaceId: "default" })).status).toBe(
+      200,
+    );
+    const archived = await env.DB.prepare(
+      "SELECT id, archived_at IS NOT NULL AS gone FROM workspaces WHERE id IN ('default', 'b') ORDER BY id",
+    ).all();
+    expect(archived.results).toEqual([
+      { id: "b", gone: 1 },
+      { id: "default", gone: 0 },
+    ]);
+    await env.DB.prepare("UPDATE workspaces SET archived_at = NULL WHERE id = 'b'").run();
   });
 
   it("switching: a member of B can't move a session into another workspace, nor see it listed", async () => {

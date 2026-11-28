@@ -191,7 +191,7 @@ export function Settings(props: Props) {
   );
 }
 
-function GeneralSettings(_: Props) {
+function GeneralSettings({ state }: Props) {
   const { data, error, reload } = useLoad<{
     name: string;
     timezone: string;
@@ -306,9 +306,48 @@ function GeneralSettings(_: Props) {
               </dd>
             </dl>
           </Card>
+          <ArchiveCard name={data.name} instanceAdmin={state.instanceAdmin} />
         </>
       )}
     </>
+  );
+}
+
+/** The danger zone: the workspace's admins archive it (#138). Nothing is deleted; only an instance admin restores it,
+ *  so the dialog says who to ask. The dashboard then opens the person's next workspace, or none. */
+function ArchiveCard({ name, instanceAdmin }: { name: string; instanceAdmin: boolean }) {
+  const { confirm, dialog } = useConfirm();
+  return (
+    <Card title="Archive this workspace">
+      <p className="muted small">
+        It stops completely: nothing in it publishes, its agent keys and CLI tokens stop working and its members can't
+        open it. Its data stays.{" "}
+        {instanceAdmin ? "You can restore it on the Workspaces page." : "Only an instance admin can restore it."}
+      </p>
+      <div className="actions">
+        <button
+          type="button"
+          className="danger"
+          onClick={() =>
+            confirm({
+              title: `Archive ${name}?`,
+              detail: instanceAdmin
+                ? "Everyone in it stops working in it at once. Nothing is deleted: restore it on the Workspaces page."
+                : "Everyone in it, you included, stops working in it at once. Nothing is deleted, but only an instance admin can restore it: ask them if you need it back.",
+              verb: "Archive",
+              run: async () => {
+                await withFreshCheck(() => api("settings/archive", {}));
+                // the session works in the person's next workspace now, or none
+                location.assign("/dashboard/");
+              },
+            })
+          }
+        >
+          Archive {name}
+        </button>
+      </div>
+      {dialog}
+    </Card>
   );
 }
 

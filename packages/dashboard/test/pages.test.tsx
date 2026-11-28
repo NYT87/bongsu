@@ -127,6 +127,37 @@ describe("Settings: the Icon card", () => {
   });
 });
 
+describe("Settings: archiving the workspace (#138)", () => {
+  const settings = {
+    name: "Demo Travel",
+    timezone: "UTC",
+    digestHour: 8,
+    dryRun: false,
+    publicUrl: "https://bongsu.example.com",
+    ntfy: { set: false, host: null },
+    encryptionKeySet: true,
+    iconUrl: null,
+    server: { version: "0.7.0", commit: null },
+  };
+
+  it("archives after a confirm that says only an instance admin restores it, then opens the next workspace", async () => {
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET settings": { body: settings },
+      "POST settings/archive": { body: { archived: true } },
+    });
+    open("settings");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Archive Demo Travel" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toMatch(/only an instance admin can restore it/);
+    await user.click(within(dialog).getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["settings/archive"]);
+  });
+});
+
 describe("Members: Edit name", () => {
   const routes = (rename: (name: string) => void = () => {}) => ({
     "GET state": () => ({ body: state() }),

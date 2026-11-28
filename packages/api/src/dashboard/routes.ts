@@ -2221,6 +2221,19 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return { saved: true };
     }),
   );
+  // The workspace's admins archive the one they work in (#138): it stops completely (nothing publishes, its keys and
+  // tokens stop, its members can't open it), nothing is deleted, and only an instance admin restores it (Workspaces).
+  // The session then works in the person's next workspace, or none, as after leaving (sessionWorkspace).
+  app.post(
+    "/admin-api/settings/archive",
+    wrap(async (c) => {
+      fresh(c);
+      const id = ws(c);
+      if (!(await archiveWorkspace(c.env.DB, id, nowS()))) throw new AdminError(409, "it's archived already");
+      await audit(c, "workspace_archive", id, {}, undefined, id);
+      return { archived: true };
+    }),
+  );
   // The workspace's icon: one PNG, the raw body (core/icon.ts checks it). Admins only, as the other settings.
   app.put(
     "/admin-api/settings/icon",
