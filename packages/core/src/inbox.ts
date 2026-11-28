@@ -162,10 +162,11 @@ async function accountOf(db: Db, project: string, workspaceId: string): Promise<
   return r?.account ?? null;
 }
 
-/** The workspace's inbox/ folder id in the store, cached in settings (it saves a walk of the path each run). */
-async function inboxId(env: Env, store: MediaStore, folder: string): Promise<string | null> {
+/** The workspace's inbox/ folder id in the store, cached in settings (it saves a walk of the path each run); `fresh`
+ *  walks the path again. */
+async function inboxId(env: Env, store: MediaStore, folder: string, fresh = false): Promise<string | null> {
   const key = `inbox_folder:${store.id}:${folder}`;
-  const hit = await setting(env, key);
+  const hit = fresh ? null : await setting(env, key);
   if (hit) return hit;
   const node = await store.resolve(mediaPath(folder, "inbox"));
   if (!node) return null;
@@ -175,22 +176,22 @@ async function inboxId(env: Env, store: MediaStore, folder: string): Promise<str
 
 /** What's waiting in one store's inbox: a Reel or photo per media file, a post per folder. A post folder already
  *  drafted isn't listed again (it would spend the run's calls on old drops). `spent`: the run's calls ran out midway,
- *  and the items are those found before. */
+ *  and the items are those found before; `empty`: the inbox folder listed nothing. */
 async function inboxItems(
   db: Db,
   store: MediaStore,
   workspaceId: string,
   root: string,
   reads: { used: number },
-): Promise<{ items: Item[]; spent: boolean }> {
+): Promise<{ items: Item[]; spent: boolean; empty: boolean }> {
   const items: Item[] = [];
   try {
-    await listInbox(db, store, workspaceId, root, reads, items);
+    const empty = await listInbox(db, store, workspaceId, root, reads, items);
+    return { items, spent: false, empty };
   } catch (e) {
     if (!(e instanceof BudgetSpent)) throw e;
-    return { items, spent: true };
+    return { items, spent: true, empty: false };
   }
-  return { items, spent: false };
 }
 
 async function listInbox(
@@ -200,9 +201,10 @@ async function listInbox(
   root: string,
   reads: { used: number },
   items: Item[],
-) {
+): Promise<boolean> {
   reads.used++;
-  for (const proj of (await store.list(root)).filter((f) => f.folder && !f.name.startsWith("_"))) {
+  const top = await store.list(root);
+  for (const proj of top.filter((f) => f.folder && !f.name.startsWith("_"))) {
     reads.used++;
     const kids = await store.list(proj.id);
     const dirs = kids.filter((k) => k.folder && !k.name.startsWith("_"));
@@ -263,6 +265,7 @@ async function listInbox(
       });
     }
   }
+  return !top.length;
 }
 
 /** The ones of a store's media ids that already made a draft. */
@@ -332,7 +335,12 @@ export async function scanInbox(env: Env, deps: StepDeps): Promise<InboxRun> {
         inboxes++;
         stores.set(store.id, store);
         // the run's calls ran out midway: what was found is still drafted, the rest waits for the next turn
-        const found = await inboxItems(env.DB, store, workspaceId, root, reads);
+        let found = await inboxItems(env.DB, store, workspaceId, root, reads);
+        // an inbox deleted and made again lists nothing under its old id: look the path up again
+        if (found.empty) {
+          const now = await inboxId(env, store, folder, true);
+          if (now && now !== root) found = await inboxItems(env.DB, store, workspaceId, now, reads);
+        }
         items.push(...found.items);
         if (found.spent) {
           spent = true;
