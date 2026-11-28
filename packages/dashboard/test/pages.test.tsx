@@ -474,6 +474,63 @@ describe("the admin dashboard", () => {
   });
 });
 
+describe("Workspaces: a workspace's detail page (#140)", () => {
+  const detail = {
+    workspace: { id: "b", name: "Demo Running", mediaFolder: "demo-running", createdAt: 1761000000, archivedAt: null },
+    members: [
+      { userId: "u2", email: "bob@example.com", name: "Bob", role: "admin" },
+      { userId: "u3", email: "eda@example.com", name: null, role: "editor" },
+    ],
+    invites: [{ id: "inv1", email: "new@example.com", role: "creator", expiresAt: 1762000000, copyable: true }],
+    connections: [{ id: "c1", provider: "composio", label: "Instagram", status: "ok" }],
+    accounts: [
+      { id: "demo_running", platform: "instagram", handle: "demo_running", status: "active", connection: "c1" },
+    ],
+  };
+
+  it("opens from a workspace's name: people with roles, pending invites marked, connections read-only", async () => {
+    const calls = fakeApi({
+      "GET state": () => ({ body: { ...state(), instanceAdmin: true } }),
+      "GET overview": { status: 500, body: { error: "not needed here" } },
+      "GET workspaces": {
+        body: {
+          workspaces: [
+            { id: "b", name: "Demo Running", members: 2, accounts: 1, createdAt: 1761000000, archivedAt: null },
+          ],
+        },
+      },
+      "GET users": { body: { users: [] } },
+      "GET scheduler": { status: 500, body: { error: "not needed here" } },
+      "GET workspaces/b": { body: detail },
+      "POST workspaces/b/invites/inv1/link": { body: { url: "https://bongsu.example.com/invite#t" } },
+    });
+    open("admin/workspaces");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("link", { name: "Demo Running" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Demo Running" })).toBeTruthy();
+    expect(location.pathname).toBe("/dashboard/admin/workspaces/b");
+    const people = (await screen.findByRole("heading", { name: "People" })).closest(".card") as HTMLElement;
+    const rows = within(people)
+      .getAllByRole("row")
+      .slice(1)
+      .map((r) => [...r.querySelectorAll("td")].slice(0, 3).map((td) => td.textContent));
+    expect(rows).toEqual([
+      ["Bobbob@example.com", "Admin", "Member"],
+      ["eda@example.com", "Editor", "Member"],
+      ["new@example.com", "Creator", expect.stringMatching(/^Invited, until /)],
+    ]);
+    const accounts = screen.getByRole("heading", { name: "Connected accounts" }).closest(".card") as HTMLElement;
+    expect(within(accounts).getByText("demo_running")).toBeTruthy();
+    expect(within(accounts).getByText("Instagram")).toBeTruthy();
+    await user.click(within(people).getByRole("button", { name: "Copy link" }));
+    expect(await screen.findByText("https://bongsu.example.com/invite#t")).toBeTruthy();
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["workspaces/b/invites/inv1/link"]);
+    await user.click(screen.getByRole("link", { name: "← All workspaces" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Workspaces" })).toBeTruthy();
+    expect(location.pathname).toBe("/dashboard/admin/workspaces");
+  });
+});
+
 describe("Workspaces: the instance admins (#139)", () => {
   it("lists who runs the instance, removes one and makes another, after a confirm", async () => {
     let users = [

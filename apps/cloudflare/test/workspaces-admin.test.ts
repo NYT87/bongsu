@@ -148,6 +148,55 @@ afterEach(async () => {
 });
 
 describe("the Workspaces page", () => {
+  it("an instance admin reads any workspace's detail: people, pending invites, connections and accounts (#140)", async () => {
+    // B's admin invites someone: a pending invite of B
+    expect(
+      (await (await dash("bob", "b"))("/admin-api/invites", { email: "new@example.com", role: "editor" })).status,
+    ).toBe(200);
+    const ina = await dash("ina");
+    const d = (await ina("/admin-api/workspaces/b")).json as {
+      workspace: Record<string, unknown>;
+      members: { userId: string; role: string }[];
+      invites: { id: string; email: string; role: string; copyable: boolean }[];
+      connections: { id: string }[];
+      accounts: { id: string; handle: string; connection: string | null }[];
+    };
+    expect(d.workspace).toMatchObject({ id: "b", name: "Workspace B", archivedAt: null });
+    expect(d.workspace.mediaFolder).toEqual(expect.any(String));
+    expect(d.members.map((m) => [m.userId, m.role]).sort()).toEqual([
+      ["bob", "admin"],
+      ["cara", "creator"],
+      ["eda", "editor"],
+    ]);
+    expect(d.invites).toMatchObject([{ email: "new@example.com", role: "editor", copyable: true }]);
+    expect(d.connections.map((x) => x.id)).toEqual(["c_b"]);
+    expect(d.accounts).toMatchObject([{ id: "b_shop", handle: "b_shop", connection: "c_b" }]);
+    expect((await ina("/admin-api/workspaces/nope")).status).toBe(404);
+    // its invite's link and revoke, audited in B
+    const link = await ina(`/admin-api/workspaces/b/invites/${d.invites[0].id}/link`, {});
+    expect(link.json.url).toMatch(/^https:\/\/bongsu\.test\//);
+    expect((await ina(`/admin-api/workspaces/default/invites/${d.invites[0].id}/revoke`, {})).status).toBe(404);
+    expect((await ina(`/admin-api/workspaces/b/invites/${d.invites[0].id}/revoke`, {})).json).toEqual({
+      revoked: true,
+    });
+    expect(((await ina("/admin-api/workspaces/b")).json.invites as unknown[]).length).toBe(0);
+    const rows = await env.DB.prepare(
+      "SELECT action, workspace_id FROM audit WHERE action IN ('invite_link_copy', 'invite_revoke') ORDER BY id",
+    ).all();
+    expect(rows.results).toEqual([
+      { action: "invite_link_copy", workspace_id: "b" },
+      { action: "invite_revoke", workspace_id: "b" },
+    ]);
+  });
+
+  it("a workspace's admin reads no workspace's detail, their own included (#140)", async () => {
+    const bob = await dash("bob", "b");
+    expect((await bob("/admin-api/workspaces/b")).status).toBe(403);
+    expect((await bob("/admin-api/workspaces/default")).status).toBe(403);
+    expect((await bob("/admin-api/workspaces/default/invites/x/revoke", {})).status).toBe(403);
+    expect((await bob("/admin-api/workspaces/b/invites/x/link", {})).status).toBe(403);
+  });
+
   it("a workspace's admin archives it from Settings, only it, with a fresh passkey check; only an instance admin restores it (#138)", async () => {
     const archived = async (id: string) =>
       (await env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = ?1").bind(id).first("archived_at")) !== null;

@@ -1,7 +1,8 @@
-// Workspaces: the instance's workspaces, made, renamed, archived and opened.
+// Workspaces: the instance's workspaces, made, renamed, archived and opened; each one's detail page
+// (/dashboard/admin/workspaces/<id>: its people, pending invites and connections); and the instance admins.
 
-import { type FormEvent, useState } from "react";
-import { api, switchWorkspace, when, withFreshCheck } from "../api";
+import { type FormEvent, useEffect, useState } from "react";
+import { api, NAVIGATED, switchWorkspace, when, withFreshCheck } from "../api";
 import { Card, Field, Loading, Page, Pill, SecretOnce, useConfirm, useLoad, useToast } from "../ui";
 import { AdminPicker, adminOf, errorText, type Props } from "./common";
 import { SchedulerCard } from "./Settings";
@@ -16,17 +17,42 @@ interface WorkspaceRow {
   createdAt: number;
   archivedAt: number | null;
 }
+/** What the actions need of a workspace: the list's rows and the detail page both have it. */
+type WorkspaceRef = Pick<WorkspaceRow, "id" | "name" | "archivedAt">;
 
 /** After the session's workspace changed (opened, or just made), the whole dashboard reloads in it. */
 const workIn = (section = "") => location.assign(`/dashboard/${section}`);
 
-/** Every workspace of the instance: create, rename, add an admin, archive or restore, and open one to work in it. */
-export function Workspaces({ state }: Props) {
+/** The workspace a detail path names (/dashboard/admin/workspaces/<id>); "" for the list. The router reads only the
+ *  section, so the rest of the path is read here, as Settings reads its tabs. */
+const detailOf = () => decodeURIComponent(location.pathname.replace(/^\/dashboard\/?/, "").split("/")[2] ?? "");
+
+/** The list, or one workspace's detail page when the path names one. */
+export function Workspaces(props: Props) {
+  const [id, setId] = useState(detailOf);
+  useEffect(() => {
+    const f = () => setId(detailOf());
+    addEventListener("popstate", f);
+    addEventListener(NAVIGATED, f);
+    return () => {
+      removeEventListener("popstate", f);
+      removeEventListener(NAVIGATED, f);
+    };
+  }, []);
+  const go = (next: string) => {
+    history.pushState(null, "", `/dashboard/admin/workspaces${next ? `/${encodeURIComponent(next)}` : ""}`);
+    setId(next);
+  };
+  return id ? <WorkspaceDetail {...props} id={id} back={() => go("")} /> : <WorkspaceList {...props} onOpen={go} />;
+}
+
+/** The actions on a workspace, shared by the list and the detail page: a form (make one, rename one, add an admin to
+ *  one) with the invite link it makes, and the row of buttons (open, rename, add an admin, archive or restore).
+ *  `after` reloads what the page shows. */
+function useWorkspaceActions(state: Props["state"], after: () => void) {
   const toast = useToast();
-  const { data, error, reload } = useLoad<{ workspaces: WorkspaceRow[] }>("workspaces");
   const { confirm, dialog } = useConfirm();
-  // what the form above the table does: make one, rename one, or add an admin to one
-  const [form, setForm] = useState<{ kind: "create" } | { kind: "rename" | "admin"; w: WorkspaceRow } | null>(null);
+  const [form, setForm] = useState<{ kind: "create" } | { kind: "rename" | "admin"; w: WorkspaceRef } | null>(null);
   const [name, setName] = useState("");
   // empty: the server names the folder after the workspace's id
   const [folder, setFolder] = useState("");
@@ -79,14 +105,14 @@ export function Workspaces({ state }: Props) {
         setMade({ url: r.url, email: to });
       }
       setForm(null);
-      reload();
+      after();
     } catch (e) {
       setErr(errorText(e));
     } finally {
       setBusy(false);
     }
   };
-  const open = async (w: WorkspaceRow) => {
+  const open = async (w: WorkspaceRef) => {
     setErr(null);
     try {
       await switchWorkspace(w.id);
@@ -95,11 +121,83 @@ export function Workspaces({ state }: Props) {
       setErr(errorText(e));
     }
   };
-  return (
-    <Page
-      title="Workspaces"
-      intro="Every workspace of this instance. Open one to work in it as its admin; archive one to stop it completely."
-    >
+  const formEl = form && (
+    <form onSubmit={submit} className="inset">
+      {form.kind !== "admin" && (
+        <Field
+          label={form.kind === "create" ? "Name" : `New name for ${form.w.name}`}
+          help="Who or what it's for: a brand, a client, a team."
+        >
+          {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />}
+        </Field>
+      )}
+      {form.kind === "create" && (
+        <>
+          <Field
+            label="Media folder"
+            help="The one folder of the media store its files live in, made for you. Leave it empty to name it after the workspace's id, which a rename never changes. It can't be one another workspace uses."
+          >
+            {(p) => (
+              <input
+                {...p}
+                className="mono"
+                value={folder}
+                onChange={(e) => setFolder(e.target.value)}
+                placeholder="the workspace's id"
+                maxLength={60}
+                spellCheck={false}
+              />
+            )}
+          </Field>
+          <Field label="Time zone" help="How its plan's times are shown and entered. Each person can pick their own.">
+            {(p) => (
+              <select {...p} value={tz} onChange={(e) => setTz(e.target.value)}>
+                {(zones.includes(tz) ? zones : [tz, ...zones]).map((z) => (
+                  <option key={z}>{z}</option>
+                ))}
+              </select>
+            )}
+          </Field>
+          <AdminPicker
+            myEmail={state.user?.email ?? null}
+            choice={adminChoice}
+            onChoice={setAdminChoice}
+            email={email}
+            onEmail={setEmail}
+          />
+        </>
+      )}
+      {form.kind === "admin" && (
+        <Field label={`Email of ${form.w.name}'s new admin`} help="They get an invite link, to join as an admin.">
+          {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
+        </Field>
+      )}
+      {err && (
+        <p className="error" role="alert">
+          {err}
+        </p>
+      )}
+      <div className="actions">
+        <button type="button" onClick={() => show(null)}>
+          Cancel
+        </button>
+        <button className="primary" type="submit" aria-disabled={busy}>
+          {form.kind === "create"
+            ? busy
+              ? "Creating…"
+              : "Create the workspace"
+            : form.kind === "rename"
+              ? "Rename"
+              : busy
+                ? "Making the link…"
+                : "Make the invite link"}
+        </button>
+      </div>
+    </form>
+  );
+  /** The invite link a form made, and an error that isn't the form's (opening a workspace). */
+  const notices = (
+    <>
       {made && (
         <Card>
           <SecretOnce title={`Invite link for ${made.email}`} value={made.url} onDone={() => setMade(null)} />
@@ -111,94 +209,93 @@ export function Workspaces({ state }: Props) {
           {err}
         </p>
       )}
+      {dialog}
+    </>
+  );
+  const buttons = (w: WorkspaceRef) => (
+    <>
+      {!w.archivedAt && (
+        <button type="button" className="link" onClick={() => open(w)}>
+          Open
+        </button>
+      )}
+      <button type="button" className="link" onClick={() => show({ kind: "rename", w })}>
+        Rename
+      </button>
+      {!w.archivedAt && (
+        <button type="button" className="link" onClick={() => show({ kind: "admin", w })}>
+          Add an admin
+        </button>
+      )}
+      {w.archivedAt ? (
+        <button
+          type="button"
+          className="link"
+          onClick={() =>
+            confirm({
+              title: `Restore ${w.name}?`,
+              detail:
+                "It comes back as it was: its approved posts publish again (late ones within the catch-up window), its agent keys work and its members can open it.",
+              verb: "Restore",
+              run: async () => {
+                await withFreshCheck(() => api(`workspaces/${encodeURIComponent(w.id)}/restore`, {}));
+                toast({ ok: true, text: `${w.name} restored.` });
+                after();
+              },
+            })
+          }
+        >
+          Restore
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="link danger"
+          onClick={() =>
+            confirm({
+              title: `Archive ${w.name}?`,
+              detail:
+                "It stops completely: nothing in it publishes, its agent keys and CLI tokens stop working and its members can't open it. Its data stays; restoring brings it back as it was.",
+              verb: "Archive",
+              run: async () => {
+                await withFreshCheck(() => api(`workspaces/${encodeURIComponent(w.id)}/archive`, {}));
+                toast({ ok: true, text: `${w.name} archived.` });
+                after();
+              },
+            })
+          }
+        >
+          Archive
+        </button>
+      )}
+    </>
+  );
+  return { show, formOpen: !!form, made: !!made, formEl, notices, buttons };
+}
+
+/** Every workspace of the instance: create, rename, add an admin, archive or restore, and open one to work in it; its
+ *  name opens its detail page. */
+function WorkspaceList({ state, onOpen }: Props & { onOpen: (id: string) => void }) {
+  const { data, error, reload } = useLoad<{ workspaces: WorkspaceRow[] }>("workspaces");
+  const a = useWorkspaceActions(state, reload);
+  return (
+    <Page
+      title="Workspaces"
+      intro="Every workspace of this instance. Open one to work in it as its admin; archive one to stop it completely."
+    >
+      {a.notices}
       <Card
         title="All workspaces"
         actions={
-          !form &&
-          !made && (
-            <button type="button" onClick={() => show({ kind: "create" })}>
+          !a.formOpen &&
+          !a.made && (
+            <button type="button" onClick={() => a.show({ kind: "create" })}>
               Create a workspace
             </button>
           )
         }
       >
-        {form && (
-          <form onSubmit={submit} className="inset">
-            {form.kind !== "admin" && (
-              <Field
-                label={form.kind === "create" ? "Name" : `New name for ${form.w.name}`}
-                help="Who or what it's for: a brand, a client, a team."
-              >
-                {(p) => <input {...p} value={name} onChange={(e) => setName(e.target.value)} maxLength={80} required />}
-              </Field>
-            )}
-            {form.kind === "create" && (
-              <>
-                <Field
-                  label="Media folder"
-                  help="The one folder of the media store its files live in, made for you. Leave it empty to name it after the workspace's id, which a rename never changes. It can't be one another workspace uses."
-                >
-                  {(p) => (
-                    <input
-                      {...p}
-                      className="mono"
-                      value={folder}
-                      onChange={(e) => setFolder(e.target.value)}
-                      placeholder="the workspace's id"
-                      maxLength={60}
-                      spellCheck={false}
-                    />
-                  )}
-                </Field>
-                <Field
-                  label="Time zone"
-                  help="How its plan's times are shown and entered. Each person can pick their own."
-                >
-                  {(p) => (
-                    <select {...p} value={tz} onChange={(e) => setTz(e.target.value)}>
-                      {(zones.includes(tz) ? zones : [tz, ...zones]).map((z) => (
-                        <option key={z}>{z}</option>
-                      ))}
-                    </select>
-                  )}
-                </Field>
-                <AdminPicker
-                  myEmail={state.user?.email ?? null}
-                  choice={adminChoice}
-                  onChoice={setAdminChoice}
-                  email={email}
-                  onEmail={setEmail}
-                />
-              </>
-            )}
-            {form.kind === "admin" && (
-              <Field label={`Email of ${form.w.name}'s new admin`} help="They get an invite link, to join as an admin.">
-                {(p) => <input {...p} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />}
-              </Field>
-            )}
-            {err && (
-              <p className="error" role="alert">
-                {err}
-              </p>
-            )}
-            <div className="actions">
-              <button type="button" onClick={() => show(null)}>
-                Cancel
-              </button>
-              <button className="primary" type="submit" aria-disabled={busy}>
-                {form.kind === "create"
-                  ? busy
-                    ? "Creating…"
-                    : "Create the workspace"
-                  : form.kind === "rename"
-                    ? "Rename"
-                    : busy
-                      ? "Making the link…"
-                      : "Make the invite link"}
-              </button>
-            </div>
-          </form>
-        )}
+        {a.formEl}
         {!data ? (
           <Loading error={error} retry={reload} />
         ) : (
@@ -220,7 +317,15 @@ export function Workspaces({ state }: Props) {
                 {data.workspaces.map((w) => (
                   <tr key={w.id}>
                     <td>
-                      <div>{w.name}</div>
+                      <a
+                        href={`/dashboard/admin/workspaces/${encodeURIComponent(w.id)}`}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onOpen(w.id);
+                        }}
+                      >
+                        {w.name}
+                      </a>
                       <div className="muted small mono">{w.id}</div>
                     </td>
                     <td data-label="Members" className="right">
@@ -233,68 +338,9 @@ export function Workspaces({ state }: Props) {
                       {when(w.createdAt)}
                     </td>
                     <td data-label="Status">
-                      {w.archivedAt ? (
-                        <Pill status="disabled" label={`Archived ${when(w.archivedAt)}`} />
-                      ) : (
-                        <Pill status="ok" label="Active" />
-                      )}
+                      <StatusPill archivedAt={w.archivedAt} />
                     </td>
-                    <td className="right">
-                      {!w.archivedAt && (
-                        <button type="button" className="link" onClick={() => open(w)}>
-                          Open
-                        </button>
-                      )}
-                      <button type="button" className="link" onClick={() => show({ kind: "rename", w })}>
-                        Rename
-                      </button>
-                      {!w.archivedAt && (
-                        <button type="button" className="link" onClick={() => show({ kind: "admin", w })}>
-                          Add an admin
-                        </button>
-                      )}
-                      {w.archivedAt ? (
-                        <button
-                          type="button"
-                          className="link"
-                          onClick={() =>
-                            confirm({
-                              title: `Restore ${w.name}?`,
-                              detail:
-                                "It comes back as it was: its approved posts publish again (late ones within the catch-up window), its agent keys work and its members can open it.",
-                              verb: "Restore",
-                              run: async () => {
-                                await withFreshCheck(() => api(`workspaces/${encodeURIComponent(w.id)}/restore`, {}));
-                                toast({ ok: true, text: `${w.name} restored.` });
-                                reload();
-                              },
-                            })
-                          }
-                        >
-                          Restore
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          className="link danger"
-                          onClick={() =>
-                            confirm({
-                              title: `Archive ${w.name}?`,
-                              detail:
-                                "It stops completely: nothing in it publishes, its agent keys and CLI tokens stop working and its members can't open it. Its data stays; restoring brings it back as it was.",
-                              verb: "Archive",
-                              run: async () => {
-                                await withFreshCheck(() => api(`workspaces/${encodeURIComponent(w.id)}/archive`, {}));
-                                toast({ ok: true, text: `${w.name} archived.` });
-                                reload();
-                              },
-                            })
-                          }
-                        >
-                          Archive
-                        </button>
-                      )}
-                    </td>
+                    <td className="right">{a.buttons(w)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -304,6 +350,196 @@ export function Workspaces({ state }: Props) {
       </Card>
       <InstanceAdmins me={state.user?.id ?? null} />
       <SchedulerCard />
+    </Page>
+  );
+}
+
+const StatusPill = ({ archivedAt }: { archivedAt: number | null }) =>
+  archivedAt ? <Pill status="disabled" label={`Archived ${when(archivedAt)}`} /> : <Pill status="ok" label="Active" />;
+
+interface Detail {
+  workspace: { id: string; name: string; mediaFolder: string; createdAt: number; archivedAt: number | null };
+  members: { userId: string; email: string | null; name: string | null; role: string }[];
+  invites: { id: string; email: string; role: string; expiresAt: number; copyable: boolean }[];
+  connections: { id: string; provider: string; label: string | null; status: string }[];
+  accounts: { id: string; platform: string; handle: string; status: string; connection: string | null }[];
+}
+
+const roleName = (r: string) => r.charAt(0).toUpperCase() + r.slice(1);
+
+/** One workspace for an instance admin (#140): its facts and actions, its people with pending invites in the same
+ *  list (Copy link, Revoke), and its connections and accounts, read-only. */
+function WorkspaceDetail({ state, id, back }: Props & { id: string; back: () => void }) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<Detail>(`workspaces/${encodeURIComponent(id)}`);
+  const a = useWorkspaceActions(state, reload);
+  const { confirm, dialog } = useConfirm();
+  const [link, setLink] = useState<{ url: string; email: string } | null>(null);
+  const w = data?.workspace;
+  const invitePath = (inviteId: string, what: "link" | "revoke") =>
+    `workspaces/${encodeURIComponent(id)}/invites/${encodeURIComponent(inviteId)}/${what}`;
+  const copy = async (i: Detail["invites"][number]) => {
+    try {
+      const r = await withFreshCheck(() => api<{ url: string }>(invitePath(i.id, "link"), {}));
+      setLink({ url: r.url, email: i.email });
+    } catch (e) {
+      toast({ ok: false, text: errorText(e) });
+    }
+  };
+  return (
+    <Page title={w?.name ?? "Workspace"} intro="Its people, pending invites and connections.">
+      <p>
+        <a
+          href="/dashboard/admin/workspaces"
+          onClick={(e) => {
+            e.preventDefault();
+            back();
+          }}
+        >
+          ← All workspaces
+        </a>
+      </p>
+      {a.notices}
+      {link && (
+        <Card>
+          <SecretOnce title={`Invite link for ${link.email}`} value={link.url} onDone={() => setLink(null)} />
+        </Card>
+      )}
+      {!data || !w ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          <Card title="Workspace">
+            {a.formEl}
+            <dl className="facts">
+              <dt>Id</dt>
+              <dd className="mono">{w.id}</dd>
+              <dt>Media folder</dt>
+              <dd className="mono">{w.mediaFolder}</dd>
+              <dt>Created</dt>
+              <dd>{when(w.createdAt)}</dd>
+              <dt>Status</dt>
+              <dd>
+                <StatusPill archivedAt={w.archivedAt} />
+              </dd>
+            </dl>
+            <div className="actions">{a.buttons(w)}</div>
+          </Card>
+          <Card title="People">
+            {data.members.length + data.invites.length === 0 ? (
+              <p className="empty">No one yet: Add an admin above.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="stack">
+                  <thead>
+                    <tr>
+                      <th>Person</th>
+                      <th>Role</th>
+                      <th>Status</th>
+                      <th className="right">
+                        <span className="vh">Actions</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.members.map((m) => (
+                      <tr key={m.userId}>
+                        <td>
+                          {m.name ?? m.email ?? m.userId}
+                          {m.name && m.email && <div className="muted small">{m.email}</div>}
+                        </td>
+                        <td data-label="Role">{roleName(m.role)}</td>
+                        <td data-label="Status">Member</td>
+                        <td />
+                      </tr>
+                    ))}
+                    {data.invites.map((i) => (
+                      <tr key={i.id}>
+                        <td>{i.email}</td>
+                        <td data-label="Role">{roleName(i.role)}</td>
+                        <td data-label="Status">
+                          <Pill status="waiting" label={`Invited, until ${when(i.expiresAt)}`} />
+                        </td>
+                        <td className="right">
+                          {i.copyable && (
+                            <button type="button" className="link" onClick={() => copy(i)}>
+                              Copy link
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="link danger"
+                            onClick={() =>
+                              confirm({
+                                title: `Revoke the invite for ${i.email}?`,
+                                detail: "Its link stops working at once. You can invite them again.",
+                                verb: "Revoke",
+                                run: async () => {
+                                  await withFreshCheck(() => api(invitePath(i.id, "revoke"), {}));
+                                  toast({ ok: true, text: `The invite for ${i.email} is revoked.` });
+                                  reload();
+                                },
+                              })
+                            }
+                          >
+                            Revoke
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="muted small">Instance admins aren't listed: they can act in every workspace.</p>
+          </Card>
+          <Card title="Connected accounts">
+            {data.connections.length + data.accounts.length === 0 ? (
+              <p className="empty">Nothing connected yet.</p>
+            ) : (
+              <div className="table-wrap">
+                <table className="stack">
+                  <thead>
+                    <tr>
+                      <th>Account</th>
+                      <th>Platform</th>
+                      <th>Connection</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.accounts.map((x) => {
+                      const c = data.connections.find((k) => k.id === x.connection);
+                      return (
+                        <tr key={x.id}>
+                          <td>{x.handle}</td>
+                          <td data-label="Platform">{x.platform}</td>
+                          <td data-label="Connection">{c ? (c.label ?? c.provider) : "none"}</td>
+                          <td data-label="Status">
+                            <Pill status={c && c.status !== "ok" ? c.status : x.status} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {data.connections
+                      .filter((c) => !data.accounts.some((x) => x.connection === c.id))
+                      .map((c) => (
+                        <tr key={c.id}>
+                          <td className="muted">no account yet</td>
+                          <td data-label="Platform">{c.provider}</td>
+                          <td data-label="Connection">{c.label ?? c.provider}</td>
+                          <td data-label="Status">
+                            <Pill status={c.status} />
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
       {dialog}
     </Page>
   );

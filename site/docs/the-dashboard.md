@@ -214,6 +214,11 @@ Instance admins open the **Admin dashboard** from the bottom of the sidebar (`/d
 **Rename** changes its name (its own admins can also rename it in **Settings**), and **Add an admin** makes an invite
 link for a new admin.
 
+A workspace's name opens its own page (`/dashboard/admin/workspaces/<id>`): its id, media folder, creation date and
+status with the same actions, its **People** (each member and their role, and the pending invites in the same list,
+marked with when they expire, with **Copy link** and **Revoke**), and its **Connected accounts** (each account's
+platform, connection and status; to change them, open the workspace). Instance admins aren't listed among its people.
+
 **Archive** stops a workspace completely: nothing in it publishes, its agent keys and CLI tokens stop working, its
 members can't open it, it gets no daily digest and its comments and metrics are no longer read. Its plan, texts, accounts and people stay, and **Restore** brings it
 back as it was (posts that came due meanwhile go out only within the catch-up window). Archiving, restoring and adding

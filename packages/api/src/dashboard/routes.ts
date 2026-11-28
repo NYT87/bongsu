@@ -959,46 +959,49 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   // ---- members and invites (AREAS: managing, the workspace's admins and the instance admins)
   /** An invite's id in the lists: the start of its token's hash (the link itself comes from Copy link, below). */
   const INVITE_ID = "substr(token_hash, 1, 16)";
+  /** A workspace's people as its Members page lists them (instance admins left out, #139) and its pending invites:
+   *  the Members page's own, and an instance admin's look at any workspace (its detail page, #140). */
+  const peopleIn = async (c: C, workspaceId: string) => {
+    const members = await c.env.DB.prepare(
+      // instance admins aren't listed (#139): they can act in every workspace without being its members
+      `SELECT u.id, u.email, m.display_name, m.role FROM memberships m JOIN users u ON u.id = m.user_id
+       WHERE m.workspace_id = ?1 AND u.instance_admin = 0 ORDER BY m.role, u.email, u.id`,
+    )
+      .bind(workspaceId)
+      .all<{ id: string; email: string | null; display_name: string | null; role: string }>();
+    const names = await memberNames(
+      c.env.DB,
+      members.results.map((m) => m.id),
+      workspaceId,
+    );
+    const invites = await c.env.DB.prepare(
+      `SELECT ${INVITE_ID} AS id, email, role, expires_at, token_enc IS NOT NULL AS kept FROM invites
+       WHERE workspace_id = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2 ORDER BY created_at`,
+    )
+      .bind(workspaceId, nowS())
+      .all<{ id: string; email: string; role: string; expires_at: number; kept: number | boolean }>();
+    return {
+      members: members.results.map((m) => ({
+        userId: m.id,
+        email: m.email,
+        // the name shown in this workspace; displayName is the workspace's own (null: the person's name shows)
+        name: names.get(m.id) ?? null,
+        displayName: m.display_name,
+        role: m.role,
+      })),
+      invites: invites.results.map((i) => ({
+        id: i.id,
+        email: i.email,
+        role: i.role,
+        expiresAt: i.expires_at,
+        // its link can be copied again (a boolean on Postgres, 0/1 on SQLite)
+        copyable: Number(i.kept) === 1,
+      })),
+    };
+  };
   app.get(
     "/admin-api/members",
-    wrap(async (c) => {
-      const members = await c.env.DB.prepare(
-        // instance admins aren't listed (#139): they can act in every workspace without being its members
-        `SELECT u.id, u.email, m.display_name, m.role FROM memberships m JOIN users u ON u.id = m.user_id
-         WHERE m.workspace_id = ?1 AND u.instance_admin = 0 ORDER BY m.role, u.email, u.id`,
-      )
-        .bind(ws(c))
-        .all<{ id: string; email: string | null; display_name: string | null; role: string }>();
-      const names = await memberNames(
-        c.env.DB,
-        members.results.map((m) => m.id),
-        ws(c),
-      );
-      const invites = await c.env.DB.prepare(
-        `SELECT ${INVITE_ID} AS id, email, role, expires_at, token_enc IS NOT NULL AS kept FROM invites
-         WHERE workspace_id = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2 ORDER BY created_at`,
-      )
-        .bind(ws(c), nowS())
-        .all<{ id: string; email: string; role: string; expires_at: number; kept: number | boolean }>();
-      return {
-        members: members.results.map((m) => ({
-          userId: m.id,
-          email: m.email,
-          // the name shown in this workspace; displayName is the workspace's own (null: the person's name shows)
-          name: names.get(m.id) ?? null,
-          displayName: m.display_name,
-          role: m.role,
-        })),
-        invites: invites.results.map((i) => ({
-          id: i.id,
-          email: i.email,
-          role: i.role,
-          expiresAt: i.expires_at,
-          // its link can be copied again (a boolean on Postgres, 0/1 on SQLite)
-          copyable: Number(i.kept) === 1,
-        })),
-      };
-    }),
+    wrap((c) => peopleIn(c, ws(c))),
   );
   /** A role from a request, or a 400. */
   const roleOf = (v: unknown) => {
@@ -1033,38 +1036,41 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return { url: r.url, mailed: r.mailed };
     }),
   );
-  // A pending invite's link again, to copy: like making one, a fresh passkey check, and in the audit.
+  // A pending invite's link again, to copy: like making one, a fresh passkey check, and in the audit (the invite's
+  // workspace's). The Members page's, and an instance admin's for any workspace (#140).
+  const inviteLink = async (c: C, workspaceId: string, id: string) => {
+    fresh(c);
+    const r = await c.env.DB.prepare(
+      `SELECT email, role, token_enc FROM invites WHERE ${INVITE_ID} = ?1 AND workspace_id = ?2 AND used_at IS NULL
+         AND revoked_at IS NULL AND expires_at > ?3`,
+    )
+      .bind(id, workspaceId, nowS())
+      .first<{ email: string; role: string; token_enc: string | null }>();
+    if (!r) throw new AdminError(404, "no pending invite with that id");
+    const url = await keptInviteUrl(c.env, { role: r.role, stored: r.token_enc });
+    if (!url) throw new AdminError(409, "this invite's link wasn't kept: revoke it and invite them again");
+    await audit(c, "invite_link_copy", `invite:${id}`, { role: r.role }, undefined, workspaceId);
+    return { url };
+  };
+  const revokeInvite = async (c: C, workspaceId: string, id: string) => {
+    fresh(c);
+    const r = await c.env.DB.prepare(
+      `UPDATE invites SET revoked_at = ?1 WHERE ${INVITE_ID} = ?2 AND workspace_id = ?3 AND used_at IS NULL
+         AND revoked_at IS NULL RETURNING email, role`,
+    )
+      .bind(nowS(), id, workspaceId)
+      .first<{ email: string; role: string }>();
+    if (!r) throw new AdminError(404, "no pending invite with that id");
+    await audit(c, "invite_revoke", `invite:${id}`, { role: r.role }, undefined, workspaceId);
+    return { revoked: true };
+  };
   app.post(
     "/admin-api/invites/:id/link",
-    wrap(async (c) => {
-      fresh(c);
-      const r = await c.env.DB.prepare(
-        `SELECT email, role, token_enc FROM invites WHERE ${INVITE_ID} = ?1 AND workspace_id = ?2 AND used_at IS NULL
-           AND revoked_at IS NULL AND expires_at > ?3`,
-      )
-        .bind(c.req.param("id") ?? "", ws(c), nowS())
-        .first<{ email: string; role: string; token_enc: string | null }>();
-      if (!r) throw new AdminError(404, "no pending invite with that id");
-      const url = await keptInviteUrl(c.env, { role: r.role, stored: r.token_enc });
-      if (!url) throw new AdminError(409, "this invite's link wasn't kept: revoke it and invite them again");
-      await audit(c, "invite_link_copy", `invite:${c.req.param("id")}`, { role: r.role });
-      return { url };
-    }),
+    wrap((c) => inviteLink(c, ws(c), c.req.param("id") ?? "")),
   );
   app.post(
     "/admin-api/invites/:id/revoke",
-    wrap(async (c) => {
-      fresh(c);
-      const r = await c.env.DB.prepare(
-        `UPDATE invites SET revoked_at = ?1 WHERE ${INVITE_ID} = ?2 AND workspace_id = ?3 AND used_at IS NULL
-           AND revoked_at IS NULL RETURNING email, role`,
-      )
-        .bind(nowS(), c.req.param("id") ?? "", ws(c))
-        .first<{ email: string; role: string }>();
-      if (!r) throw new AdminError(404, "no pending invite with that id");
-      await audit(c, "invite_revoke", `invite:${c.req.param("id")}`, { role: r.role });
-      return { revoked: true };
-    }),
+    wrap((c) => revokeInvite(c, ws(c), c.req.param("id") ?? "")),
   );
   app.post(
     "/admin-api/members/:userId",
@@ -1701,6 +1707,52 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       await audit(c, "workspace_restore", id, {}, undefined, id);
       return { restored: true };
     }),
+  );
+  // One workspace for its detail page (#140): a deliberate read across workspaces, so instance admins only (AREAS:
+  // workspaces). Its people and pending invites as its Members page lists them, and its connections and accounts,
+  // read-only. Archived ones too: the page restores them.
+  app.get(
+    "/admin-api/workspaces/:id",
+    wrap(async (c) => {
+      const id = c.req.param("id") ?? "";
+      const w = await c.env.DB.prepare("SELECT id, name, created_at, archived_at FROM workspaces WHERE id = ?1")
+        .bind(id)
+        .first<{ id: string; name: string; created_at: number; archived_at: number | null }>();
+      if (!w) throw new AdminError(404, "no such workspace");
+      const connections = await c.env.DB.prepare(
+        "SELECT id, provider, label, status FROM connections WHERE workspace_id = ?1 ORDER BY provider, id",
+      )
+        .bind(id)
+        .all<{ id: string; provider: string; label: string | null; status: string }>();
+      const accounts = await listAccounts(c.env.DB, { workspaceId: id, all: true });
+      return {
+        workspace: {
+          id: w.id,
+          name: w.name,
+          mediaFolder: (await workspaceSettings(c.env.DB, id)).mediaFolder,
+          createdAt: w.created_at,
+          archivedAt: w.archived_at,
+        },
+        ...(await peopleIn(c, id)),
+        connections: connections.results,
+        accounts: accounts.map((a) => ({
+          id: a.id,
+          platform: a.platform,
+          handle: a.handle,
+          status: a.status,
+          connection: a.connection?.id ?? null,
+        })),
+      };
+    }),
+  );
+  // a pending invite of any workspace, from its detail page: Copy link and Revoke, as on its Members page
+  app.post(
+    "/admin-api/workspaces/:id/invites/:invite/link",
+    wrap((c) => inviteLink(c, c.req.param("id") ?? "", c.req.param("invite") ?? "")),
+  );
+  app.post(
+    "/admin-api/workspaces/:id/invites/:invite/revoke",
+    wrap((c) => revokeInvite(c, c.req.param("id") ?? "", c.req.param("invite") ?? "")),
   );
   /** Work in a workspace from the next request on (sessions.workspace_id; the switcher, core/workspaces.ts mayOpen);
    *  null when the caller can't open it. */

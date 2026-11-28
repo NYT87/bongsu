@@ -647,9 +647,14 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
       ["/admin-api/workspaces/default/archive", {}],
       ["/admin-api/workspaces/default/restore", {}],
       ["/admin-api/workspaces/default/open", {}],
+      ["/admin-api/workspaces/default/invites/inviteA000000000/link", {}],
+      ["/admin-api/workspaces/default/invites/inviteA000000000/revoke", {}],
     ] as const)
       expect((await send("bea", "dashboard", path, body)).status, path).toBe(403);
     expect((await as("bea", "dashboard", "/admin-api/workspaces")).status).toBe(403);
+    // a workspace's detail page (#140): the instance admins', for her own workspace too
+    for (const id of ["default", "b"])
+      expect((await as("bea", "dashboard", `/admin-api/workspaces/${id}`)).status, id).toBe(403);
     // nor the instance's accounts, which the create form picks its admin from
     expect((await as("bea", "dashboard", "/admin-api/users")).status).toBe(403);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces WHERE name = 'Mine'").first("n")).toBe(0);
