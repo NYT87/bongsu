@@ -176,6 +176,25 @@ describe("tick: the run's call budget", () => {
     await tick(await testEnv(env), { fetch: w.fetch, now: later(5) });
     expect((await jobs()).map((j) => j.state)).toEqual(["container_created", "container_created"]);
   });
+
+  it("a pause made during a run stops the jobs that run hasn't published yet", async () => {
+    await seedReel(w);
+    await seedReel(w, { base: "short2_y" });
+    igHappyPath(w);
+    const e = await testEnv(env);
+    await tick(e, { fetch: w.fetch, now: AT }); // both containers
+    const publishes = () => w.calls.filter((c) => c.slug === "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH").length;
+    // the owner pauses right after the first job is published
+    const pausing: typeof fetch = async (input, init) => {
+      const r = await w.fetch(input, init);
+      if (publishes() === 1)
+        await env.DB.prepare("UPDATE workspace_settings SET paused = '{}' WHERE workspace_id = 'default'").run();
+      return r;
+    };
+    await tick(e, { fetch: pausing, now: later(5) });
+    expect(publishes()).toBe(1);
+    expect((await jobs()).map((j) => j.state)).toEqual(["published", "container_created"]);
+  });
 });
 
 describe("tick: timings follow the interval", () => {
@@ -802,6 +821,29 @@ describe("tick: Shorts comments", () => {
     expect(w.ytComments).toEqual([]);
     expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM shorts_commented").first<{ n: number }>())?.n).toBe(0);
     expect(w.notifications.map((n) => n.title)).toEqual(["dry run: would comment on Short short1"]);
+  });
+
+  it("posts a comment a dry run closed once dry run is off, and only once", async () => {
+    await tick(await testEnv(env, { DRY_RUN: "1" }), { fetch: w.fetch, now: AT }, "shorts");
+    await tick(await testEnv(env, { DRY_RUN: "1" }), { fetch: w.fetch, now: later(30) }, "shorts");
+    expect(w.ytComments).toEqual([]);
+    const live = await testEnv(env, { DRY_RUN: "0" });
+    await tick(live, { fetch: w.fetch, now: later(60) }, "shorts");
+    await tick(live, { fetch: w.fetch, now: later(90) }, "shorts");
+    expect(w.ytComments).toEqual([{ video: "vidPUBLIC01", text: "Full video: https://youtu.be/x" }]);
+    expect(await jobs()).toMatchObject([{ item_key: "comment:vidPUBLIC01", state: "done", dry_run: 0 }]);
+  });
+
+  it("posts no comment for a workspace paused after the run started", async () => {
+    // the owner pauses while the run checks which Shorts are public
+    const pausing: typeof fetch = async (input, init) => {
+      const r = await w.fetch(input, init);
+      await env.DB.prepare("UPDATE workspace_settings SET paused = '{}' WHERE workspace_id = 'default'").run();
+      return r;
+    };
+    await tick(await testEnv(env), { fetch: pausing, now: AT }, "shorts");
+    expect(w.ytComments).toEqual([]);
+    expect(await jobs()).toEqual([]);
   });
 });
 

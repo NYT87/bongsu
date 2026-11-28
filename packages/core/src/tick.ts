@@ -44,6 +44,7 @@ import {
   itemDue,
   itemOptions,
   latestApprovals,
+  pausedState,
   pendingShorts,
   readText,
   recordCommented,
@@ -679,12 +680,14 @@ async function refuse(c: Ctx, job: JobRow, reason: string, payload?: Payload, li
 }
 
 /** recheck's finding; `removed`: the item is gone from the plan, so nothing it left on the platform will be needed. */
-type Recheck = { state: "done" | "refused" | "wait"; reason: string; removed?: boolean };
+type Recheck = { state: "done" | "refused" | "wait"; reason: string; removed?: boolean; paused?: boolean };
 
 /** The plan's current word on a queued job, asked before each step that reaches the platform: the item is still
  *  there, at the same time, for the same account, released and not posted, and its account enabled (a Trial Reel
  *  copy: its Reel is still planned, with the trial switch on). Null when the job may go on. */
 async function recheck(c: Ctx, job: JobRow, p: Payload): Promise<Recheck | null> {
+  // paused after this run read the held workspaces: nothing more goes out, the job stays as it is until resumed
+  if (await pausedState(c.env.DB, job.workspace_id)) return { state: "wait", reason: "paused", paused: true };
   const key = p.trial ? job.item_key.replace(/^trial:/, "") : job.item_key;
   const item = await getItem(c.env.DB, key);
   if (!item) return { state: "refused", reason: "removed from the plan", removed: true };
@@ -722,6 +725,7 @@ async function recheck(c: Ctx, job: JobRow, p: Payload): Promise<Recheck | null>
  *  video is never deleted for the plan's sake, and the note (refused or held) tells the owner it may be public, kept,
  *  to check on the platform. */
 async function settle(c: Ctx, job: JobRow, p: Payload, r: Recheck) {
+  if (r.paused) return;
   if (r.state === "refused" && r.removed && previousUpload(p) && !mayBeLive(job, p)) {
     const d = await discard(c, job, p);
     // one note: the refusal says the video was kept
@@ -1476,17 +1480,20 @@ async function shortsComments(c: Ctx) {
     const pending = await pendingShorts(c.env.DB, s.id);
     if (!pending.length) continue;
     const keys = pending.map((r) => `comment:${r.video_id}`);
-    const known = await c.env.DB.prepare(`SELECT item_key, state FROM jobs WHERE item_key IN ${jsonList(c.env.DB, 1)}`)
+    const known = await c.env.DB.prepare(
+      `SELECT item_key, state, dry_run FROM jobs WHERE item_key IN ${jsonList(c.env.DB, 1)}`,
+    )
       .bind(JSON.stringify(keys))
-      .all<{ item_key: string; state: string }>();
-    const states = new Map(known.results.map((r) => [r.item_key, r.state]));
+      .all<{ item_key: string; state: string; dry_run: number }>();
+    const jobsOf = new Map(known.results.map((r) => [r.item_key, r]));
     const approvals = await latestApprovals(c.env.DB, keys);
-    // new ones, and refused ones whose approval has arrived since
+    // new ones, refused ones whose approval has arrived since, and ones a dry run closed once it's live
     const todo: { r: ShortRow; why: string | null }[] = [];
     for (const r of pending) {
-      const state = states.get(`comment:${r.video_id}`);
+      const job = jobsOf.get(`comment:${r.video_id}`);
       const why = await shortsVerdict(r, s.id, approvals.get(`comment:${r.video_id}`));
-      if (state === undefined || (state === "refused" && why === null)) todo.push({ r, why });
+      const reopens = job?.state === "refused" || (job?.state === "done" && !!job.dry_run && !c.dry);
+      if (!job || (reopens && why === null)) todo.push({ r, why });
     }
     if (!todo.length) continue;
     const pr = await providerFor(c.env, c.deps.fetch, s);
@@ -1496,6 +1503,8 @@ async function shortsComments(c: Ctx) {
     }
     const ready = todo.filter((t) => t.why === null).map((t) => t.r.video_id);
     const visible = pr.isPublic && ready.length ? await pr.isPublic(ready) : null;
+    // paused after this run read the held workspaces: nothing more goes out
+    if (await pausedState(c.env.DB, s.workspaceId)) continue;
     for (const { r, why } of todo) {
       if (budget <= 0) return;
       if (why === null && visible && !visible.has(r.video_id)) continue; // not public yet (or gone): try again later
@@ -1516,12 +1525,13 @@ async function shortsComments(c: Ctx) {
         label,
         connectionId: s.connection?.id,
       };
-      // a refused job (no approval yet) comes back as pending once the approval is there
+      // a refused job (no approval yet) comes back as pending once the approval is there; a dry run's once it's live
       const ins = await c.env.DB.prepare(
         `INSERT INTO jobs (item_key, kind, account, due_at, state, dry_run, payload, created_at, updated_at, workspace_id)
          VALUES (?1, 'comment', ?2, ?3, 'pending', ?4, ?5, ?3, ?3, ?6) ON CONFLICT (item_key) DO UPDATE
          SET state = 'pending', last_error = NULL, attempts = 0, dry_run = excluded.dry_run, payload = excluded.payload,
-             updated_at = excluded.updated_at WHERE jobs.state = 'refused'
+             updated_at = excluded.updated_at
+         WHERE jobs.state = 'refused' OR (jobs.dry_run = 1 AND excluded.dry_run = 0)
          RETURNING id`,
       )
         .bind(key, s.id, c.nowS, c.dry ? 1 : 0, JSON.stringify(payload), s.workspaceId)
