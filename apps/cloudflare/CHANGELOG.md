@@ -1,5 +1,32 @@
 # @bongsu/cloudflare
 
+## 0.9.0
+
+### Patch Changes
+
+- Updated dependencies [95a76fb]
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [95a76fb]
+- Updated dependencies [e01506d]
+- Updated dependencies [ce269d5]
+- Updated dependencies [c9baf17]
+- Updated dependencies [95a76fb]
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [f10eca2]
+- Updated dependencies [a712dac]
+- Updated dependencies [df8b115]
+- Updated dependencies [c9baf17]
+- Updated dependencies [2bb26f5]
+- Updated dependencies [134f112]
+- Updated dependencies [a64f69e]
+- Updated dependencies [ec930bd]
+- Updated dependencies [95a76fb]
+  - @bongsu/api@0.9.0
+  - @bongsu/core@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes

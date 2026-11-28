@@ -1,5 +1,34 @@
 # @bongsu/api
 
+## 0.9.0
+
+### Minor Changes
+
+- 95a76fb: A workspace's admins can archive it themselves: **Settings → Archive this workspace**, with a confirm and a fresh passkey check. It stops completely and nothing is deleted; only an instance admin restores it, from the Workspaces page. The dashboard then opens the person's next workspace, or none.
+
+### Patch Changes
+
+- f10eca2: The app's sign-in no longer lists the instance's passkeys to someone signed out: the device offers its own. New passkeys are always discoverable (a passkey on a phone or a computer always is; an old hardware key that can't store one is refused when it's added).
+- ec930bd: Revoking a passkey now signs that person out everywhere else (a lost phone's app session no longer keeps working for 30 days), and a recovery-code sign-in ends every earlier session. Two revokes at once can no longer remove both of your last passkeys.
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [95a76fb]
+- Updated dependencies [e01506d]
+- Updated dependencies [ce269d5]
+- Updated dependencies [c9baf17]
+- Updated dependencies [95a76fb]
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [a712dac]
+- Updated dependencies [df8b115]
+- Updated dependencies [c9baf17]
+- Updated dependencies [2bb26f5]
+- Updated dependencies [134f112]
+- Updated dependencies [a64f69e]
+- Updated dependencies [95a76fb]
+  - @bongsu/core@0.9.0
+
 ## 0.8.0
 
 ### Minor Changes
