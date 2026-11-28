@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "trail": {
-      "command": "trail",
-      "args": ["mcp"]
-    }
-  }
-}
