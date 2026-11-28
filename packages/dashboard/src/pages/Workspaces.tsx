@@ -302,8 +302,111 @@ export function Workspaces({ state }: Props) {
           </div>
         )}
       </Card>
+      <InstanceAdmins me={state.user?.id ?? null} />
       <SchedulerCard />
       {dialog}
     </Page>
+  );
+}
+
+interface UserRow {
+  id: string;
+  email: string | null;
+  name: string | null;
+  instanceAdmin: boolean;
+}
+
+/** Who runs the instance: they aren't listed among a workspace's members (#139), so they're made and removed here. The
+ *  last one stays (the server refuses, 409). */
+function InstanceAdmins({ me }: { me: string | null }) {
+  const toast = useToast();
+  const { data, error, reload } = useLoad<{ users: UserRow[] }>("users");
+  const { confirm, dialog } = useConfirm();
+  const [pick, setPick] = useState("");
+  const label = (u: UserRow) => (u.name && u.email ? `${u.name} (${u.email})` : (u.name ?? u.email ?? u.id));
+  const set = (u: UserRow, on: boolean) =>
+    confirm({
+      title: on ? `Make ${label(u)} an instance admin?` : `Remove ${label(u)} as an instance admin?`,
+      detail: on
+        ? "They'll manage the whole instance: every workspace (as its admin), the media stores, the OAuth apps and who the instance admins are."
+        : "They keep their memberships, but no longer see the instance's workspaces, media stores and OAuth apps.",
+      verb: on ? "Make instance admin" : "Remove instance admin",
+      run: async () => {
+        await withFreshCheck(() => api("instance-admins", { userId: u.id, on }));
+        toast({ ok: true, text: `${label(u)} ${on ? "is now" : "is no longer"} an instance admin.` });
+        // their own: the sidebar's Instance group goes with it
+        if (!on && u.id === me) return location.reload();
+        setPick("");
+        reload();
+      },
+    });
+  const admins = data?.users.filter((u) => u.instanceAdmin) ?? [];
+  const others = data?.users.filter((u) => !u.instanceAdmin) ?? [];
+  return (
+    <Card title="Instance admins">
+      <p className="muted small">
+        They run the instance and can act in every workspace, without being listed among its members.
+      </p>
+      {!data ? (
+        <Loading error={error} retry={reload} />
+      ) : (
+        <>
+          <div className="table-wrap">
+            <table className="stack">
+              <thead>
+                <tr>
+                  <th>Person</th>
+                  <th className="right">
+                    <span className="vh">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {admins.map((u) => (
+                  <tr key={u.id}>
+                    <td>
+                      {label(u)}
+                      {u.id === me && <span className="muted"> (you)</span>}
+                    </td>
+                    <td className="right">
+                      <button type="button" className="link danger" onClick={() => set(u, false)}>
+                        Remove instance admin
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {others.length > 0 && (
+            <div className="row">
+              <Field label="Make someone an instance admin">
+                {(p) => (
+                  <select {...p} value={pick} onChange={(e) => setPick(e.target.value)}>
+                    <option value="">Choose a person</option>
+                    {others.map((u) => (
+                      <option key={u.id} value={u.id}>
+                        {label(u)}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </Field>
+              <button
+                type="button"
+                disabled={!pick}
+                onClick={() => {
+                  const u = others.find((x) => x.id === pick);
+                  if (u) set(u, true);
+                }}
+              >
+                Make instance admin
+              </button>
+            </div>
+          )}
+        </>
+      )}
+      {dialog}
+    </Card>
   );
 }

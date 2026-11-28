@@ -963,18 +963,17 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/members",
     wrap(async (c) => {
       const members = await c.env.DB.prepare(
-        `SELECT u.id, u.email, m.display_name, m.role, u.instance_admin FROM memberships m JOIN users u ON u.id = m.user_id
-         WHERE m.workspace_id = ?1 ORDER BY m.role, u.email, u.id`,
+        // instance admins aren't listed (#139): they can act in every workspace without being its members
+        `SELECT u.id, u.email, m.display_name, m.role FROM memberships m JOIN users u ON u.id = m.user_id
+         WHERE m.workspace_id = ?1 AND u.instance_admin = 0 ORDER BY m.role, u.email, u.id`,
       )
         .bind(ws(c))
-        .all<{ id: string; email: string | null; display_name: string | null; role: string; instance_admin: number }>();
+        .all<{ id: string; email: string | null; display_name: string | null; role: string }>();
       const names = await memberNames(
         c.env.DB,
         members.results.map((m) => m.id),
         ws(c),
       );
-      // who's an instance admin: for the instance admins' "Make instance admin" control only
-      const ia = c.get("instanceAdmin");
       const invites = await c.env.DB.prepare(
         `SELECT ${INVITE_ID} AS id, email, role, expires_at, token_enc IS NOT NULL AS kept FROM invites
          WHERE workspace_id = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2 ORDER BY created_at`,
@@ -989,7 +988,6 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
           name: names.get(m.id) ?? null,
           displayName: m.display_name,
           role: m.role,
-          ...(ia ? { instanceAdmin: Number(m.instance_admin) === 1 } : {}),
         })),
         invites: invites.results.map((i) => ({
           id: i.id,
@@ -1615,7 +1613,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const r = await c.env.DB.prepare(
         `SELECT w.id, w.name, w.created_at, w.archived_at,
-           (SELECT COUNT(*) FROM memberships m WHERE m.workspace_id = w.id) AS members,
+           (SELECT COUNT(*) FROM memberships m JOIN users u ON u.id = m.user_id
+             WHERE m.workspace_id = w.id AND u.instance_admin = 0) AS members,
            (SELECT COUNT(*) FROM accounts a WHERE a.workspace_id = w.id) AS accounts
          FROM workspaces w ORDER BY w.name, w.id`,
       ).all<{
@@ -1735,12 +1734,15 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/users",
     wrap(async (c) => ({
       users: (
-        await c.env.DB.prepare("SELECT id, email, name FROM users ORDER BY COALESCE(name, email), email").all<{
+        await c.env.DB.prepare(
+          "SELECT id, email, name, instance_admin FROM users ORDER BY COALESCE(name, email), email",
+        ).all<{
           id: string;
           email: string;
           name: string | null;
+          instance_admin: number;
         }>()
-      ).results,
+      ).results.map(({ instance_admin, ...u }) => ({ ...u, instanceAdmin: Number(instance_admin) === 1 })),
     })),
   );
   app.post(

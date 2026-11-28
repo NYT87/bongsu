@@ -11,6 +11,7 @@ import { upsertConnection } from "@bongsu/core/accounts";
 import { dailyDigest } from "@bongsu/core/digest";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
+import { removeMember, setRole } from "@bongsu/core/invites";
 import { createWorkspace } from "@bongsu/core/people";
 import { tick } from "@bongsu/core/tick";
 import { setMediaFolder, setWorkspaceSettings, workspaceSettings } from "@bongsu/core/workspaces";
@@ -386,22 +387,45 @@ describe("the Workspaces page", () => {
     expect((await bob("/admin-api/instance-admins", { userId: "bob", on: false })).status).toBe(409);
   });
 
-  it("the Members page tells an instance admin who's one, for its Make instance admin control; not anyone else", async () => {
+  it("a workspace keeps an admin of its own: an instance admin who's also its admin isn't counted (#139)", async () => {
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ina', 'admin', 0)",
+    ).run();
+    const by = { instanceAdmin: false };
+    // bob is B's only admin of its own: ina's admin membership doesn't let him step down or leave
+    await expect(setRole(env.DB, "b", "bob", "editor", by, nowS())).rejects.toThrow(/keeps one admin/);
+    await expect(removeMember(env.DB, "b", "bob", by, nowS())).rejects.toThrow(/keeps one admin/);
+    // and ina's membership can go whatever the count: she isn't one of B's own admins
+    await removeMember(env.DB, "b", "ina", by, nowS());
+    expect(
+      await env.DB.prepare("SELECT 1 FROM memberships WHERE workspace_id = 'b' AND user_id = 'ina'").first(),
+    ).toBeNull();
+  });
+
+  it("instance admins aren't listed or counted as members, but the users list flags them (#139)", async () => {
     await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id <> 'ina'").run();
     const ina = await dash("ina", "b");
-    const flags = async () =>
-      ((await ina("/admin-api/members")).json.members as { userId: string; instanceAdmin?: boolean }[])
-        .map((m) => [m.userId, m.instanceAdmin])
-        .sort();
-    expect(await flags()).toEqual([
-      ["bob", false],
-      ["cara", false],
-      ["eda", false],
-    ]);
+    const listed = async () =>
+      ((await ina("/admin-api/members")).json.members as { userId: string }[]).map((m) => m.userId).sort();
+    const counted = async () =>
+      ((await ina("/admin-api/workspaces")).json.workspaces as { id: string; members: number }[]).find(
+        (w) => w.id === "b",
+      )?.members;
+    expect(await listed()).toEqual(["bob", "cara", "eda"]);
+    expect(await counted()).toBe(3);
     expect((await ina("/admin-api/instance-admins", { userId: "eda", on: true })).status).toBe(200);
-    expect(await flags()).toContainEqual(["eda", true]);
-    // B's own admin sees the members, not who runs the instance
-    const members = (await (await dash("bob"))("/admin-api/members")).json.members as Record<string, unknown>[];
-    expect(members.every((m) => !("instanceAdmin" in m))).toBe(true);
+    // still a member of B (nothing is deleted), but shown only where the instance admins are
+    expect(await listed()).toEqual(["bob", "cara"]);
+    expect(await counted()).toBe(2);
+    const users = (await ina("/admin-api/users")).json.users as { id: string; instanceAdmin: boolean }[];
+    expect(
+      users
+        .filter((u) => u.instanceAdmin)
+        .map((u) => u.id)
+        .sort(),
+    ).toEqual(["eda", "ina"]);
+    // B's own admin no longer sees eda either
+    const bobs = (await (await dash("bob"))("/admin-api/members")).json.members as { userId: string }[];
+    expect(bobs.map((m) => m.userId).sort()).toEqual(["bob", "cara"]);
   });
 });

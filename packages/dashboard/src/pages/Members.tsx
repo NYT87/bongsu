@@ -15,8 +15,6 @@ interface Member {
   /** The per-workspace value behind it, null when unset. */
   displayName: string | null;
   role: string;
-  /** Only in an instance admin's list: whether this member is one too. */
-  instanceAdmin?: boolean;
 }
 
 interface Invite {
@@ -224,35 +222,25 @@ export function Members({ state }: Props) {
                           </button>{" "}
                         </>
                       )}
-                      {state.instanceAdmin && m.instanceAdmin !== undefined && (
+                      {state.instanceAdmin && (
                         <button
                           type="button"
                           className="link"
                           onClick={() =>
                             confirm({
-                              title: m.instanceAdmin
-                                ? `Remove ${m.name ?? m.email ?? m.userId} as an instance admin?`
-                                : `Make ${m.name ?? m.email ?? m.userId} an instance admin?`,
-                              detail: m.instanceAdmin
-                                ? "They keep their role in this workspace, but no longer see the instance's workspaces, media stores and OAuth apps."
-                                : "They'll manage the whole instance: every workspace (as its admin), the media stores, the OAuth apps and who the instance admins are.",
-                              verb: m.instanceAdmin ? "Remove instance admin" : "Make instance admin",
+                              title: `Make ${m.name ?? m.email ?? m.userId} an instance admin?`,
+                              detail:
+                                "They'll manage the whole instance: every workspace (as its admin), the media stores, the OAuth apps and who the instance admins are. Instance admins aren't listed as members; manage them on Workspaces.",
+                              verb: "Make instance admin",
                               run: async () => {
-                                await withFreshCheck(() =>
-                                  api("instance-admins", { userId: m.userId, on: !m.instanceAdmin }),
-                                );
-                                toast({
-                                  ok: true,
-                                  text: `${m.name ?? m.email ?? m.userId} ${m.instanceAdmin ? "is no longer" : "is now"} an instance admin.`,
-                                });
-                                // their own: the sidebar's Instance group goes with it
-                                if (m.userId === me && m.instanceAdmin) location.reload();
-                                else reload();
+                                await withFreshCheck(() => api("instance-admins", { userId: m.userId, on: true }));
+                                toast({ ok: true, text: `${m.name ?? m.email ?? m.userId} is now an instance admin.` });
+                                reload();
                               },
                             })
                           }
                         >
-                          {m.instanceAdmin ? "Remove instance admin" : "Make instance admin"}
+                          Make instance admin
                         </button>
                       )}{" "}
                       <button

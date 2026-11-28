@@ -145,12 +145,14 @@ export async function acceptInvite(
 
 const LAST_ADMIN = "a workspace keeps one admin: make someone else admin first";
 
-/** The condition, inside the change's own statement, that the workspace keeps an admin: the member isn't an admin, or
- *  another admin stays, or an instance admin overrides it (`override`, the parameter that's 1 then). In one statement,
- *  so two admins demoting or removing each other at once can't both pass a check made before. ?1 the workspace, ?2
- *  the member. */
-const keepsAdmin = (override: string) => `(role <> 'admin' OR ${override} = 1 OR EXISTS (SELECT 1 FROM memberships a
-   WHERE a.workspace_id = ?1 AND a.role = 'admin' AND a.user_id <> ?2))`;
+/** The condition, inside the change's own statement, that the workspace keeps an admin of its own: the member isn't
+ *  one of those (not an admin, or an instance admin, who isn't counted: #139), or another one stays, or an instance
+ *  admin overrides it (`override`, the parameter that's 1 then). In one statement, so two admins demoting or removing
+ *  each other at once can't both pass a check made before. ?1 the workspace, ?2 the member. */
+const keepsAdmin = (override: string) => `(role <> 'admin' OR ${override} = 1
+   OR EXISTS (SELECT 1 FROM users i WHERE i.id = ?2 AND i.instance_admin = 1)
+   OR EXISTS (SELECT 1 FROM memberships a JOIN users o ON o.id = a.user_id
+     WHERE a.workspace_id = ?1 AND a.role = 'admin' AND a.user_id <> ?2 AND o.instance_admin = 0))`;
 
 /** Runs a change to a workspace's admins after locking the workspace's row, in one transaction: on Postgres two
  *  changes at once lock different memberships and each statement's snapshot still sees the other admin, so both

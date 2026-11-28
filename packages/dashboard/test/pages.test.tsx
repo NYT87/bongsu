@@ -443,6 +443,46 @@ describe("the admin dashboard", () => {
   });
 });
 
+describe("Workspaces: the instance admins (#139)", () => {
+  it("lists who runs the instance, removes one and makes another, after a confirm", async () => {
+    let users = [
+      { id: "u1", email: "ada@example.com", name: "Ada", instanceAdmin: true },
+      { id: "u2", email: "eda@example.com", name: "Eda", instanceAdmin: true },
+      { id: "u3", email: "bob@example.com", name: null, instanceAdmin: false },
+    ];
+    const calls = fakeApi({
+      "GET state": () => ({ body: { ...state(), instanceAdmin: true } }),
+      "GET overview": { status: 500, body: { error: "not needed here" } },
+      "GET workspaces": { body: { workspaces: [] } },
+      "GET scheduler": { status: 500, body: { error: "not needed here" } },
+      "GET users": () => ({ body: { users } }),
+      "POST instance-admins": (b: unknown) => {
+        const { userId, on } = b as { userId: string; on: boolean };
+        users = users.map((u) => (u.id === userId ? { ...u, instanceAdmin: on } : u));
+        return { body: { userId, instanceAdmin: on } };
+      },
+    });
+    open("admin/workspaces");
+    const user = userEvent.setup();
+    const card = (await screen.findByRole("heading", { name: "Instance admins" })).closest(".card") as HTMLElement;
+    const rows = async () =>
+      (await within(card).findAllByRole("row")).slice(1).map((r) => r.querySelector("td")?.textContent);
+    expect(await rows()).toEqual(["Ada (ada@example.com) (you)", "Eda (eda@example.com)"]);
+    const eda = within(card).getByText("Eda (eda@example.com)").closest("tr") as HTMLElement;
+    await user.click(within(eda).getByRole("button", { name: "Remove instance admin" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove instance admin" }));
+    expect(await screen.findByText("Eda (eda@example.com) is no longer an instance admin.")).toBeTruthy();
+    await user.selectOptions(within(card).getByLabelText("Make someone an instance admin"), "u3");
+    await user.click(within(card).getByRole("button", { name: "Make instance admin" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Make instance admin" }));
+    await waitFor(async () => expect(await rows()).toEqual(["Ada (ada@example.com) (you)", "bob@example.com"]));
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([
+      { userId: "u2", on: false },
+      { userId: "u3", on: true },
+    ]);
+  });
+});
+
 describe("the workspace switcher", () => {
   const two = () => ({
     ...state(),

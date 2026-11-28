@@ -20,7 +20,8 @@ guide, including its connections, keys, settings and members. **Editors** can lo
 their own passkeys, devices and CLI tokens, but they can't change accounts and don't see Connections, agent keys,
 Settings or Members. **Creators** don't use the dashboard: signing in here points them to the [phone app](the-app.md),
 where they plan, approve and connect their own accounts. An **instance admin** is a person who manages the whole
-instance: its workspaces, its media stores and its OAuth apps, and who works in any workspace as its admin.
+instance: its workspaces, its media stores and its OAuth apps, and who works in any workspace as its admin. Instance
+admins aren't listed among a workspace's members, and don't count as its admins: each workspace keeps one of its own.
 [Security](security.md#roles) has the table.
 
 ## First run
@@ -180,9 +181,11 @@ paused or drafted something use the same name.
 
 Each member's role can be changed in place, and **Remove** takes them out of the workspace at once: signed out of
 it, their CLI tokens for it and the agent keys they made there revoked (still listed, marked revoked), their devices no longer notified there. A workspace always keeps one admin: make
-someone else admin before the last one steps down. An admin who's removed or no longer an admin loses the invites they
-sent. Each of these changes asks for your passkey. An instance admin also sees **Make instance admin** (or **Remove
-instance admin**) by each member; the instance always keeps one.
+someone else admin before the last one steps down (an instance admin doesn't count). An admin who's removed or no
+longer an admin loses the invites they sent. Each of these changes asks for your passkey. An instance admin also sees
+**Make instance admin** by each member; once they are one they leave the list. The admin dashboard's **Workspaces** page
+lists the **Instance admins**, with **Remove instance admin** and a way to make anyone on the instance one; the instance
+always keeps one.
 
 ## Audit
 
