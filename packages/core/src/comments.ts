@@ -57,6 +57,8 @@ export async function pollComments(env: Env, deps: StepDeps): Promise<{ checked:
   const yt = new Map<string, { pr: Provider; me: string | null }>();
   const accounts = new Map((await listAccounts(env.DB, { all: true, working: true })).map((a) => [a.id, a]));
   const fresh: { who: string; text: string; item: string | null; workspaceId: string }[] = [];
+  const checked = (id: string) =>
+    env.DB.prepare("UPDATE comment_polls SET checked_at = ?1 WHERE media_id = ?2").bind(nowS, id).run();
   for (const p of polls.results) {
     // out of calls for this run: the rest, checked least recently, come first next run
     if (!canAfford(deps, COMMENTS_UNIT_CALLS)) break;
@@ -65,7 +67,11 @@ export async function pollComments(env: Env, deps: StepDeps): Promise<{ checked:
       if (p.platform === "ig") {
         const acc = accounts.get(p.account);
         const pr = acc && (await providerFor(env, deps.fetch, acc));
-        if (!pr?.comments) continue;
+        // no comments to read there (Bluesky, a broken connection): marked checked, or it keeps every run's slots
+        if (!pr?.comments) {
+          await checked(p.media_id);
+          continue;
+        }
         found = (await pr.comments(p.media_id)).map((c) => ({
           id: `ig:${c.id}`,
           author: c.author,
@@ -80,7 +86,10 @@ export async function pollComments(env: Env, deps: StepDeps): Promise<{ checked:
           if (pr?.comments) yt.set(p.account, { pr, me: (await pr.verify()).id || null });
         }
         const got = yt.get(p.account);
-        if (!got?.pr.comments) continue;
+        if (!got?.pr.comments) {
+          await checked(p.media_id);
+          continue;
+        }
         found = (await got.pr.comments(p.media_id)).map((c) => ({
           id: `yt:${c.id}`,
           author: c.author,
@@ -128,7 +137,7 @@ export async function pollComments(env: Env, deps: StepDeps): Promise<{ checked:
           item: p.item_key,
           workspaceId: p.workspace_id,
         });
-    await env.DB.prepare("UPDATE comment_polls SET checked_at = ?1 WHERE media_id = ?2").bind(nowS, p.media_id).run();
+    await checked(p.media_id);
   }
   // one message per workspace: its members see only its comments
   const note = notifier(env, noteFetch(deps), nowS);

@@ -100,6 +100,23 @@ describe("24 h results", () => {
 });
 
 describe("the comments inbox", () => {
+  it("a post whose comments can't be read (Bluesky, a gone account) doesn't keep the others from being checked", async () => {
+    const key = await planItem({ folder: "vlogs/CONTENT/20260823_LISBON", name: "short5_lisbon_food" });
+    await posted(key, "m-1", 2 * 86400);
+    for (const n of [1, 2, 3, 4]) await posted(`reel:GONE/x${n}`, `gone-${n}`, 86400, "demo_gone");
+    w.composio.INSTAGRAM_GET_IG_MEDIA_COMMENTS = () => ({
+      data: [{ id: "c9", text: "Nice", username: "viewer", timestamp: "2026-10-25T01:00:00+0000" }],
+    });
+    const e = await testEnv(env);
+    await pollComments(e, { fetch: w.fetch, now: NOW }); // the five join; four are checked
+    // the Instagram post checked once already: only the unreadable posts are behind it
+    await env.DB.prepare("UPDATE comment_polls SET checked_at = CASE WHEN media_id = 'm-1' THEN 1 ELSE 0 END").run();
+    await env.DB.prepare("DELETE FROM comments").run();
+    await pollComments(e, { fetch: w.fetch, now: NOW });
+    await pollComments(e, { fetch: w.fetch, now: NOW });
+    expect((await env.DB.prepare("SELECT id FROM comments").all()).results).toEqual([{ id: "ig:c9" }]);
+  });
+
   it("polls Instagram posts and YouTube Shorts, keeps ours quiet, notifies others' once; replies go out", async () => {
     const key = await planItem({ folder: "vlogs/CONTENT/20260823_LISBON", name: "short5_lisbon_food" });
     await posted(key, "m-1", 2 * 86400);
