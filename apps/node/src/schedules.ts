@@ -11,6 +11,13 @@ export function checkSchedules(env: Env): void {
   if (bad.length) throw new ConfigError(bad.map((s) => `${s.variable}="${s.expr}": ${s.error}`).join("; "));
 }
 
+/** Frees the locks of runs left unfinished (a crash, a kill -9) at start, and this process's own at shutdown. Only the
+ *  process that runs the schedules does: a SCHEDULES=off replica on the same database would free the main process's
+ *  locks while they're held, and let its runs overlap. */
+export async function clearLocks(env: Env): Promise<void> {
+  if (!schedulesOff(env)) await env.DB.prepare("DELETE FROM locks").run();
+}
+
 const MINUTE = 60_000;
 
 /** The every-minute timer (none with SCHEDULES=off), in UTC minutes like Cloudflare's cron; returns its stop. Each run

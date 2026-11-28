@@ -21,7 +21,7 @@ import { SqliteDb } from "../src/db";
 import { ConfigError, nodeEnv } from "../src/env";
 import { LocalStore, putFile } from "../src/local-store";
 import { migrate } from "../src/migrate";
-import { checkSchedules, startSchedules } from "../src/schedules";
+import { checkSchedules, clearLocks, startSchedules } from "../src/schedules";
 
 const MIGRATIONS = join(__dirname, "../../../migrations/sqlite");
 const tmp = mkdtempSync(join(tmpdir(), "bongsu-node-"));
@@ -195,6 +195,16 @@ describe("the HTTP app and the schedules on Node", () => {
   it("turns the schedules off with SCHEDULES=off, which the dashboard's Scheduler shows", () => {
     expect(schedulesOff(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(false);
     expect(schedulesOff(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db))).toBe(true);
+  });
+
+  it("frees stale locks only in the process that runs the schedules, never a SCHEDULES=off replica's (#169)", async () => {
+    const db = migrated();
+    const locks = async () => (await db.prepare("SELECT name FROM locks").all()).results;
+    await db.prepare("INSERT INTO locks VALUES ('tick:instagram', 'main', 9999999999)").run();
+    await clearLocks(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db));
+    expect(await locks()).toEqual([{ name: "tick:instagram" }]); // the main process's, still held
+    await clearLocks(nodeEnv({ PUBLIC_URL: "https://x.test" }, db));
+    expect(await locks()).toEqual([]);
   });
 
   it("answers /health: migrated, local store, nothing missing", async () => {
