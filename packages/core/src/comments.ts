@@ -94,32 +94,40 @@ export async function pollComments(env: Env, deps: StepDeps): Promise<{ checked:
       if (e instanceof BudgetSpent) break;
       console.log(`comments ${p.media_id}: ${(e as Error).message}`);
     }
-    for (const c of found) {
-      const r = await env.DB.prepare(
-        `INSERT INTO comments (id, platform, account, media_id, item_key, author, text, at, own, seen, workspace_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10) ON CONFLICT (id) DO NOTHING RETURNING id`,
-      )
-        .bind(
-          c.id,
-          p.platform,
-          p.account,
-          p.media_id,
-          p.item_key,
-          c.author,
-          c.text.slice(0, 2000),
-          c.at,
-          c.own ? 1 : 0,
-          p.workspace_id,
-        )
-        .first();
-      if (r && !c.own)
+    // one read of what's stored, then one batch of the new ones: a check with nothing new writes nothing
+    const stored = found.length
+      ? await env.DB.prepare("SELECT id FROM comments WHERE media_id = ?1").bind(p.media_id).all<{ id: string }>()
+      : { results: [] };
+    const known = new Set(stored.results.map((r) => r.id));
+    const added = found.filter((c) => !known.has(c.id));
+    if (added.length)
+      await env.DB.batch(
+        added.map((c) =>
+          env.DB.prepare(
+            `INSERT INTO comments (id, platform, account, media_id, item_key, author, text, at, own, seen, workspace_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9, ?10) ON CONFLICT (id) DO NOTHING`,
+          ).bind(
+            c.id,
+            p.platform,
+            p.account,
+            p.media_id,
+            p.item_key,
+            c.author,
+            c.text.slice(0, 2000),
+            c.at,
+            c.own ? 1 : 0,
+            p.workspace_id,
+          ),
+        ),
+      );
+    for (const c of added)
+      if (!c.own)
         fresh.push({
           who: `${p.platform === "yt" ? "" : "@"}${c.author}`,
           text: c.text,
           item: p.item_key,
           workspaceId: p.workspace_id,
         });
-    }
     await env.DB.prepare("UPDATE comment_polls SET checked_at = ?1 WHERE media_id = ?2").bind(nowS, p.media_id).run();
   }
   // one message per workspace: its members see only its comments

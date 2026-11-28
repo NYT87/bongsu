@@ -135,7 +135,22 @@ describe("the comments inbox", () => {
       { id: "yt:y2", own: 0, seen: 0, item_key: "comment:vid1" },
     ]);
     const n = w.notifications.length;
-    expect((await pollComments(e, { fetch: w.fetch, now: new Date(NOW.getTime() + 900_000) })).fresh).toBe(0); // nothing new
+    // nothing new: no comment is written again (each would be a D1 query of the run's budget)
+    const inserts: string[] = [];
+    const counting = {
+      ...e,
+      DB: new Proxy(e.DB, {
+        get: (db, k) =>
+          k === "prepare"
+            ? (q: string) => {
+                if (q.includes("INSERT INTO comments")) inserts.push(q);
+                return db.prepare(q);
+              }
+            : (Reflect.get(db, k).bind?.(db) ?? Reflect.get(db, k)),
+      }),
+    };
+    expect((await pollComments(counting, { fetch: w.fetch, now: new Date(NOW.getTime() + 900_000) })).fresh).toBe(0);
+    expect(inserts).toEqual([]);
     expect(w.notifications.length).toBe(n);
 
     w.composio.INSTAGRAM_POST_IG_COMMENT_REPLIES = () => ({ id: "reply-1" });
