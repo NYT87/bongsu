@@ -162,7 +162,8 @@ The feel is **crisp and confident**. The app asks the creator to tap "Approve" o
 can't be taken back, so every state is stated plainly, the target (channel, account, day and time in the workspace's time zone) is repeated
 right above the button, and the button itself says what will happen ("Approve: publish Today 18:00 GMT+9"). Density is
 moderate: one 720px column of rows and cards, a sticky top bar, a labelled bottom tab bar sized for the thumb. Light and
-dark themes follow the device; neither is the "real" one.
+dark themes follow the device unless the person picks one (Settings → Theme, `data-theme` on `<html>`, src/theme.ts);
+neither is the "real" one.
 
 **Key Characteristics:**
 - One accent, Go Green, reserved for "approved / go / you are here".

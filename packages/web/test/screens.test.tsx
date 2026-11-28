@@ -290,3 +290,24 @@ describe("leaving the workspace", () => {
     expect(onLeft).not.toHaveBeenCalled();
   });
 });
+
+describe("the theme (#141)", () => {
+  it("applies the person's saved theme, and Settings changes it at once and saves it for every device", async () => {
+    location.hash = "#/settings";
+    const calls = fakeApi({
+      "GET me": { body: { ...base, you: { ...base.you, theme: "dark" } } },
+      "GET platforms": { body: { platforms: [] } },
+      "POST me/theme": { body: { theme: "light" } },
+    });
+    render(<App />);
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+    const pick = (await screen.findByLabelText("Theme")) as HTMLSelectElement;
+    expect(pick.value).toBe("dark");
+    await userEvent.setup().selectOptions(pick, "light");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(calls.filter((c) => c.method === "POST")).toEqual([
+      { method: "POST", path: "me/theme", body: { theme: "light" } },
+    ]);
+    location.hash = "";
+  });
+});

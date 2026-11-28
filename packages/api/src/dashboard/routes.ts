@@ -92,7 +92,10 @@ import {
   sessionWorkspace,
   setDisplayName,
   setUserName,
+  setUserTheme,
   setWorkspaceSettings,
+  type Theme,
+  themeOf,
   workspaceRef,
   workspaceSettings,
   workspacesOf,
@@ -404,9 +407,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie"), "dashboard"), nowS(), "dashboard");
       const user = s
-        ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1")
+        ? await c.env.DB.prepare("SELECT id, email, name, theme FROM users WHERE id = ?1")
             .bind(s.userId)
-            .first<{ id: string; email: string | null; name: string | null }>()
+            .first<{ id: string; email: string | null; name: string | null; theme: string | null }>()
         : null;
       // what the sidebar shows: the Instance group for instance admins; a creator is pointed at the app
       const where = s && (await sessionWorkspace(c.env.DB, s, { notCreator: true }));
@@ -1105,16 +1108,30 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/me",
     wrap(async (c) => {
       const uid = c.get("session").userId;
-      const u = await c.env.DB.prepare("SELECT email, name FROM users WHERE id = ?1")
+      const u = await c.env.DB.prepare("SELECT email, name, theme FROM users WHERE id = ?1")
         .bind(uid)
-        .first<{ email: string | null; name: string | null }>();
+        .first<{ email: string | null; name: string | null; theme: string | null }>();
       const ws = await c.env.DB.prepare(
         `SELECT w.id, w.name, m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
          WHERE m.user_id = ?1 AND w.archived_at IS NULL ORDER BY w.name, w.id`,
       )
         .bind(uid)
         .all<{ id: string; name: string; role: string }>();
-      return { email: u?.email ?? null, name: u?.name ?? null, workspaces: ws.results };
+      return { email: u?.email ?? null, name: u?.name ?? null, theme: u?.theme ?? null, workspaces: ws.results };
+    }),
+  );
+  // Their theme, shared with the app (light, dark, or system: the device's), so it follows them to every device.
+  app.post(
+    "/admin-api/me/theme",
+    wrap(async (c) => {
+      let theme: Theme;
+      try {
+        theme = themeOf((await body(c)).theme);
+      } catch (e) {
+        throw new AdminError(400, (e as Error).message);
+      }
+      await setUserTheme(c.env.DB, c.get("session").userId, theme);
+      return { theme };
     }),
   );
   app.post(

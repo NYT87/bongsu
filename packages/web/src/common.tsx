@@ -38,7 +38,13 @@ export type Me = {
   workspace?: { id: string; name: string; mediaFolder: string; iconUrl: string | null } | null;
   workspaces?: { id: string; name: string; role: string; iconUrl: string | null; shownAs: string | null }[];
   /** The person's own name (all workspaces), the one this workspace shows for them, and what it shows now. */
-  you?: { name: string | null; emailName: string | null; displayName: string | null; shownAs: string | null } | null;
+  you?: {
+    name: string | null;
+    emailName: string | null;
+    displayName: string | null;
+    shownAs: string | null;
+    theme?: string | null;
+  } | null;
 };
 
 export type Status = {

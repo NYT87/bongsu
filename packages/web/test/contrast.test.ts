@@ -9,9 +9,9 @@ const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf
 const tokens = read("../src/tokens.css");
 const files = { app: read("../src/styles.css"), dashboard: read("../../dashboard/src/styles.css") };
 
-const DARK = "@media (prefers-color-scheme: dark)";
+const DARK = ':root[data-theme="dark"]';
 
-/** A stylesheet split in two: the dark scheme's blocks, and the rest. */
+/** A stylesheet split in two: the dark theme's blocks (theme.ts sets data-theme), and the rest. */
 function split(css: string): { light: string; dark: string } {
   let light = css;
   let dark = "";
@@ -23,7 +23,7 @@ function split(css: string): { light: string; dark: string } {
       else if (light[end] === "}") depth--;
       end++;
     } while (depth > 0);
-    dark += light.slice(light.indexOf("{", at) + 1, end - 1);
+    dark += `:root {${light.slice(light.indexOf("{", at) + 1, end - 1)}}`;
     light = light.slice(0, at) + light.slice(end);
   }
   return { light, dark };
@@ -112,6 +112,11 @@ describe("contrast (WCAG AA, 4.5:1)", () => {
     ["--on-warn", "--warn"],
     ["--on-banner", "--banner-bad"],
   ];
+
+  it("reads the dark theme's own palette", () => {
+    expect(themes.dark["--bg"]).not.toBe(themes.light["--bg"]);
+    expect(themes.dark["--muted-ink"]).not.toBe(themes.light["--muted-ink"]);
+  });
 
   for (const theme of ["light", "dark"] as Theme[])
     it(`holds for the token pairs in the ${theme} theme`, () => {

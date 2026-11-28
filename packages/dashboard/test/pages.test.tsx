@@ -885,6 +885,38 @@ describe("You: the person's own page", () => {
       body: { name: "Ada L" },
     });
   });
+
+  it("applies the person's saved theme, and a choice changes the page at once and is saved for every device", async () => {
+    let theme: string | null = "dark";
+    const calls = fakeApi({
+      ...routes(),
+      "GET state": () => ({ body: { ...state(), user: { ...state().user, theme } } }),
+      "GET me": () => ({ body: { ...me, theme } }),
+      "POST me/theme": (b: unknown) => {
+        const t = (b as { theme: string }).theme;
+        theme = t === "system" ? null : t;
+        return { body: { theme } };
+      },
+    });
+    open("me");
+    const user = userEvent.setup();
+    const field = await screen.findByLabelText("Theme");
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+    expect(field).toHaveProperty("value", "dark");
+    await user.selectOptions(field, "light");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    // System: the device's setting (light here), and it's what's saved too
+    await user.selectOptions(field, "system");
+    expect(document.documentElement.dataset.theme).toBe(
+      matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+    );
+    await waitFor(() => expect(field).toHaveProperty("value", "system"));
+    expect(calls.filter((c) => c.method === "POST")).toEqual([
+      { method: "POST", path: "me/theme", body: { theme: "light" } },
+      { method: "POST", path: "me/theme", body: { theme: "system" } },
+    ]);
+    expect(localStorage.getItem("bongsu-theme")).toBe("system");
+  });
 });
 
 describe("Devices & passkeys: alert emails", () => {

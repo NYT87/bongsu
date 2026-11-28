@@ -23,6 +23,7 @@ import { steps as oauthStateSettings } from "./0026_oauth_state_settings";
 import { steps as inviteLink } from "./0027_invite_link";
 import { steps as auditNoEmails } from "./0028_audit_no_emails";
 import { steps as alertMail } from "./0029_alert_mail";
+import { steps as userTheme } from "./0030_user_theme";
 
 export const MIGRATIONS: Migration[] = [
   {
@@ -56,4 +57,5 @@ export const MIGRATIONS: Migration[] = [
   { name: "0027_invite_link", steps: inviteLink },
   { name: "0028_audit_no_emails", steps: auditNoEmails },
   { name: "0029_alert_mail", steps: alertMail },
+  { name: "0030_user_theme", steps: userTheme },
 ];

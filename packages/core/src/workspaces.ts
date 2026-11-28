@@ -262,6 +262,21 @@ export async function setUserName(db: Db, userId: string, name: string | null) {
   await db.prepare("UPDATE users SET name = ?1 WHERE id = ?2").bind(name, userId).run();
 }
 
+/** A person's theme: light or dark, or null to follow the device. */
+export type Theme = "light" | "dark" | null;
+
+/** A theme from a request: "light", "dark", or "system" (and null) for the device's; anything else is an error. */
+export function themeOf(v: unknown): Theme {
+  if (v === "light" || v === "dark") return v;
+  if (v === "system" || v === null) return null;
+  throw new Error("theme must be system, light or dark");
+}
+
+/** A person's own theme, the same on every device they sign in on. */
+export async function setUserTheme(db: Db, userId: string, theme: Theme) {
+  await db.prepare("UPDATE users SET theme = ?1 WHERE id = ?2").bind(theme, userId).run();
+}
+
 /** The name shown in one workspace; false when the person isn't a member there. */
 export async function setDisplayName(
   db: Db,

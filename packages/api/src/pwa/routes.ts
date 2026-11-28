@@ -40,7 +40,10 @@ import {
   sessionWorkspace,
   setDisplayName,
   setUserName,
+  setUserTheme,
   setUserZone,
+  type Theme,
+  themeOf,
   workspaceRef,
   workspaceSettings,
   workspacesOf,
@@ -108,6 +111,7 @@ const needsFor = (P: string): [string, Scope | null][] => [
   // a person's own name, and the one their workspace shows
   [`${P}/me/name`, null],
   [`${P}/me/display-name`, null],
+  [`${P}/me/theme`, null],
   // switching workspaces is the person's own; where they may go is mayOpen's (session.ts openWorkspace)
   [`${P}/session/*`, null],
   [`${P}/push/*`, null],
@@ -141,6 +145,7 @@ export const APP_ONLY = [
   "/me/timezone",
   "/me/name",
   "/me/display-name",
+  "/me/theme",
   "/connections",
   "/connect/*",
   "/client-error",
@@ -1124,6 +1129,21 @@ export function appRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVeri
     }),
   );
 
+  // The signed-in person's own theme (users.theme), shared with the dashboard: light, dark, or system (the device's).
+  app.post(
+    `${P}/me/theme`,
+    wrap(async (c) => {
+      let theme: Theme;
+      try {
+        theme = themeOf((await body(c)).theme);
+      } catch (e) {
+        throw new ops.ApiError(400, (e as Error).message);
+      }
+      await setUserTheme(c.env.DB, userOf(c), theme);
+      return { theme };
+    }),
+  );
+
   // The signed-in person's own name (users.name), the same in every workspace; empty goes back to the email's start.
   app.post(
     `${P}/me/name`,
@@ -1233,9 +1253,9 @@ const withShownAs = async <W extends { id: string }>(db: Db, userId: string, lis
 /** `you` in GET /app-api/me: the person's own name, the display name in the workspace, and what the workspace shows. */
 const youOf = async (db: Db, userId: string, workspaceId: string | null) => {
   const u = await db
-    .prepare("SELECT name, email FROM users WHERE id = ?1")
+    .prepare("SELECT name, email, theme FROM users WHERE id = ?1")
     .bind(userId)
-    .first<{ name: string | null; email: string | null }>();
+    .first<{ name: string | null; email: string | null; theme: string | null }>();
   const m = workspaceId
     ? await db
         .prepare("SELECT display_name FROM memberships WHERE workspace_id = ?1 AND user_id = ?2")
@@ -1247,6 +1267,8 @@ const youOf = async (db: Db, userId: string, workspaceId: string | null) => {
     emailName: localPart(u?.email ?? null),
     displayName: m?.display_name ?? null,
     shownAs: workspaceId ? await memberName(db, userId, workspaceId) : null,
+    // light or dark, null for the device's: the same as in the dashboard
+    theme: u?.theme ?? null,
   };
 };
 

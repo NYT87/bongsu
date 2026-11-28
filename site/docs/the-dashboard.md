@@ -123,7 +123,8 @@ then **Save**. It moves the release time only; it never makes a video public.
 ## You
 
 Click your name at the bottom of the sidebar for your own page. **Your name** is how the people you work with see you
-(each workspace can also give you another name, on its Members page). **Your workspaces** lists each workspace you
+(each workspace can also give you another name, on its Members page). **Theme** is System (your device's light or
+dark setting), Light or Dark, the same in the app and on every device you sign in on. **Your workspaces** lists each workspace you
 belong to with your role there. **Leave** (with a confirm) takes you out of one, in the dashboard and the app at once:
 its pages and notifications, your CLI tokens for it and the agent keys you made there. Leaving the one you work in reloads the dashboard in your next
 workspace, if you have one. A workspace's last admin can't leave: make someone else admin first. An admin can invite

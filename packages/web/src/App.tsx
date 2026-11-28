@@ -8,6 +8,7 @@ import { BRAND, cachePrune, ICON, LegalLinks, type Me, type PlatformInfo, useHas
 import { applyContent, type ContentHost, ContentProviders, contentRoute, type Named, useSharedState } from "./content";
 import { type Key, t } from "./i18n";
 import { SettingsPage } from "./Settings";
+import { applyTheme } from "./theme";
 import { takeWorkspaceParam } from "./workspace-link";
 
 /** The app is the content screens' first host: its own API, the brand its build defines. */
@@ -63,6 +64,8 @@ export function App() {
       .then(([{ me: m, gone }, p]) => {
         if (m.signedIn) pending.current = null;
         applyContent(APP_HOST, m, p.platforms);
+        // the person's own theme, the same on every device (signed out: this device's stays)
+        if (m.you) applyTheme(m.you.theme);
         setGone(gone);
         setMe(m);
       })

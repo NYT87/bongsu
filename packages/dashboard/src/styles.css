@@ -13,13 +13,11 @@
   --radius: 12px;
   --sidebar: 232px;
 }
-@media (prefers-color-scheme: dark) {
-  :root {
-    --accent-ink: var(--accent);
-    --ok-ink: var(--ok);
-    --warn-ink: var(--warn);
-    --muted-ink: #cbd5e1;
-  }
+:root[data-theme="dark"] {
+  --accent-ink: var(--accent);
+  --ok-ink: var(--ok);
+  --warn-ink: var(--warn);
+  --muted-ink: #cbd5e1;
 }
 * {
   box-sizing: border-box;

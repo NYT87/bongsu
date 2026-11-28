@@ -1,5 +1,7 @@
 // The dashboard (DESIGN.md): signed out, the bootstrap or sign-in card; signed in, a sidebar of sections and the
 // page. Paths live under /dashboard/ (the Worker serves index.html for each).
+
+import { applyTheme } from "@bongsu/web/theme";
 import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { type FormEvent, type MouseEvent, useCallback, useEffect, useState } from "react";
 import { APP_ONLY, api, manages, NAVIGATED, STATE_STALE, switchWorkspace } from "./api";
@@ -26,7 +28,7 @@ export interface State {
   bootstrapNeeded: boolean;
   setupTokenSet: boolean;
   signedIn: boolean;
-  user: { id: string; email: string | null; name: string | null } | null;
+  user: { id: string; email: string | null; name: string | null; theme?: string | null } | null;
   /** Instance admins also get the admin dashboard (Workspaces, Media, OAuth apps). */
   instanceAdmin: boolean;
   /** The role in the workspace: admin, editor or creator (who uses the app instead). */
@@ -109,6 +111,8 @@ export function App() {
       .then((s) => {
         setState(s);
         setError(null);
+        // the person's own theme, the same on every device (signed out: this device's stays)
+        if (s.user) applyTheme(s.user.theme);
       })
       .catch((e: Error) => setError(e.message));
   }, []);

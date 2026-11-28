@@ -1508,6 +1508,10 @@
           "notNull": true,
           "default": 1,
           "description": "gets the alert emails (0: turned them off)"
+        },
+        "theme": {
+          "type": "text",
+          "description": "light or dark; null follows the device's setting"
         }
       }
     },

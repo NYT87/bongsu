@@ -1,6 +1,7 @@
-// The person's own page, from their name at the bottom of the sidebar: their name, and the workspaces they belong to
-// with their role in each, and a way to leave each one.
+// The person's own page, from their name at the bottom of the sidebar: their name, their theme, and the workspaces
+// they belong to with their role in each, and a way to leave each one.
 
+import { applyTheme, type ThemeChoice } from "@bongsu/web/theme";
 import { type FormEvent, useEffect, useState } from "react";
 import { api, STATE_STALE } from "../api";
 import { Card, Field, Loading, Page, useConfirm, useLoad, useToast } from "../ui";
@@ -9,6 +10,7 @@ import { errorText, type Props, ROLE_HELP } from "./common";
 interface MeAnswer {
   email: string | null;
   name: string | null;
+  theme: string | null;
   workspaces: { id: string; name: string; role: string }[];
 }
 
@@ -35,6 +37,15 @@ export function Me({ state }: Props) {
       setErr(errorText(e));
     }
   };
+  const theme = async (t: ThemeChoice) => {
+    applyTheme(t);
+    try {
+      await api("me/theme", { theme: t });
+      reload();
+    } catch (e) {
+      toast({ ok: false, text: errorText(e) });
+    }
+  };
   const leave = (w: MeAnswer["workspaces"][number]) =>
     confirm({
       title: `Leave ${w.name}?`,
@@ -52,7 +63,7 @@ export function Me({ state }: Props) {
       },
     });
   return (
-    <Page title="You" intro="Your name, and the workspaces you belong to.">
+    <Page title="You" intro="Your name, your theme, and the workspaces you belong to.">
       {!data ? (
         <Loading error={error} retry={reload} />
       ) : (
@@ -73,6 +84,17 @@ export function Me({ state }: Props) {
                 </button>
               </div>
             </form>
+          </Card>
+          <Card title="Theme">
+            <Field label="Theme" help="The dashboard's and the app's, on every device you sign in on.">
+              {(p) => (
+                <select {...p} value={data.theme ?? "system"} onChange={(e) => theme(e.target.value as ThemeChoice)}>
+                  <option value="system">System (your device's setting)</option>
+                  <option value="light">Light</option>
+                  <option value="dark">Dark</option>
+                </select>
+              )}
+            </Field>
           </Card>
           <Card title="Your workspaces">
             {data.workspaces.length === 0 ? (
