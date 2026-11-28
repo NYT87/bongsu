@@ -125,3 +125,63 @@ export async function setInstanceAdmin(db: Db, userId: string, on: boolean): Pro
   if (!known) throw new InstanceAdminError(404, "no such user");
   throw new InstanceAdminError(409, "the instance keeps one instance admin: make someone else one first");
 }
+
+/** How a deleted account is named wherever its old rows show (the audit log, approvals, drafts). */
+export const DELETED_USER = "deleted user";
+
+export class AccountError extends Error {
+  constructor(
+    public status: 404 | 409,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+/** Deletes a person's account (#143), once they're in no workspace (an archived one's membership doesn't count: they
+ *  can't open it to leave it). The users row stays as a tombstone, so every row that names it still resolves: its
+ *  email, name and settings are cleared and deleted_at stamped. Their passkeys, sessions (signed out everywhere),
+ *  recovery codes, devices, notification settings, device codes, OAuth states and their memberships of archived
+ *  workspaces go; their CLI tokens and the pending invites they sent are revoked. The email can sign up again, as
+ *  someone new. One transaction: the instance admins' rows are locked first, so the last one can't go (nor two at once). */
+export async function deleteAccount(db: Db, userId: string, nowS: number): Promise<void> {
+  // every step after the tombstone runs only when this call made it (deleted_at = nowS): a refusal changes nothing
+  const mine = "EXISTS (SELECT 1 FROM users d WHERE d.id = ?1 AND d.deleted_at = ?2)";
+  const step = (sql: string) => db.prepare(`${sql} AND ${mine}`).bind(userId, nowS);
+  const [, done] = await db.batch([
+    db.prepare("UPDATE users SET instance_admin = instance_admin WHERE instance_admin = 1"),
+    db
+      .prepare(
+        `UPDATE users SET email = NULL, name = NULL, timezone = NULL, theme = NULL, instance_admin = 0, deleted_at = ?2
+         WHERE id = ?1 AND deleted_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
+             WHERE m.user_id = ?1 AND w.archived_at IS NULL)
+           AND (instance_admin = 0 OR EXISTS (SELECT 1 FROM users o WHERE o.instance_admin = 1 AND o.id <> ?1))
+         RETURNING id`,
+      )
+      .bind(userId, nowS),
+    step("DELETE FROM passkeys WHERE user_id = ?1"),
+    step("DELETE FROM sessions WHERE user_id = ?1"),
+    step("DELETE FROM recovery_codes WHERE user_id = ?1"),
+    step("DELETE FROM push_subs WHERE user_id = ?1"),
+    step("DELETE FROM notify_prefs WHERE user_id = ?1"),
+    step("DELETE FROM setup_codes WHERE user_id = ?1"),
+    step("DELETE FROM oauth_states WHERE user_id = ?1"),
+    step("UPDATE api_keys SET revoked_at = ?2 WHERE user_id = ?1 AND revoked_at IS NULL"),
+    step("UPDATE invites SET revoked_at = ?2 WHERE invited_by = ?1 AND used_at IS NULL AND revoked_at IS NULL"),
+    // an archived workspace's (they couldn't leave it): restored, it mustn't count a deleted account as its admin
+    step("DELETE FROM memberships WHERE user_id = ?1"),
+  ]);
+  if (done.results.length) return;
+  const u = await db
+    .prepare(
+      `SELECT u.deleted_at, u.instance_admin, EXISTS (SELECT 1 FROM memberships m JOIN workspaces w
+         ON w.id = m.workspace_id WHERE m.user_id = u.id AND w.archived_at IS NULL) AS member
+       FROM users u WHERE u.id = ?1`,
+    )
+    .bind(userId)
+    .first<{ deleted_at: number | null; instance_admin: number; member: number | boolean }>();
+  if (!u || u.deleted_at !== null) throw new AccountError(404, "no such account");
+  if (Number(u.member)) throw new AccountError(409, "leave your workspaces first: an account in one can't be deleted");
+  throw new AccountError(409, "the instance keeps one instance admin: make someone else one first");
+}

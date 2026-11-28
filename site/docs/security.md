@@ -61,7 +61,9 @@ workspace's members and don't count toward its admins. A workspace's admins invi
 days; it's looked up by its hash, and kept only encrypted with `ENCRYPTION_KEY` so an admin can copy it again while
 it's pending), change roles and remove members; a removed member's sessions, CLI tokens, the agent keys they made and devices in
 that workspace go at once, and a workspace always keeps one admin of its own. Accepting an invite never says whether its email
-already has an account. Archiving a workspace (its admins, or the instance admins; only an instance admin restores one) stops it completely: nothing publishes, its keys and
+already has an account. Someone in no workspace can delete their account (a fresh passkey check, their email typed
+again): their personal data and sign-in methods go, and the users row stays as a nameless tombstone so the audit log
+keeps its history. Archiving a workspace (its admins, or the instance admins; only an instance admin restores one) stops it completely: nothing publishes, its keys and
 members are refused, its comments and metrics are no longer read, and its data stays. A workspace's audit log shows
 only its own rows; the instance's (new workspaces, media stores, OAuth apps, instance admins) only its instance admins
 read.

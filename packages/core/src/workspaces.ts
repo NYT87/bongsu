@@ -4,6 +4,7 @@
 import type { Db } from "./db";
 import { isTimeZone } from "./formats/time";
 import { checkFolderName, FolderError, folderTaken } from "./media/folders";
+import { DELETED_USER } from "./people";
 import { isInstanceAdmin, isRole, type Role } from "./roles";
 import { jsonList } from "./sql";
 
@@ -221,14 +222,21 @@ export async function memberNames(db: Db, userIds: string[], workspaceId: string
   if (userIds.length === 0) return out;
   const r = await db
     .prepare(
-      `SELECT u.id, u.name, u.email, m.display_name FROM users u
+      `SELECT u.id, u.name, u.email, u.deleted_at, m.display_name FROM users u
        LEFT JOIN memberships m ON m.user_id = u.id AND m.workspace_id = ?2
        WHERE u.id IN ${jsonList(db, 1)}`,
     )
     .bind(JSON.stringify([...new Set(userIds)]), workspaceId)
-    .all<{ id: string; name: string | null; email: string | null; display_name: string | null }>();
+    .all<{
+      id: string;
+      name: string | null;
+      email: string | null;
+      deleted_at: number | null;
+      display_name: string | null;
+    }>();
   for (const u of r.results) {
-    const n = u.display_name || u.name || localPart(u.email);
+    // a deleted account (#143) keeps its rows, under no name of its own
+    const n = u.deleted_at !== null ? DELETED_USER : u.display_name || u.name || localPart(u.email);
     if (n) out.set(u.id, n);
   }
   return out;

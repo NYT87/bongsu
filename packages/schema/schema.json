@@ -1512,6 +1512,10 @@
         "theme": {
           "type": "text",
           "description": "light or dark; null follows the device's setting"
+        },
+        "deleted_at": {
+          "type": "timestamp",
+          "description": "when the person deleted their account; their personal data is gone"
         }
       }
     },

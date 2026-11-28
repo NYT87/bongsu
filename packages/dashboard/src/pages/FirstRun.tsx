@@ -6,6 +6,7 @@ import type { State } from "../App";
 import { api, withFreshCheck } from "../api";
 import { Brand, Card, Field, Loading, SecretOnce } from "../ui";
 import { AdminPicker, adminOf, errorText, ROLE_HELP } from "./common";
+import { DeleteAccount } from "./Me";
 
 // ---- No workspace yet
 
@@ -51,6 +52,7 @@ export function FirstWorkspace({
             </button>
           </div>
         </Card>
+        <DeleteAccount email={state.user?.email ?? null} />
       </main>
     );
   if (link)

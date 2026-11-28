@@ -877,9 +877,12 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(rows.results).toEqual([{ workspace_id: "b", user_id: "bea", grp: "digest" }]);
   });
 
-  it("a user in no workspace is turned away", async () => {
+  it("a user in no workspace is turned away, except from their own page (#143)", async () => {
     expect((await as("nobody", "dashboard", "/admin-api/accounts")).status).toBe(403);
     expect((await as("nobody", "pwa", "/app-api/status")).status).toBe(403);
+    for (const path of ["/admin-api/members", "/admin-api/settings", "/admin-api/audit", "/admin-api/passkeys"])
+      expect((await as("nobody", "dashboard", path)).status, path).toBe(403);
+    expect((await as("nobody", "dashboard", "/admin-api/me")).json).toMatchObject({ workspaces: [] });
   });
 });
 

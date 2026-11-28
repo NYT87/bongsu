@@ -624,6 +624,7 @@ People: the first one owns the instance. Email identifies them; passkeys sign th
 | `instance_admin` | bool | no | 0 | runs the instance: workspaces, media stores, OAuth apps |
 | `alert_mail` | bool | no | 1 | gets the alert emails (0: turned them off) |
 | `theme` | text | yes |  | light or dark; null follows the device's setting |
+| `deleted_at` | timestamp | yes |  | when the person deleted their account; their personal data is gone |
 
 ## `workspace_icons`
 

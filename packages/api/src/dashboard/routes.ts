@@ -65,10 +65,13 @@ import {
 } from "@bongsu/core/media/manage";
 import { NtfyError, postNtfy, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
 import {
+  AccountError,
   addMember,
   archiveWorkspace,
   createUser,
   createWorkspace,
+  DELETED_USER,
+  deleteAccount,
   InstanceAdminError,
   NAME_MAX,
   newUserId,
@@ -146,6 +149,9 @@ type Area = {
    *  changes ask for, their own passkeys and devices, and the instance's audit (`?instance=1`). None of it reads a
    *  workspace's data. */
   noWorkspace?: true;
+  /** The person's own, for anyone signed in, in no workspace too (their page, and the passkey check deleting their
+   *  account asks for: #143). */
+  own?: true;
   /** Changes to a workspace's members, invites, agent keys, accounts, connections and settings: its admins' (and the
    *  instance admins'). The person's own passkeys, devices and CLI tokens are every member's. Moving a release date
    *  (videos) is editing the plan: an editor's too. */
@@ -163,13 +169,12 @@ const AREAS: Record<string, Area> = {
   scheduler: { instance: true },
   "instance-admins": { instance: true },
   users: { instance: true },
-  verify: { noWorkspace: true },
+  verify: { own: true },
   passkeys: { noWorkspace: true },
   devices: { noWorkspace: true },
   "recovery-codes": { noWorkspace: true },
-  // the person's own page: their name and their workspaces (an instance admin in no workspace reaches it too; anyone
-  // else in none comes with account deletion, #143)
-  me: { noWorkspace: true },
+  // the person's own page: their name, their workspaces, and deleting their account once they're in none (#143)
+  me: { own: true },
   // the person's own alert emails: an instance admin in no workspace still gets the instance's
   "alert-mail": { noWorkspace: true },
   audit: { noWorkspace: true },
@@ -711,7 +716,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     // there. An instance admin without one still reaches the instance's own pages.
     const where = await sessionWorkspace(c.env.DB, s, { notCreator: true });
     const instanceAdmin = where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId));
-    if (!where && !(instanceAdmin && (area.instance || area.noWorkspace)))
+    if (!where && !area.own && !(instanceAdmin && (area.instance || area.noWorkspace)))
       return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     c.set("session", s);
     c.set("token", token);
@@ -1146,6 +1151,31 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       await setUserName(c.env.DB, uid, name);
       await audit(c, "user_name", `user:${uid}`, { name });
       return { name };
+    }),
+  );
+  // Deleting their own account (#143), once they're in no workspace and not the last instance admin: a fresh passkey
+  // check and their email typed again. Signed out everywhere (their sessions go); the instance's audit records it,
+  // with no email.
+  app.post(
+    "/admin-api/me/delete",
+    wrap(async (c) => {
+      fresh(c);
+      const uid = c.get("session").userId;
+      const u = await c.env.DB.prepare("SELECT email FROM users WHERE id = ?1")
+        .bind(uid)
+        .first<{ email: string | null }>();
+      const typed = String((await body(c)).email ?? "")
+        .trim()
+        .toLowerCase();
+      if (!u?.email || typed !== u.email) throw new AdminError(400, "type your email to confirm");
+      try {
+        await deleteAccount(c.env.DB, uid, nowS());
+      } catch (e) {
+        if (e instanceof AccountError) throw new AdminError(e.status, e.message);
+        throw e;
+      }
+      await audit(c, "account_delete", `user:${uid}`, {}, uid, null);
+      return { deleted: true };
     }),
   );
   // Leaving one of their workspaces (pwa/session.ts leaveWorkspace): refused for its last admin (409), 404 when they
@@ -1787,7 +1817,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => ({
       users: (
         await c.env.DB.prepare(
-          "SELECT id, email, name, instance_admin FROM users ORDER BY COALESCE(name, email), email",
+          // a deleted account (#143) is no one to pick
+          "SELECT id, email, name, instance_admin FROM users WHERE deleted_at IS NULL ORDER BY COALESCE(name, email), email",
         ).all<{
           id: string;
           email: string;
@@ -2357,8 +2388,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // who: the person who acted, when a person did (their name, else their email; in a workspace's list, as that
       // workspace names them, below)
       const r = await c.env.DB.prepare(
-        `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id, COALESCE(u.name, u.email) AS who,
-           COALESCE(i.email, t.name, t.email) AS target_name
+        `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id,
+           CASE WHEN u.deleted_at IS NOT NULL THEN '${DELETED_USER}' ELSE COALESCE(u.name, u.email) END AS who,
+           COALESCE(i.email, CASE WHEN t.deleted_at IS NOT NULL THEN '${DELETED_USER}' END, t.name, t.email) AS target_name
          FROM audit a LEFT JOIN users u ON u.id = a.user_id
          LEFT JOIN users t ON a.target = 'user:' || t.id
          LEFT JOIN invites i ON i.workspace_id = a.workspace_id AND a.target = 'invite:' || substr(i.token_hash, 1, 16)

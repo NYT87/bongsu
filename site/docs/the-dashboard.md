@@ -131,6 +131,13 @@ its pages and notifications, your CLI tokens for it and the agent keys you made 
 workspace, if you have one. A workspace's last admin can't leave: make someone else admin first. An admin can invite
 you again. Leaving is in that workspace's audit log.
 
+**Delete your account** shows once you belong to no workspace (someone in none sees it on the "You're not in a
+workspace yet" screen too). Type your email, confirm, and check with your passkey: your name, email, passkeys, devices,
+recovery codes and notification settings are deleted, your CLI tokens and the invites you sent are revoked, and you're
+signed out everywhere. What you did stays in the audit logs, shown as a "deleted user"; the instance's log records the
+deletion, without your email. Your email can sign up or be invited again, as a new account. The instance's last
+instance admin can't delete theirs.
+
 ## Devices & passkeys
 
 Your devices approve posts in the app; your passkeys sign you in here and there.

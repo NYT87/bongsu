@@ -1047,6 +1047,48 @@ describe("You: the person's own page", () => {
   });
 });
 
+describe("deleting an account (#143)", () => {
+  it("is offered to someone in no workspace: their email typed, a confirm, then signed out", async () => {
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    const calls = fakeApi({
+      "GET state": () => ({
+        body: { ...state(), noWorkspace: true, workspace: null, workspaces: [], role: null },
+      }),
+      "POST me/delete": { body: { deleted: true } },
+    });
+    open("");
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { name: "You're not in a workspace yet" });
+    const button = screen.getByRole("button", { name: "Delete my account" });
+    expect(button).toHaveProperty("disabled", true);
+    await user.type(screen.getByLabelText("Type your email to confirm"), "ada@example.com");
+    expect(button).toHaveProperty("disabled", false);
+    await user.click(button);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete my account" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.filter((c) => c.method === "POST")).toEqual([
+      { method: "POST", path: "me/delete", body: { email: "ada@example.com" } },
+    ]);
+  });
+
+  it("isn't on the person's own page while they belong to a workspace", async () => {
+    fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET me": {
+        body: {
+          email: "ada@example.com",
+          name: "Ada",
+          theme: null,
+          workspaces: [{ id: "w1", name: "Demo Travel", role: "admin" }],
+        },
+      },
+    });
+    open("me");
+    await screen.findByRole("heading", { name: "Your workspaces" });
+    expect(screen.queryByRole("heading", { name: "Delete your account" })).toBeNull();
+  });
+});
+
 describe("Devices & passkeys: alert emails", () => {
   it("shows the person's own switch and saves a change", async () => {
     let on = true;

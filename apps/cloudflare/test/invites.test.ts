@@ -12,6 +12,7 @@ import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
 import { createInvite, MemberError, removeMember, setRole } from "@bongsu/core/invites";
 import { setPref } from "@bongsu/core/notify-prefs";
+import { createUser } from "@bongsu/core/people";
 import { setDisplayName } from "@bongsu/core/workspaces";
 import { beforeEach, describe, expect, it } from "vitest";
 import { testEnv, World } from "./world";
@@ -693,6 +694,98 @@ describe("members", () => {
       expect([r.status, r.json.verify], path).toEqual([403, true]);
     }
     expect((await ada("/admin-api/members")).status).toBe(200);
+  });
+});
+
+describe("deleting an account (#143)", () => {
+  /** The instance admins as they are, put back after a test that leaves ina the only one. */
+  const instanceAdmins = async () =>
+    (await env.DB.prepare("SELECT id FROM users WHERE instance_admin = 1").all<{ id: string }>()).results.map(
+      (r) => r.id,
+    );
+
+  it("is refused while they're in a workspace, for the last instance admin, without their email or a fresh check", async () => {
+    const eda = await dash("eda", "default");
+    const inWs = await eda("/admin-api/me/delete", { email: "eda@example.com" });
+    expect([inWs.status, inWs.json.error]).toEqual([
+      409,
+      "leave your workspaces first: an account in one can't be deleted",
+    ]);
+    await env.DB.prepare("DELETE FROM memberships WHERE user_id = 'eda'").run();
+    expect((await eda("/admin-api/me/delete", { email: "ada@example.com" })).status).toBe(400);
+    await env.DB.prepare("UPDATE sessions SET verified_at = 0").run();
+    const stale = await eda("/admin-api/me/delete", { email: "eda@example.com" });
+    expect([stale.status, stale.json.verify]).toEqual([403, true]);
+    const before = await instanceAdmins();
+    await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id <> 'ina'").run();
+    try {
+      const last = await (await dash("ina"))("/admin-api/me/delete", { email: "ina@example.com" });
+      expect([last.status, last.json.error]).toEqual([
+        409,
+        "the instance keeps one instance admin: make someone else one first",
+      ]);
+    } finally {
+      for (const id of before) await env.DB.prepare("UPDATE users SET instance_admin = 1 WHERE id = ?1").bind(id).run();
+    }
+    expect(await env.DB.prepare("SELECT deleted_at FROM users WHERE id IN ('eda', 'ina')").all()).toMatchObject({
+      results: [{ deleted_at: null }, { deleted_at: null }],
+    });
+  });
+
+  it("clears their data and signs them out everywhere; their old rows read 'deleted user'; the email can come back", async () => {
+    // eda once worked in the default workspace (a row in its audit), then left; her things are still about
+    const eda = await dash("eda", "default");
+    await eda("/admin-api/me/name", { name: "Eda K" });
+    await env.DB.batch(
+      [
+        "INSERT INTO audit (at, actor, action, workspace_id, user_id) VALUES (1, 'owner@app', 'test_eda', 'default', 'eda')",
+        "DELETE FROM memberships WHERE user_id = 'eda'",
+        // a membership of an archived workspace: she couldn't leave it, and it goes with her account
+        "INSERT INTO workspaces (id, name, created_at, archived_at) VALUES ('old', 'Old', 0, 1) ON CONFLICT (id) DO UPDATE SET archived_at = 1",
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('old', 'eda', 'admin', 0)",
+        "INSERT INTO passkeys (id, public_key, counter, name, created_at, user_id) VALUES ('eda-key', 'AQID', 0, 'phone', 0, 'eda')",
+        "INSERT INTO recovery_codes (code_hash, user_id, created_at) VALUES ('rc1', 'eda', 0)",
+        "INSERT INTO push_subs (endpoint, p256dh, auth, user_id) VALUES ('https://push.example.com/eda', 'p', 'a', 'eda')",
+        "INSERT INTO api_keys (id, name, key_hash, scopes, created_at, workspace_id, user_id) VALUES ('k1', 'cli', 'h1', '[]', 0, 'b', 'eda')",
+        "INSERT INTO invites (workspace_id, token_hash, email, role, invited_by, created_at, expires_at) VALUES ('b', 'edainvite0000000hash', 'p@example.com', 'editor', 'eda', 0, 4102444800)",
+      ].map((q) => env.DB.prepare(q)),
+    );
+    const app = await createSession(env.DB, nowS(), { userId: "eda" });
+    expect((await eda("/admin-api/me/delete", { email: " EDA@example.com " })).json).toEqual({ deleted: true });
+    expect(
+      await env.DB.prepare("SELECT email, name, timezone, theme, deleted_at FROM users WHERE id = 'eda'").first(),
+    ).toEqual({ email: null, name: null, timezone: null, theme: null, deleted_at: expect.any(Number) });
+    const count = (table: string) =>
+      env.DB.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE user_id = 'eda'`).first<number>("n");
+    for (const t of ["passkeys", "sessions", "recovery_codes", "push_subs", "memberships"])
+      expect(await count(t), t).toBe(0);
+    expect(await env.DB.prepare("SELECT revoked_at FROM api_keys WHERE id = 'k1'").first("revoked_at")).not.toBeNull();
+    expect(
+      await env.DB.prepare("SELECT revoked_at FROM invites WHERE token_hash = 'edainvite0000000hash'").first(
+        "revoked_at",
+      ),
+    ).not.toBeNull();
+    // signed out everywhere: the dashboard and the app
+    expect((await eda("/admin-api/state")).json).toMatchObject({ signedIn: false });
+    expect((await req("pwa", `bongsu_session=${app}`, "/app-api/me")).json).toMatchObject({ signedIn: false });
+    // the default workspace's log still has her row, under no name of hers
+    const rows = (await (await dash("ada", "default"))("/admin-api/audit")).json.entries as {
+      action: string;
+      who: string | null;
+    }[];
+    expect(rows.find((r) => r.action === "test_eda")?.who).toBe("deleted user");
+    // the instance's log records the deletion, with no email
+    const del = await env.DB.prepare(
+      "SELECT target, workspace_id, user_id, detail FROM audit WHERE action = 'account_delete'",
+    ).first<{ detail: string }>();
+    expect(del).toMatchObject({ target: "user:eda", workspace_id: null, user_id: "eda" });
+    expect(del?.detail).not.toMatch(/@/);
+    // nor is she anyone to pick on the admin dashboard
+    const users = (await (await dash("ina"))("/admin-api/users")).json.users as { id: string }[];
+    expect(users.map((u) => u.id)).not.toContain("eda");
+    // the email can sign up again, as someone new
+    const again = await createUser(env.DB, { email: "eda@example.com", name: "Eda" }, nowS());
+    expect(again).not.toBe("eda");
   });
 });
 

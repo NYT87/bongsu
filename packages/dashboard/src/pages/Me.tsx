@@ -3,7 +3,7 @@
 
 import { applyTheme, type ThemeChoice } from "@bongsu/web/theme";
 import { type FormEvent, useEffect, useState } from "react";
-import { api, STATE_STALE } from "../api";
+import { api, STATE_STALE, withFreshCheck } from "../api";
 import { Card, Field, Loading, Page, useConfirm, useLoad, useToast } from "../ui";
 import { errorText, type Props, ROLE_HELP } from "./common";
 
@@ -134,9 +134,54 @@ export function Me({ state }: Props) {
             )}
             <p className="muted small">A workspace's last admin can't leave: make someone else admin first.</p>
           </Card>
+          {data.workspaces.length === 0 && <DeleteAccount email={data.email} />}
         </>
       )}
       {dialog}
     </Page>
+  );
+}
+
+/** Deleting the account (#143), offered once the person is in no workspace: their email typed again, a confirm and a
+ *  fresh passkey check. Their personal data goes and they're signed out everywhere; what they did stays in the audit
+ *  logs as a "deleted user". The last instance admin is refused (the server says why). */
+export function DeleteAccount({ email }: { email: string | null }) {
+  const { confirm, dialog } = useConfirm();
+  const [typed, setTyped] = useState("");
+  const matches = !!email && typed.trim().toLowerCase() === email;
+  return (
+    <Card title="Delete your account">
+      <p className="muted small">
+        Your name, email, passkeys, devices and recovery codes are deleted and you're signed out everywhere. What you
+        did stays in the audit logs, as a deleted user. Your email can be used again, as a new account.
+      </p>
+      <Field label="Type your email to confirm" help={email ? `You sign in as ${email}.` : undefined}>
+        {(p) => (
+          <input {...p} type="email" value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" />
+        )}
+      </Field>
+      <div className="actions">
+        <button
+          type="button"
+          className="danger"
+          disabled={!matches}
+          onClick={() =>
+            confirm({
+              title: "Delete your account?",
+              detail: "This can't be undone. You'll be signed out everywhere.",
+              verb: "Delete my account",
+              // a refusal (the last instance admin) shows in the dialog
+              run: async () => {
+                await withFreshCheck(() => api("me/delete", { email: typed }));
+                location.assign("/dashboard/");
+              },
+            })
+          }
+        >
+          Delete my account
+        </button>
+      </div>
+      {dialog}
+    </Card>
   );
 }
