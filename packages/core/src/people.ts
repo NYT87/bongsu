@@ -108,15 +108,19 @@ export class InstanceAdminError extends Error {
 /** Makes a user an instance admin, or not. The last one stays: the condition is in the statement itself, so two
  *  instance admins unmaking each other at once can't both pass a check made before. */
 export async function setInstanceAdmin(db: Db, userId: string, on: boolean): Promise<void> {
-  const r = await db
-    .prepare(
-      `UPDATE users SET instance_admin = ?2 WHERE id = ?1
+  // the instance admins' rows locked first, in one transaction: on Postgres two admins demoting each other at once
+  // would otherwise each still see the other and leave none
+  const [, r] = await db.batch([
+    db.prepare("UPDATE users SET instance_admin = instance_admin WHERE instance_admin = 1"),
+    db
+      .prepare(
+        `UPDATE users SET instance_admin = ?2 WHERE id = ?1
          AND (?2 = 1 OR EXISTS (SELECT 1 FROM users o WHERE o.instance_admin = 1 AND o.id <> ?1)) RETURNING id`,
-    )
-    // a flag kept as 0/1 (SMALLINT on Postgres)
-    .bind(userId, on ? 1 : 0)
-    .first();
-  if (r) return;
+      )
+      // a flag kept as 0/1 (SMALLINT on Postgres)
+      .bind(userId, on ? 1 : 0),
+  ]);
+  if (r.results.length) return;
   const known = await db.prepare("SELECT 1 FROM users WHERE id = ?1").bind(userId).first();
   if (!known) throw new InstanceAdminError(404, "no such user");
   throw new InstanceAdminError(409, "the instance keeps one instance admin: make someone else one first");

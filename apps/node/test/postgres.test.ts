@@ -5,6 +5,7 @@ import { createApp } from "@bongsu/api/app";
 import { adminRoutes } from "@bongsu/api/dashboard/routes";
 import { appRoutes } from "@bongsu/api/pwa/routes";
 import type { Verifiers } from "@bongsu/api/pwa/webauthn";
+import { removeMember, setRole } from "@bongsu/core/invites";
 import { registerStore } from "@bongsu/core/media/index";
 import { sampleMetrics } from "@bongsu/core/metrics";
 import { pgliteDriver } from "@bongsu/core/pglite";
@@ -111,6 +112,32 @@ describe("Bongsu on Postgres (PGlite)", () => {
   it("answers /health", async () => {
     const r = await createApp(offline).request("/health", {}, env);
     expect(await r.json()).toMatchObject({ ok: true, missing_secrets: [] });
+  });
+
+  it("keeps a workspace's last admin when two admins remove each other at once (#171)", async () => {
+    await db.batch([
+      db.prepare("INSERT INTO workspaces (id, name, created_at) VALUES ('race', 'Race', 0)"),
+      ...["ann", "ben"].flatMap((u) => [
+        db.prepare("INSERT INTO users (id, name, created_at) VALUES (?1, ?1, 0)").bind(u),
+        db
+          .prepare("INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('race', ?1, 'admin', 0)")
+          .bind(u),
+      ]),
+    ]);
+    const by = { instanceAdmin: false };
+    const r = await Promise.allSettled([
+      removeMember(db, "race", "ann", by, 0),
+      removeMember(db, "race", "ben", by, 0),
+    ]);
+    expect(r.map((x) => x.status).sort()).toEqual(["fulfilled", "rejected"]);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = 'race'").first()).toEqual({
+      n: 1,
+    });
+    // and the last one can't be demoted either
+    const [left] = (
+      await db.prepare("SELECT user_id FROM memberships WHERE workspace_id = 'race'").all<{ user_id: string }>()
+    ).results;
+    await expect(setRole(db, "race", left.user_id, "editor", by, 0)).rejects.toThrow(/keeps one admin/);
   });
 
   it("runs the three schedules", async () => {
