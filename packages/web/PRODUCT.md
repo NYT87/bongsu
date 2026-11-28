@@ -69,7 +69,7 @@ and it covers both YouTube (Shorts comments) and Instagram in one queue.
 - Cloudflare Workers + D1 on the free plan; media reaches Instagram through signed links to Drive. Posted media moves to
   the folder's `_posted/` a day later (move only, never deleted).
 - Stack: React 19 + Vite + TypeScript (`packages/web`), served by the Worker (`apps/cloudflare`) or the Node app. Light and dark themes
-  follow the device (`prefers-color-scheme`).
+  follow the device (`prefers-color-scheme`) unless the person picks one (users.theme, shared with the dashboard).
 
 ## Evidence on Hand
 

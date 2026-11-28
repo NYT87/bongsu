@@ -55,12 +55,15 @@ whichever workspace they made it. No agent key ever approves or resumes: agent k
 workspace each, content only.
 
 The instance admin is a flag on a user, not a membership. The first person has it; an instance admin can give it to
-another member or take it away (**Make instance admin** on the dashboard's Members page, with their passkey), never
-from the last one. A workspace's admins invite people with a one-time link (7
+another person or take it away (**Instance admins** on the admin dashboard's Workspaces page, or **Make instance
+admin** on a workspace's Members page, with their passkey), never from the last one. Instance admins aren't listed as a
+workspace's members and don't count toward its admins. A workspace's admins invite people with a one-time link (7
 days; it's looked up by its hash, and kept only encrypted with `ENCRYPTION_KEY` so an admin can copy it again while
 it's pending), change roles and remove members; a removed member's sessions, CLI tokens, the agent keys they made and devices in
-that workspace go at once, and a workspace always keeps one admin. Accepting an invite never says whether its email
-already has an account. Archiving a workspace (instance admins) stops it completely: nothing publishes, its keys and
+that workspace go at once, and a workspace always keeps one admin of its own. Accepting an invite never says whether its email
+already has an account. Someone in no workspace can delete their account (a fresh passkey check, their email typed
+again): their personal data and sign-in methods go, and the users row stays as a nameless tombstone so the audit log
+keeps its history. Archiving a workspace (its admins, or the instance admins; only an instance admin restores one) stops it completely: nothing publishes, its keys and
 members are refused, its comments and metrics are no longer read, and its data stays. A workspace's audit log shows
 only its own rows; the instance's (new workspaces, media stores, OAuth apps, instance admins) only its instance admins
 read.

@@ -10,6 +10,17 @@
     <link rel="icon" href="/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Bongsu</title>
+    <script>
+      // the person's theme before the first paint (packages/web/src/theme.ts takes over once the page loads)
+      (() => {
+        var t;
+        try {
+          t = localStorage.getItem("bongsu-theme");
+        } catch (e) {}
+        var dark = t === "dark" || (t !== "light" && matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

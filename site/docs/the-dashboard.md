@@ -20,7 +20,8 @@ guide, including its connections, keys, settings and members. **Editors** can lo
 their own passkeys, devices and CLI tokens, but they can't change accounts and don't see Connections, agent keys,
 Settings or Members. **Creators** don't use the dashboard: signing in here points them to the [phone app](the-app.md),
 where they plan, approve and connect their own accounts. An **instance admin** is a person who manages the whole
-instance: its workspaces, its media stores and its OAuth apps, and who works in any workspace as its admin.
+instance: its workspaces, its media stores and its OAuth apps, and who works in any workspace as its admin. Instance
+admins aren't listed among a workspace's members, and don't count as its admins: each workspace keeps one of its own.
 [Security](security.md#roles) has the table.
 
 ## First run
@@ -123,11 +124,19 @@ then **Save**. It moves the release time only; it never makes a video public.
 ## You
 
 Click your name at the bottom of the sidebar for your own page. **Your name** is how the people you work with see you
-(each workspace can also give you another name, on its Members page). **Your workspaces** lists each workspace you
+(each workspace can also give you another name, on its Members page). **Theme** is System (your device's light or
+dark setting), Light or Dark, the same in the app and on every device you sign in on. **Your workspaces** lists each workspace you
 belong to with your role there. **Leave** (with a confirm) takes you out of one, in the dashboard and the app at once:
 its pages and notifications, your CLI tokens for it and the agent keys you made there. Leaving the one you work in reloads the dashboard in your next
 workspace, if you have one. A workspace's last admin can't leave: make someone else admin first. An admin can invite
 you again. Leaving is in that workspace's audit log.
+
+**Delete your account** shows once you belong to no workspace (someone in none sees it on the "You're not in a
+workspace yet" screen too). Type your email, confirm, and check with your passkey: your name, email, passkeys, devices,
+recovery codes and notification settings are deleted, your CLI tokens and the invites you sent are revoked, and you're
+signed out everywhere. What you did stays in the audit logs, shown as a "deleted user"; the instance's log records the
+deletion, without your email. Your email can sign up or be invited again, as a new account. The instance's last
+instance admin can't delete theirs.
 
 ## Devices & passkeys
 
@@ -179,9 +188,11 @@ paused or drafted something use the same name.
 
 Each member's role can be changed in place, and **Remove** takes them out of the workspace at once: signed out of
 it, their CLI tokens for it and the agent keys they made there revoked (still listed, marked revoked), their devices no longer notified there. A workspace always keeps one admin: make
-someone else admin before the last one steps down. An admin who's removed or no longer an admin loses the invites they
-sent. Each of these changes asks for your passkey. An instance admin also sees **Make instance admin** (or **Remove
-instance admin**) by each member; the instance always keeps one.
+someone else admin before the last one steps down (an instance admin doesn't count). An admin who's removed or no
+longer an admin loses the invites they sent. Each of these changes asks for your passkey. An instance admin also sees
+**Make instance admin** by each member; once they are one they leave the list. The admin dashboard's **Workspaces** page
+lists the **Instance admins**, with **Remove instance admin** and a way to make anyone on the instance one; the instance
+always keeps one.
 
 ## Audit
 
@@ -210,10 +221,16 @@ Instance admins open the **Admin dashboard** from the bottom of the sidebar (`/d
 **Rename** changes its name (its own admins can also rename it in **Settings**), and **Add an admin** makes an invite
 link for a new admin.
 
+A workspace's name opens its own page (`/dashboard/admin/workspaces/<id>`): its id, media folder, creation date and
+status with the same actions, its **People** (each member and their role, and the pending invites in the same list,
+marked with when they expire, with **Copy link** and **Revoke**), and its **Connected accounts** (each account's
+platform, connection and status; to change them, open the workspace). Instance admins aren't listed among its people.
+
 **Archive** stops a workspace completely: nothing in it publishes, its agent keys and CLI tokens stop working, its
 members can't open it, it gets no daily digest and its comments and metrics are no longer read. Its plan, texts, accounts and people stay, and **Restore** brings it
 back as it was (posts that came due meanwhile go out only within the catch-up window). Archiving, restoring and adding
-an admin ask for your passkey again.
+an admin ask for your passkey again. A workspace's own admins can archive it too (**Settings → Archive this
+workspace**); only an instance admin restores one.
 
 **Scheduler** is a read-only section for instance admins. For each run (Instagram, Shorts, upkeep): its cron
 expression, the variable that sets it or "default", its next time in your zone, and its last run (when, the calls it
@@ -263,3 +280,7 @@ page only shows its server afterwards. Each workspace has its own; changing or r
 **Instance** shows the address and whether publishing is **Live** or in **Dry run**. To go live, change `DRY_RUN` where
 the instance is configured and deploy again; see [Configuration](configuration.md). The instance's name and colour are
 set when the app is built, see [Branding](configuration.md#branding).
+**Archive this workspace** (admins, with your passkey and a confirm) stops it completely, as archiving from the admin
+dashboard does: nothing in it publishes, its agent keys and CLI tokens stop working and its members can't open it.
+Nothing is deleted, but only an instance admin can restore it. The dashboard then opens your next workspace, if you
+have one.

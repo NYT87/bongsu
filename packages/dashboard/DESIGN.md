@@ -11,7 +11,7 @@ Brand (name, mark, Ember and Icon Navy, voice) is in [`docs/brand-guidelines.md`
 Direction (from the ui-ux-pro-max design pass, 2026-10-28): *Minimalism & Swiss style*, the fit for admin tools and
 dashboards: clean, functional, grid-based, high contrast, essential; subtle motion; standard-dense spacing. Its
 palette (slate primary, one green accent, slate neutrals) is the PWA's already, so no new colours. Its suggestions
-not taken: slate primary buttons (the PWA's primary is Go Green), a dark-mode default (the PWA follows the system, so does the dashboard) and web fonts (system fonts:
+not taken: slate primary buttons (the PWA's primary is Go Green), a dark-mode default (the PWA follows the system unless the person picks a theme, so does the dashboard) and web fonts (system fonts:
 nothing loaded from third parties, as the PWA).
 
 ## Rules carried over from the PWA

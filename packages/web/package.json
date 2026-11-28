@@ -33,6 +33,7 @@
   },
   "exports": {
     "./tokens.css": "./src/tokens.css",
-    "./content": "./src/content.tsx"
+    "./content": "./src/content.tsx",
+    "./theme": "./src/theme.ts"
   }
 }

@@ -8,6 +8,7 @@ import type { Verifiers } from "@bongsu/api/pwa/webauthn";
 import { removeMember, setRole } from "@bongsu/core/invites";
 import { registerStore } from "@bongsu/core/media/index";
 import { sampleMetrics } from "@bongsu/core/metrics";
+import { deleteAccount } from "@bongsu/core/people";
 import { pgliteDriver } from "@bongsu/core/pglite";
 import { PostgresDb } from "@bongsu/core/postgres";
 import { runSchedule } from "@bongsu/core/schedules";
@@ -138,6 +139,29 @@ describe("Bongsu on Postgres (PGlite)", () => {
       await db.prepare("SELECT user_id FROM memberships WHERE workspace_id = 'race'").all<{ user_id: string }>()
     ).results;
     await expect(setRole(db, "race", left.user_id, "editor", by, 0)).rejects.toThrow(/keeps one admin/);
+  });
+
+  it("deletes an account in no workspace, and refuses one still in a workspace (#143)", async () => {
+    await db.batch([
+      db.prepare("INSERT INTO users (id, email, name, created_at) VALUES ('gone', 'gone@example.com', 'Gone', 0)"),
+      db.prepare(
+        "INSERT INTO passkeys (id, public_key, counter, name, created_at, user_id) VALUES ('gone-key', 'AQID', 0, 'phone', 0, 'gone')",
+      ),
+      // no email: the instance stays un-bootstrapped for the sign-up test below
+      db.prepare("INSERT INTO users (id, email, name, created_at) VALUES ('kept', NULL, 'Kept', 0)"),
+      db.prepare(
+        "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('default', 'kept', 'editor', 0)",
+      ),
+    ]);
+    await deleteAccount(db, "gone", 1000);
+    expect(await db.prepare("SELECT email, name, deleted_at FROM users WHERE id = 'gone'").first()).toEqual({
+      email: null,
+      name: null,
+      deleted_at: 1000,
+    });
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM passkeys WHERE user_id = 'gone'").first()).toEqual({ n: 0 });
+    await expect(deleteAccount(db, "kept", 1000)).rejects.toThrow(/leave your workspaces first/);
+    expect(await db.prepare("SELECT deleted_at FROM users WHERE id = 'kept'").first()).toEqual({ deleted_at: null });
   });
 
   it("runs the three schedules", async () => {

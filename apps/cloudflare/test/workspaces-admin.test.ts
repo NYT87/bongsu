@@ -11,6 +11,7 @@ import { upsertConnection } from "@bongsu/core/accounts";
 import { dailyDigest } from "@bongsu/core/digest";
 import type { Env } from "@bongsu/core/env";
 import { sha256Hex } from "@bongsu/core/formats/approved";
+import { removeMember, setRole } from "@bongsu/core/invites";
 import { createWorkspace } from "@bongsu/core/people";
 import { tick } from "@bongsu/core/tick";
 import { setMediaFolder, setWorkspaceSettings, workspaceSettings } from "@bongsu/core/workspaces";
@@ -147,6 +148,78 @@ afterEach(async () => {
 });
 
 describe("the Workspaces page", () => {
+  it("an instance admin reads any workspace's detail: people, pending invites, connections and accounts (#140)", async () => {
+    // B's admin invites someone: a pending invite of B
+    expect(
+      (await (await dash("bob", "b"))("/admin-api/invites", { email: "new@example.com", role: "editor" })).status,
+    ).toBe(200);
+    const ina = await dash("ina");
+    const d = (await ina("/admin-api/workspaces/b")).json as {
+      workspace: Record<string, unknown>;
+      members: { userId: string; role: string }[];
+      invites: { id: string; email: string; role: string; copyable: boolean }[];
+      connections: { id: string }[];
+      accounts: { id: string; handle: string; connection: string | null }[];
+    };
+    expect(d.workspace).toMatchObject({ id: "b", name: "Workspace B", archivedAt: null });
+    expect(d.workspace.mediaFolder).toEqual(expect.any(String));
+    expect(d.members.map((m) => [m.userId, m.role]).sort()).toEqual([
+      ["bob", "admin"],
+      ["cara", "creator"],
+      ["eda", "editor"],
+    ]);
+    expect(d.invites).toMatchObject([{ email: "new@example.com", role: "editor", copyable: true }]);
+    expect(d.connections.map((x) => x.id)).toEqual(["c_b"]);
+    expect(d.accounts).toMatchObject([{ id: "b_shop", handle: "b_shop", connection: "c_b" }]);
+    expect((await ina("/admin-api/workspaces/nope")).status).toBe(404);
+    // its invite's link and revoke, audited in B
+    const link = await ina(`/admin-api/workspaces/b/invites/${d.invites[0].id}/link`, {});
+    expect(link.json.url).toMatch(/^https:\/\/bongsu\.test\//);
+    expect((await ina(`/admin-api/workspaces/default/invites/${d.invites[0].id}/revoke`, {})).status).toBe(404);
+    expect((await ina(`/admin-api/workspaces/b/invites/${d.invites[0].id}/revoke`, {})).json).toEqual({
+      revoked: true,
+    });
+    expect(((await ina("/admin-api/workspaces/b")).json.invites as unknown[]).length).toBe(0);
+    const rows = await env.DB.prepare(
+      "SELECT action, workspace_id FROM audit WHERE action IN ('invite_link_copy', 'invite_revoke') ORDER BY id",
+    ).all();
+    expect(rows.results).toEqual([
+      { action: "invite_link_copy", workspace_id: "b" },
+      { action: "invite_revoke", workspace_id: "b" },
+    ]);
+  });
+
+  it("a workspace's admin reads no workspace's detail, their own included (#140)", async () => {
+    const bob = await dash("bob", "b");
+    expect((await bob("/admin-api/workspaces/b")).status).toBe(403);
+    expect((await bob("/admin-api/workspaces/default")).status).toBe(403);
+    expect((await bob("/admin-api/workspaces/default/invites/x/revoke", {})).status).toBe(403);
+    expect((await bob("/admin-api/workspaces/b/invites/x/link", {})).status).toBe(403);
+  });
+
+  it("a workspace's admin archives it from Settings, only it, with a fresh passkey check; only an instance admin restores it (#138)", async () => {
+    const archived = async (id: string) =>
+      (await env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = ?1").bind(id).first("archived_at")) !== null;
+    // an editor can't (Settings is the admins'), nor an admin whose passkey check is old
+    expect((await (await dash("eda", "b"))("/admin-api/settings/archive", {})).status).toBe(403);
+    expect((await (await dash("bob", "b", { stale: true }))("/admin-api/settings/archive", {})).status).toBe(403);
+    expect(await archived("b")).toBe(false);
+    // B's admin archives B: the one their session works in, never another (the default workspace stays)
+    const bob = await dash("bob", "b");
+    expect((await bob("/admin-api/settings/archive", {})).json).toEqual({ archived: true });
+    expect([await archived("b"), await archived("default")]).toEqual([true, false]);
+    const rows = await env.DB.prepare(
+      "SELECT target, workspace_id, user_id FROM audit WHERE action = 'workspace_archive'",
+    ).all();
+    expect(rows.results).toEqual([{ target: "b", workspace_id: "b", user_id: "bob" }]);
+    // bob's session no longer works in it (he's in no other workspace), and he can't restore it
+    expect((await bob("/admin-api/state")).json).toMatchObject({ workspace: null, noWorkspace: true });
+    expect((await bob("/admin-api/workspaces/b/restore", {})).status).toBe(403);
+    // the instance admin restores it, from the Workspaces page
+    expect((await (await dash("ina"))("/admin-api/workspaces/b/restore", {})).json).toEqual({ restored: true });
+    expect(await archived("b")).toBe(false);
+  });
+
   it("archives a workspace: nothing publishes, its keys and members are refused, restoring brings it back", async () => {
     const reel = await seedReelB();
     const ina = await dash("ina");
@@ -386,22 +459,45 @@ describe("the Workspaces page", () => {
     expect((await bob("/admin-api/instance-admins", { userId: "bob", on: false })).status).toBe(409);
   });
 
-  it("the Members page tells an instance admin who's one, for its Make instance admin control; not anyone else", async () => {
+  it("a workspace keeps an admin of its own: an instance admin who's also its admin isn't counted (#139)", async () => {
+    await env.DB.prepare(
+      "INSERT INTO memberships (workspace_id, user_id, role, created_at) VALUES ('b', 'ina', 'admin', 0)",
+    ).run();
+    const by = { instanceAdmin: false };
+    // bob is B's only admin of its own: ina's admin membership doesn't let him step down or leave
+    await expect(setRole(env.DB, "b", "bob", "editor", by, nowS())).rejects.toThrow(/keeps one admin/);
+    await expect(removeMember(env.DB, "b", "bob", by, nowS())).rejects.toThrow(/keeps one admin/);
+    // and ina's membership can go whatever the count: she isn't one of B's own admins
+    await removeMember(env.DB, "b", "ina", by, nowS());
+    expect(
+      await env.DB.prepare("SELECT 1 FROM memberships WHERE workspace_id = 'b' AND user_id = 'ina'").first(),
+    ).toBeNull();
+  });
+
+  it("instance admins aren't listed or counted as members, but the users list flags them (#139)", async () => {
     await env.DB.prepare("UPDATE users SET instance_admin = 0 WHERE id <> 'ina'").run();
     const ina = await dash("ina", "b");
-    const flags = async () =>
-      ((await ina("/admin-api/members")).json.members as { userId: string; instanceAdmin?: boolean }[])
-        .map((m) => [m.userId, m.instanceAdmin])
-        .sort();
-    expect(await flags()).toEqual([
-      ["bob", false],
-      ["cara", false],
-      ["eda", false],
-    ]);
+    const listed = async () =>
+      ((await ina("/admin-api/members")).json.members as { userId: string }[]).map((m) => m.userId).sort();
+    const counted = async () =>
+      ((await ina("/admin-api/workspaces")).json.workspaces as { id: string; members: number }[]).find(
+        (w) => w.id === "b",
+      )?.members;
+    expect(await listed()).toEqual(["bob", "cara", "eda"]);
+    expect(await counted()).toBe(3);
     expect((await ina("/admin-api/instance-admins", { userId: "eda", on: true })).status).toBe(200);
-    expect(await flags()).toContainEqual(["eda", true]);
-    // B's own admin sees the members, not who runs the instance
-    const members = (await (await dash("bob"))("/admin-api/members")).json.members as Record<string, unknown>[];
-    expect(members.every((m) => !("instanceAdmin" in m))).toBe(true);
+    // still a member of B (nothing is deleted), but shown only where the instance admins are
+    expect(await listed()).toEqual(["bob", "cara"]);
+    expect(await counted()).toBe(2);
+    const users = (await ina("/admin-api/users")).json.users as { id: string; instanceAdmin: boolean }[];
+    expect(
+      users
+        .filter((u) => u.instanceAdmin)
+        .map((u) => u.id)
+        .sort(),
+    ).toEqual(["eda", "ina"]);
+    // B's own admin no longer sees eda either
+    const bobs = (await (await dash("bob"))("/admin-api/members")).json.members as { userId: string }[];
+    expect(bobs.map((m) => m.userId).sort()).toEqual(["bob", "cara"]);
   });
 });

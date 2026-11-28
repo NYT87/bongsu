@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, type NoteGroup, type NotifyPrefs, notifyPrefs, setNotifyPref } from "./api";
 import { BRAND, ConfirmButton, cachePrune, LegalLinks, type Me, Switch, useLoad, useShared } from "./common";
 import { type Key, t } from "./i18n";
+import { applyTheme, type ThemeChoice } from "./theme";
 
 const b64ToBytes = (s: string) =>
   Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
@@ -162,6 +163,35 @@ function ConnectCard() {
       {msg && (
         <p className={`notice small ${msg.ok ? "ok" : "bad"}`} role="status">
           {msg.text}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The person's theme, shared with the dashboard: it changes the app at once and is saved for every device. */
+function ThemeCard({ me }: { me: Me }) {
+  const [pick, setPick] = useState<ThemeChoice>(() =>
+    me.you?.theme === "light" || me.you?.theme === "dark" ? me.you.theme : "system",
+  );
+  const [error, setError] = useState<string | null>(null);
+  const choose = (v: ThemeChoice) => {
+    setPick(applyTheme(v));
+    setError(null);
+    api("me/theme", { theme: v }).catch((e: Error) => setError(e.message));
+  };
+  return (
+    <div className="card">
+      <h2>{t("settings.theme")}</h2>
+      <p className="muted small">{t("settings.themeNote")}</p>
+      <select value={pick} onChange={(e) => choose(e.target.value as ThemeChoice)} aria-label={t("settings.theme")}>
+        <option value="system">{t("settings.themeSystem")}</option>
+        <option value="light">{t("settings.themeLight")}</option>
+        <option value="dark">{t("settings.themeDark")}</option>
+      </select>
+      {error && (
+        <p className="notice small bad" role="alert">
+          {error}
         </p>
       )}
     </div>
@@ -494,6 +524,7 @@ export function SettingsPage({ me, onSignOut }: { me: Me; onSignOut: () => void 
       </div>
       {me.connects && <ConnectCard />}
       <TimeZoneCard me={me} />
+      <ThemeCard me={me} />
       <MediaStoresCard />
       <VersionInfo me={me} />
       <LeaveCard me={me} onLeft={onSignOut} />

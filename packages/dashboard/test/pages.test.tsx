@@ -127,6 +127,37 @@ describe("Settings: the Icon card", () => {
   });
 });
 
+describe("Settings: archiving the workspace (#138)", () => {
+  const settings = {
+    name: "Demo Travel",
+    timezone: "UTC",
+    digestHour: 8,
+    dryRun: false,
+    publicUrl: "https://bongsu.example.com",
+    ntfy: { set: false, host: null },
+    encryptionKeySet: true,
+    iconUrl: null,
+    server: { version: "0.7.0", commit: null },
+  };
+
+  it("archives after a confirm that says only an instance admin restores it, then opens the next workspace", async () => {
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    const calls = fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET settings": { body: settings },
+      "POST settings/archive": { body: { archived: true } },
+    });
+    open("settings");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Archive Demo Travel" }));
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.textContent).toMatch(/only an instance admin can restore it/);
+    await user.click(within(dialog).getByRole("button", { name: "Archive" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["settings/archive"]);
+  });
+});
+
 describe("Members: Edit name", () => {
   const routes = (rename: (name: string) => void = () => {}) => ({
     "GET state": () => ({ body: state() }),
@@ -440,6 +471,103 @@ describe("the admin dashboard", () => {
     ).toEqual(["Workspaces", "Media", "OAuth apps", "Audit", "Devices & passkeys"]);
     // no workspace to go back to
     expect(within(sidebar()).queryByRole("navigation", { name: "Dashboards" })).toBeNull();
+  });
+});
+
+describe("Workspaces: a workspace's detail page (#140)", () => {
+  const detail = {
+    workspace: { id: "b", name: "Demo Running", mediaFolder: "demo-running", createdAt: 1761000000, archivedAt: null },
+    members: [
+      { userId: "u2", email: "bob@example.com", name: "Bob", role: "admin" },
+      { userId: "u3", email: "eda@example.com", name: null, role: "editor" },
+    ],
+    invites: [{ id: "inv1", email: "new@example.com", role: "creator", expiresAt: 1762000000, copyable: true }],
+    connections: [{ id: "c1", provider: "composio", label: "Instagram", status: "ok" }],
+    accounts: [
+      { id: "demo_running", platform: "instagram", handle: "demo_running", status: "active", connection: "c1" },
+    ],
+  };
+
+  it("opens from a workspace's name: people with roles, pending invites marked, connections read-only", async () => {
+    const calls = fakeApi({
+      "GET state": () => ({ body: { ...state(), instanceAdmin: true } }),
+      "GET overview": { status: 500, body: { error: "not needed here" } },
+      "GET workspaces": {
+        body: {
+          workspaces: [
+            { id: "b", name: "Demo Running", members: 2, accounts: 1, createdAt: 1761000000, archivedAt: null },
+          ],
+        },
+      },
+      "GET users": { body: { users: [] } },
+      "GET scheduler": { status: 500, body: { error: "not needed here" } },
+      "GET workspaces/b": { body: detail },
+      "POST workspaces/b/invites/inv1/link": { body: { url: "https://bongsu.example.com/invite#t" } },
+    });
+    open("admin/workspaces");
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("link", { name: "Demo Running" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Demo Running" })).toBeTruthy();
+    expect(location.pathname).toBe("/dashboard/admin/workspaces/b");
+    const people = (await screen.findByRole("heading", { name: "People" })).closest(".card") as HTMLElement;
+    const rows = within(people)
+      .getAllByRole("row")
+      .slice(1)
+      .map((r) => [...r.querySelectorAll("td")].slice(0, 3).map((td) => td.textContent));
+    expect(rows).toEqual([
+      ["Bobbob@example.com", "Admin", "Member"],
+      ["eda@example.com", "Editor", "Member"],
+      ["new@example.com", "Creator", expect.stringMatching(/^Invited, until /)],
+    ]);
+    const accounts = screen.getByRole("heading", { name: "Connected accounts" }).closest(".card") as HTMLElement;
+    expect(within(accounts).getByText("demo_running")).toBeTruthy();
+    expect(within(accounts).getByText("Instagram")).toBeTruthy();
+    await user.click(within(people).getByRole("button", { name: "Copy link" }));
+    expect(await screen.findByText("https://bongsu.example.com/invite#t")).toBeTruthy();
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.path)).toEqual(["workspaces/b/invites/inv1/link"]);
+    await user.click(screen.getByRole("link", { name: "← All workspaces" }));
+    expect(await screen.findByRole("heading", { level: 1, name: "Workspaces" })).toBeTruthy();
+    expect(location.pathname).toBe("/dashboard/admin/workspaces");
+  });
+});
+
+describe("Workspaces: the instance admins (#139)", () => {
+  it("lists who runs the instance, removes one and makes another, after a confirm", async () => {
+    let users = [
+      { id: "u1", email: "ada@example.com", name: "Ada", instanceAdmin: true },
+      { id: "u2", email: "eda@example.com", name: "Eda", instanceAdmin: true },
+      { id: "u3", email: "bob@example.com", name: null, instanceAdmin: false },
+    ];
+    const calls = fakeApi({
+      "GET state": () => ({ body: { ...state(), instanceAdmin: true } }),
+      "GET overview": { status: 500, body: { error: "not needed here" } },
+      "GET workspaces": { body: { workspaces: [] } },
+      "GET scheduler": { status: 500, body: { error: "not needed here" } },
+      "GET users": () => ({ body: { users } }),
+      "POST instance-admins": (b: unknown) => {
+        const { userId, on } = b as { userId: string; on: boolean };
+        users = users.map((u) => (u.id === userId ? { ...u, instanceAdmin: on } : u));
+        return { body: { userId, instanceAdmin: on } };
+      },
+    });
+    open("admin/workspaces");
+    const user = userEvent.setup();
+    const card = (await screen.findByRole("heading", { name: "Instance admins" })).closest(".card") as HTMLElement;
+    const rows = async () =>
+      (await within(card).findAllByRole("row")).slice(1).map((r) => r.querySelector("td")?.textContent);
+    expect(await rows()).toEqual(["Ada (ada@example.com) (you)", "Eda (eda@example.com)"]);
+    const eda = within(card).getByText("Eda (eda@example.com)").closest("tr") as HTMLElement;
+    await user.click(within(eda).getByRole("button", { name: "Remove instance admin" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Remove instance admin" }));
+    expect(await screen.findByText("Eda (eda@example.com) is no longer an instance admin.")).toBeTruthy();
+    await user.selectOptions(within(card).getByLabelText("Make someone an instance admin"), "u3");
+    await user.click(within(card).getByRole("button", { name: "Make instance admin" }));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Make instance admin" }));
+    await waitFor(async () => expect(await rows()).toEqual(["Ada (ada@example.com) (you)", "bob@example.com"]));
+    expect(calls.filter((c) => c.method === "POST").map((c) => c.body)).toEqual([
+      { userId: "u2", on: false },
+      { userId: "u3", on: true },
+    ]);
   });
 });
 
@@ -884,6 +1012,80 @@ describe("You: the person's own page", () => {
       path: "me/name",
       body: { name: "Ada L" },
     });
+  });
+
+  it("applies the person's saved theme, and a choice changes the page at once and is saved for every device", async () => {
+    let theme: string | null = "dark";
+    const calls = fakeApi({
+      ...routes(),
+      "GET state": () => ({ body: { ...state(), user: { ...state().user, theme } } }),
+      "GET me": () => ({ body: { ...me, theme } }),
+      "POST me/theme": (b: unknown) => {
+        const t = (b as { theme: string }).theme;
+        theme = t === "system" ? null : t;
+        return { body: { theme } };
+      },
+    });
+    open("me");
+    const user = userEvent.setup();
+    const field = await screen.findByLabelText("Theme");
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+    expect(field).toHaveProperty("value", "dark");
+    await user.selectOptions(field, "light");
+    expect(document.documentElement.dataset.theme).toBe("light");
+    // System: the device's setting (light here), and it's what's saved too
+    await user.selectOptions(field, "system");
+    expect(document.documentElement.dataset.theme).toBe(
+      matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+    );
+    await waitFor(() => expect(field).toHaveProperty("value", "system"));
+    expect(calls.filter((c) => c.method === "POST")).toEqual([
+      { method: "POST", path: "me/theme", body: { theme: "light" } },
+      { method: "POST", path: "me/theme", body: { theme: "system" } },
+    ]);
+    expect(localStorage.getItem("bongsu-theme")).toBe("system");
+  });
+});
+
+describe("deleting an account (#143)", () => {
+  it("is offered to someone in no workspace: their email typed, a confirm, then signed out", async () => {
+    const assign = vi.spyOn(window.location, "assign").mockImplementation(() => {});
+    const calls = fakeApi({
+      "GET state": () => ({
+        body: { ...state(), noWorkspace: true, workspace: null, workspaces: [], role: null },
+      }),
+      "POST me/delete": { body: { deleted: true } },
+    });
+    open("");
+    const user = userEvent.setup();
+    await screen.findByRole("heading", { name: "You're not in a workspace yet" });
+    const button = screen.getByRole("button", { name: "Delete my account" });
+    expect(button).toHaveProperty("disabled", true);
+    await user.type(screen.getByLabelText("Type your email to confirm"), "ada@example.com");
+    expect(button).toHaveProperty("disabled", false);
+    await user.click(button);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Delete my account" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/dashboard/"));
+    expect(calls.filter((c) => c.method === "POST")).toEqual([
+      { method: "POST", path: "me/delete", body: { email: "ada@example.com" } },
+    ]);
+  });
+
+  it("isn't on the person's own page while they belong to a workspace", async () => {
+    fakeApi({
+      "GET state": () => ({ body: state() }),
+      "GET me": {
+        body: {
+          email: "ada@example.com",
+          name: "Ada",
+          theme: null,
+          workspaces: [{ id: "w1", name: "Demo Travel", role: "admin" }],
+        },
+      },
+    });
+    open("me");
+    await screen.findByRole("heading", { name: "Your workspaces" });
+    expect(screen.queryByRole("heading", { name: "Delete your account" })).toBeNull();
   });
 });
 

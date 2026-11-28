@@ -65,10 +65,13 @@ import {
 } from "@bongsu/core/media/manage";
 import { NtfyError, postNtfy, setWorkspaceNtfy, workspaceNtfy } from "@bongsu/core/ntfy";
 import {
+  AccountError,
   addMember,
   archiveWorkspace,
   createUser,
   createWorkspace,
+  DELETED_USER,
+  deleteAccount,
   InstanceAdminError,
   NAME_MAX,
   newUserId,
@@ -92,7 +95,10 @@ import {
   sessionWorkspace,
   setDisplayName,
   setUserName,
+  setUserTheme,
   setWorkspaceSettings,
+  type Theme,
+  themeOf,
   workspaceRef,
   workspaceSettings,
   workspacesOf,
@@ -143,6 +149,9 @@ type Area = {
    *  changes ask for, their own passkeys and devices, and the instance's audit (`?instance=1`). None of it reads a
    *  workspace's data. */
   noWorkspace?: true;
+  /** The person's own, for anyone signed in, in no workspace too (their page, and the passkey check deleting their
+   *  account asks for: #143). */
+  own?: true;
   /** Changes to a workspace's members, invites, agent keys, accounts, connections and settings: its admins' (and the
    *  instance admins'). The person's own passkeys, devices and CLI tokens are every member's. Moving a release date
    *  (videos) is editing the plan: an editor's too. */
@@ -160,13 +169,12 @@ const AREAS: Record<string, Area> = {
   scheduler: { instance: true },
   "instance-admins": { instance: true },
   users: { instance: true },
-  verify: { noWorkspace: true },
+  verify: { own: true },
   passkeys: { noWorkspace: true },
   devices: { noWorkspace: true },
   "recovery-codes": { noWorkspace: true },
-  // the person's own page: their name and their workspaces (an instance admin in no workspace reaches it too; anyone
-  // else in none comes with account deletion, #143)
-  me: { noWorkspace: true },
+  // the person's own page: their name, their workspaces, and deleting their account once they're in none (#143)
+  me: { own: true },
   // the person's own alert emails: an instance admin in no workspace still gets the instance's
   "alert-mail": { noWorkspace: true },
   audit: { noWorkspace: true },
@@ -404,9 +412,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const s = await validSession(c.env.DB, readCookie(c.req.header("Cookie"), "dashboard"), nowS(), "dashboard");
       const user = s
-        ? await c.env.DB.prepare("SELECT id, email, name FROM users WHERE id = ?1")
+        ? await c.env.DB.prepare("SELECT id, email, name, theme FROM users WHERE id = ?1")
             .bind(s.userId)
-            .first<{ id: string; email: string | null; name: string | null }>()
+            .first<{ id: string; email: string | null; name: string | null; theme: string | null }>()
         : null;
       // what the sidebar shows: the Instance group for instance admins; a creator is pointed at the app
       const where = s && (await sessionWorkspace(c.env.DB, s, { notCreator: true }));
@@ -708,7 +716,7 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     // there. An instance admin without one still reaches the instance's own pages.
     const where = await sessionWorkspace(c.env.DB, s, { notCreator: true });
     const instanceAdmin = where?.instanceAdmin ?? (await isInstanceAdmin(c.env.DB, s.userId));
-    if (!where && !(instanceAdmin && (area.instance || area.noWorkspace)))
+    if (!where && !area.own && !(instanceAdmin && (area.instance || area.noWorkspace)))
       return c.json({ error: "you're not a member of any workspace", noWorkspace: true }, 403);
     c.set("session", s);
     c.set("token", token);
@@ -956,48 +964,49 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
   // ---- members and invites (AREAS: managing, the workspace's admins and the instance admins)
   /** An invite's id in the lists: the start of its token's hash (the link itself comes from Copy link, below). */
   const INVITE_ID = "substr(token_hash, 1, 16)";
+  /** A workspace's people as its Members page lists them (instance admins left out, #139) and its pending invites:
+   *  the Members page's own, and an instance admin's look at any workspace (its detail page, #140). */
+  const peopleIn = async (c: C, workspaceId: string) => {
+    const members = await c.env.DB.prepare(
+      // instance admins aren't listed (#139): they can act in every workspace without being its members
+      `SELECT u.id, u.email, m.display_name, m.role FROM memberships m JOIN users u ON u.id = m.user_id
+       WHERE m.workspace_id = ?1 AND u.instance_admin = 0 ORDER BY m.role, u.email, u.id`,
+    )
+      .bind(workspaceId)
+      .all<{ id: string; email: string | null; display_name: string | null; role: string }>();
+    const names = await memberNames(
+      c.env.DB,
+      members.results.map((m) => m.id),
+      workspaceId,
+    );
+    const invites = await c.env.DB.prepare(
+      `SELECT ${INVITE_ID} AS id, email, role, expires_at, token_enc IS NOT NULL AS kept FROM invites
+       WHERE workspace_id = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2 ORDER BY created_at`,
+    )
+      .bind(workspaceId, nowS())
+      .all<{ id: string; email: string; role: string; expires_at: number; kept: number | boolean }>();
+    return {
+      members: members.results.map((m) => ({
+        userId: m.id,
+        email: m.email,
+        // the name shown in this workspace; displayName is the workspace's own (null: the person's name shows)
+        name: names.get(m.id) ?? null,
+        displayName: m.display_name,
+        role: m.role,
+      })),
+      invites: invites.results.map((i) => ({
+        id: i.id,
+        email: i.email,
+        role: i.role,
+        expiresAt: i.expires_at,
+        // its link can be copied again (a boolean on Postgres, 0/1 on SQLite)
+        copyable: Number(i.kept) === 1,
+      })),
+    };
+  };
   app.get(
     "/admin-api/members",
-    wrap(async (c) => {
-      const members = await c.env.DB.prepare(
-        `SELECT u.id, u.email, m.display_name, m.role, u.instance_admin FROM memberships m JOIN users u ON u.id = m.user_id
-         WHERE m.workspace_id = ?1 ORDER BY m.role, u.email, u.id`,
-      )
-        .bind(ws(c))
-        .all<{ id: string; email: string | null; display_name: string | null; role: string; instance_admin: number }>();
-      const names = await memberNames(
-        c.env.DB,
-        members.results.map((m) => m.id),
-        ws(c),
-      );
-      // who's an instance admin: for the instance admins' "Make instance admin" control only
-      const ia = c.get("instanceAdmin");
-      const invites = await c.env.DB.prepare(
-        `SELECT ${INVITE_ID} AS id, email, role, expires_at, token_enc IS NOT NULL AS kept FROM invites
-         WHERE workspace_id = ?1 AND used_at IS NULL AND revoked_at IS NULL AND expires_at > ?2 ORDER BY created_at`,
-      )
-        .bind(ws(c), nowS())
-        .all<{ id: string; email: string; role: string; expires_at: number; kept: number | boolean }>();
-      return {
-        members: members.results.map((m) => ({
-          userId: m.id,
-          email: m.email,
-          // the name shown in this workspace; displayName is the workspace's own (null: the person's name shows)
-          name: names.get(m.id) ?? null,
-          displayName: m.display_name,
-          role: m.role,
-          ...(ia ? { instanceAdmin: Number(m.instance_admin) === 1 } : {}),
-        })),
-        invites: invites.results.map((i) => ({
-          id: i.id,
-          email: i.email,
-          role: i.role,
-          expiresAt: i.expires_at,
-          // its link can be copied again (a boolean on Postgres, 0/1 on SQLite)
-          copyable: Number(i.kept) === 1,
-        })),
-      };
-    }),
+    wrap((c) => peopleIn(c, ws(c))),
   );
   /** A role from a request, or a 400. */
   const roleOf = (v: unknown) => {
@@ -1032,38 +1041,41 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return { url: r.url, mailed: r.mailed };
     }),
   );
-  // A pending invite's link again, to copy: like making one, a fresh passkey check, and in the audit.
+  // A pending invite's link again, to copy: like making one, a fresh passkey check, and in the audit (the invite's
+  // workspace's). The Members page's, and an instance admin's for any workspace (#140).
+  const inviteLink = async (c: C, workspaceId: string, id: string) => {
+    fresh(c);
+    const r = await c.env.DB.prepare(
+      `SELECT email, role, token_enc FROM invites WHERE ${INVITE_ID} = ?1 AND workspace_id = ?2 AND used_at IS NULL
+         AND revoked_at IS NULL AND expires_at > ?3`,
+    )
+      .bind(id, workspaceId, nowS())
+      .first<{ email: string; role: string; token_enc: string | null }>();
+    if (!r) throw new AdminError(404, "no pending invite with that id");
+    const url = await keptInviteUrl(c.env, { role: r.role, stored: r.token_enc });
+    if (!url) throw new AdminError(409, "this invite's link wasn't kept: revoke it and invite them again");
+    await audit(c, "invite_link_copy", `invite:${id}`, { role: r.role }, undefined, workspaceId);
+    return { url };
+  };
+  const revokeInvite = async (c: C, workspaceId: string, id: string) => {
+    fresh(c);
+    const r = await c.env.DB.prepare(
+      `UPDATE invites SET revoked_at = ?1 WHERE ${INVITE_ID} = ?2 AND workspace_id = ?3 AND used_at IS NULL
+         AND revoked_at IS NULL RETURNING email, role`,
+    )
+      .bind(nowS(), id, workspaceId)
+      .first<{ email: string; role: string }>();
+    if (!r) throw new AdminError(404, "no pending invite with that id");
+    await audit(c, "invite_revoke", `invite:${id}`, { role: r.role }, undefined, workspaceId);
+    return { revoked: true };
+  };
   app.post(
     "/admin-api/invites/:id/link",
-    wrap(async (c) => {
-      fresh(c);
-      const r = await c.env.DB.prepare(
-        `SELECT email, role, token_enc FROM invites WHERE ${INVITE_ID} = ?1 AND workspace_id = ?2 AND used_at IS NULL
-           AND revoked_at IS NULL AND expires_at > ?3`,
-      )
-        .bind(c.req.param("id") ?? "", ws(c), nowS())
-        .first<{ email: string; role: string; token_enc: string | null }>();
-      if (!r) throw new AdminError(404, "no pending invite with that id");
-      const url = await keptInviteUrl(c.env, { role: r.role, stored: r.token_enc });
-      if (!url) throw new AdminError(409, "this invite's link wasn't kept: revoke it and invite them again");
-      await audit(c, "invite_link_copy", `invite:${c.req.param("id")}`, { role: r.role });
-      return { url };
-    }),
+    wrap((c) => inviteLink(c, ws(c), c.req.param("id") ?? "")),
   );
   app.post(
     "/admin-api/invites/:id/revoke",
-    wrap(async (c) => {
-      fresh(c);
-      const r = await c.env.DB.prepare(
-        `UPDATE invites SET revoked_at = ?1 WHERE ${INVITE_ID} = ?2 AND workspace_id = ?3 AND used_at IS NULL
-           AND revoked_at IS NULL RETURNING email, role`,
-      )
-        .bind(nowS(), c.req.param("id") ?? "", ws(c))
-        .first<{ email: string; role: string }>();
-      if (!r) throw new AdminError(404, "no pending invite with that id");
-      await audit(c, "invite_revoke", `invite:${c.req.param("id")}`, { role: r.role });
-      return { revoked: true };
-    }),
+    wrap((c) => revokeInvite(c, ws(c), c.req.param("id") ?? "")),
   );
   app.post(
     "/admin-api/members/:userId",
@@ -1105,16 +1117,30 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/me",
     wrap(async (c) => {
       const uid = c.get("session").userId;
-      const u = await c.env.DB.prepare("SELECT email, name FROM users WHERE id = ?1")
+      const u = await c.env.DB.prepare("SELECT email, name, theme FROM users WHERE id = ?1")
         .bind(uid)
-        .first<{ email: string | null; name: string | null }>();
+        .first<{ email: string | null; name: string | null; theme: string | null }>();
       const ws = await c.env.DB.prepare(
         `SELECT w.id, w.name, m.role FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
          WHERE m.user_id = ?1 AND w.archived_at IS NULL ORDER BY w.name, w.id`,
       )
         .bind(uid)
         .all<{ id: string; name: string; role: string }>();
-      return { email: u?.email ?? null, name: u?.name ?? null, workspaces: ws.results };
+      return { email: u?.email ?? null, name: u?.name ?? null, theme: u?.theme ?? null, workspaces: ws.results };
+    }),
+  );
+  // Their theme, shared with the app (light, dark, or system: the device's), so it follows them to every device.
+  app.post(
+    "/admin-api/me/theme",
+    wrap(async (c) => {
+      let theme: Theme;
+      try {
+        theme = themeOf((await body(c)).theme);
+      } catch (e) {
+        throw new AdminError(400, (e as Error).message);
+      }
+      await setUserTheme(c.env.DB, c.get("session").userId, theme);
+      return { theme };
     }),
   );
   app.post(
@@ -1125,6 +1151,31 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       await setUserName(c.env.DB, uid, name);
       await audit(c, "user_name", `user:${uid}`, { name });
       return { name };
+    }),
+  );
+  // Deleting their own account (#143), once they're in no workspace and not the last instance admin: a fresh passkey
+  // check and their email typed again. Signed out everywhere (their sessions go); the instance's audit records it,
+  // with no email.
+  app.post(
+    "/admin-api/me/delete",
+    wrap(async (c) => {
+      fresh(c);
+      const uid = c.get("session").userId;
+      const u = await c.env.DB.prepare("SELECT email FROM users WHERE id = ?1")
+        .bind(uid)
+        .first<{ email: string | null }>();
+      const typed = String((await body(c)).email ?? "")
+        .trim()
+        .toLowerCase();
+      if (!u?.email || typed !== u.email) throw new AdminError(400, "type your email to confirm");
+      try {
+        await deleteAccount(c.env.DB, uid, nowS());
+      } catch (e) {
+        if (e instanceof AccountError) throw new AdminError(e.status, e.message);
+        throw e;
+      }
+      await audit(c, "account_delete", `user:${uid}`, {}, uid, null);
+      return { deleted: true };
     }),
   );
   // Leaving one of their workspaces (pwa/session.ts leaveWorkspace): refused for its last admin (409), 404 when they
@@ -1598,7 +1649,8 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     wrap(async (c) => {
       const r = await c.env.DB.prepare(
         `SELECT w.id, w.name, w.created_at, w.archived_at,
-           (SELECT COUNT(*) FROM memberships m WHERE m.workspace_id = w.id) AS members,
+           (SELECT COUNT(*) FROM memberships m JOIN users u ON u.id = m.user_id
+             WHERE m.workspace_id = w.id AND u.instance_admin = 0) AS members,
            (SELECT COUNT(*) FROM accounts a WHERE a.workspace_id = w.id) AS accounts
          FROM workspaces w ORDER BY w.name, w.id`,
       ).all<{
@@ -1686,6 +1738,52 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return { restored: true };
     }),
   );
+  // One workspace for its detail page (#140): a deliberate read across workspaces, so instance admins only (AREAS:
+  // workspaces). Its people and pending invites as its Members page lists them, and its connections and accounts,
+  // read-only. Archived ones too: the page restores them.
+  app.get(
+    "/admin-api/workspaces/:id",
+    wrap(async (c) => {
+      const id = c.req.param("id") ?? "";
+      const w = await c.env.DB.prepare("SELECT id, name, created_at, archived_at FROM workspaces WHERE id = ?1")
+        .bind(id)
+        .first<{ id: string; name: string; created_at: number; archived_at: number | null }>();
+      if (!w) throw new AdminError(404, "no such workspace");
+      const connections = await c.env.DB.prepare(
+        "SELECT id, provider, label, status FROM connections WHERE workspace_id = ?1 ORDER BY provider, id",
+      )
+        .bind(id)
+        .all<{ id: string; provider: string; label: string | null; status: string }>();
+      const accounts = await listAccounts(c.env.DB, { workspaceId: id, all: true });
+      return {
+        workspace: {
+          id: w.id,
+          name: w.name,
+          mediaFolder: (await workspaceSettings(c.env.DB, id)).mediaFolder,
+          createdAt: w.created_at,
+          archivedAt: w.archived_at,
+        },
+        ...(await peopleIn(c, id)),
+        connections: connections.results,
+        accounts: accounts.map((a) => ({
+          id: a.id,
+          platform: a.platform,
+          handle: a.handle,
+          status: a.status,
+          connection: a.connection?.id ?? null,
+        })),
+      };
+    }),
+  );
+  // a pending invite of any workspace, from its detail page: Copy link and Revoke, as on its Members page
+  app.post(
+    "/admin-api/workspaces/:id/invites/:invite/link",
+    wrap((c) => inviteLink(c, c.req.param("id") ?? "", c.req.param("invite") ?? "")),
+  );
+  app.post(
+    "/admin-api/workspaces/:id/invites/:invite/revoke",
+    wrap((c) => revokeInvite(c, c.req.param("id") ?? "", c.req.param("invite") ?? "")),
+  );
   /** Work in a workspace from the next request on (sessions.workspace_id; the switcher, core/workspaces.ts mayOpen);
    *  null when the caller can't open it. */
   const open = (c: C, id: string) =>
@@ -1718,12 +1816,16 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
     "/admin-api/users",
     wrap(async (c) => ({
       users: (
-        await c.env.DB.prepare("SELECT id, email, name FROM users ORDER BY COALESCE(name, email), email").all<{
+        await c.env.DB.prepare(
+          // a deleted account (#143) is no one to pick
+          "SELECT id, email, name, instance_admin FROM users WHERE deleted_at IS NULL ORDER BY COALESCE(name, email), email",
+        ).all<{
           id: string;
           email: string;
           name: string | null;
+          instance_admin: number;
         }>()
-      ).results,
+      ).results.map(({ instance_admin, ...u }) => ({ ...u, instanceAdmin: Number(instance_admin) === 1 })),
     })),
   );
   app.post(
@@ -2202,6 +2304,19 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       return { saved: true };
     }),
   );
+  // The workspace's admins archive the one they work in (#138): it stops completely (nothing publishes, its keys and
+  // tokens stop, its members can't open it), nothing is deleted, and only an instance admin restores it (Workspaces).
+  // The session then works in the person's next workspace, or none, as after leaving (sessionWorkspace).
+  app.post(
+    "/admin-api/settings/archive",
+    wrap(async (c) => {
+      fresh(c);
+      const id = ws(c);
+      if (!(await archiveWorkspace(c.env.DB, id, nowS()))) throw new AdminError(409, "it's archived already");
+      await audit(c, "workspace_archive", id, {}, undefined, id);
+      return { archived: true };
+    }),
+  );
   // The workspace's icon: one PNG, the raw body (core/icon.ts checks it). Admins only, as the other settings.
   app.put(
     "/admin-api/settings/icon",
@@ -2273,8 +2388,9 @@ export function adminRoutes(fetcher: typeof fetch, verifiers: Verifiers = realVe
       // who: the person who acted, when a person did (their name, else their email; in a workspace's list, as that
       // workspace names them, below)
       const r = await c.env.DB.prepare(
-        `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id, COALESCE(u.name, u.email) AS who,
-           COALESCE(i.email, t.name, t.email) AS target_name
+        `SELECT a.id, a.at, a.actor, a.action, a.target, a.detail, a.user_id,
+           CASE WHEN u.deleted_at IS NOT NULL THEN '${DELETED_USER}' ELSE COALESCE(u.name, u.email) END AS who,
+           COALESCE(i.email, CASE WHEN t.deleted_at IS NOT NULL THEN '${DELETED_USER}' END, t.name, t.email) AS target_name
          FROM audit a LEFT JOIN users u ON u.id = a.user_id
          LEFT JOIN users t ON a.target = 'user:' || t.id
          LEFT JOIN invites i ON i.workspace_id = a.workspace_id AND a.target = 'invite:' || substr(i.token_hash, 1, 16)

@@ -272,6 +272,11 @@ Every time is shown with its zone. **Settings → Time zone** picks the one the 
 workspace's, or your own ("Use this device's…"). Plans are stored in UTC, so changing it moves nothing. **Back to the
 workspace's** undoes it.
 
+## Theme
+
+**Settings → Theme**: **System** (the default) follows your device's light or dark setting; **Light** or **Dark** keeps
+one. It changes at once, and it's yours: the dashboard and every device you sign in on use the same choice.
+
 ## Leaving a workspace
 
 **Settings → Leave \<workspace\>** (it asks first) takes you out of the workspace the app works in: its posts and

@@ -169,6 +169,11 @@ export const en = {
   "settings.zoneUse": "Use",
   "settings.zoneDevice": "Use this device's ({zone})",
   "settings.zoneBack": "Back to the workspace's ({zone})",
+  "settings.theme": "Theme",
+  "settings.themeNote": "The app's and the dashboard's, on every device you sign in on.",
+  "settings.themeSystem": "System (this device's setting)",
+  "settings.themeLight": "Light",
+  "settings.themeDark": "Dark",
 
   // the metrics chart: its summary for screen readers, a missing sample, the table's first column
   "chart.summary": {

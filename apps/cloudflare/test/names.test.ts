@@ -169,6 +169,7 @@ describe("POST /app-api/me/name", () => {
       emailName: "amy",
       displayName: null,
       shownAs: "Jo",
+      theme: null,
     });
     expect((await amy.post("/app-api/me/name", { name: "" })).status).toBe(200);
     expect((await amy.me()).json.you).toEqual({
@@ -176,6 +177,7 @@ describe("POST /app-api/me/name", () => {
       emailName: "amy",
       displayName: null,
       shownAs: "amy",
+      theme: null,
     });
     const bad = await amy.post("/app-api/me/name", { name: LONG });
     expect([bad.status, bad.json.error]).toEqual([400, "a name is 1 to 60 characters"]);
@@ -188,6 +190,28 @@ describe("POST /app-api/me/name", () => {
   });
 });
 
+describe("the person's theme (#141)", () => {
+  it("is set in the app and read in the dashboard, and the other way; system clears it; anything else is a 400", async () => {
+    const amy = await as("amy", "default");
+    const amyDash = await dash("amy", "default");
+    expect((await amy.post("/app-api/me/theme", { theme: "dark" })).json).toEqual({ theme: "dark" });
+    const state = await amyDash("/admin-api/state", undefined);
+    expect((state.json.user as Json).theme).toBe("dark");
+    expect((await amyDash("/admin-api/me/theme", { theme: "system" })).json).toEqual({ theme: null });
+    expect(((await amy.me()).json.you as Json).theme).toBeNull();
+    expect((await amyDash("/admin-api/me/theme", { theme: "light" })).status).toBe(200);
+    expect(((await amy.me()).json.you as Json).theme).toBe("light");
+    const bad = await amy.post("/app-api/me/theme", { theme: "sepia" });
+    expect([bad.status, bad.json.error]).toEqual([400, "theme must be system, light or dark"]);
+    expect((await amyDash("/admin-api/me/theme", { theme: 1 })).status).toBe(400);
+  });
+
+  it("is the person's own: another person's stays", async () => {
+    await (await as("amy", "default")).post("/app-api/me/theme", { theme: "dark" });
+    expect(((await (await as("otto", "default")).me()).json.you as Json).theme).toBeNull();
+  });
+});
+
 describe("POST /app-api/me/display-name", () => {
   it("shows in that workspace only, and is audited with its workspace", async () => {
     const inA = await as("amy", "default");
@@ -197,6 +221,7 @@ describe("POST /app-api/me/display-name", () => {
       emailName: "amy",
       displayName: "J. Park",
       shownAs: "J. Park",
+      theme: null,
     });
     expect(((await (await as("amy", "b")).me()).json.you as Json).shownAs).toBe("Amy");
     // the picker's list names her in each workspace as that workspace does
@@ -260,6 +285,8 @@ describe("agent keys", () => {
     for (const [routes, path] of [
       ["app", "/app-api/me/name"],
       ["app", "/app-api/me/display-name"],
+      ["app", "/app-api/me/theme"],
+      ["admin", "/admin-api/me/theme"],
       ["admin", "/admin-api/members/otto/name"],
     ] as const) {
       const r = await send(routes, path, h, { name: "X" });
@@ -290,7 +317,7 @@ describe("where people are named", () => {
   it("the dashboard state: the person as the session's workspace names them", async () => {
     await setDisplayName(env.DB, "default", "amy", "Ana");
     const a = (await (await dash("amy", "default"))("/admin-api/state", undefined)).json;
-    expect(a.user).toEqual({ id: "amy", email: "amy@example.com", name: "Ana" });
+    expect(a.user).toEqual({ id: "amy", email: "amy@example.com", name: "Ana", theme: null });
     const b = (await (await dash("amy", "b"))("/admin-api/state", undefined)).json;
     expect(b.user).toMatchObject({ name: "Amy" });
   });

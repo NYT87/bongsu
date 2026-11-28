@@ -647,15 +647,32 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
       ["/admin-api/workspaces/default/archive", {}],
       ["/admin-api/workspaces/default/restore", {}],
       ["/admin-api/workspaces/default/open", {}],
+      ["/admin-api/workspaces/default/invites/inviteA000000000/link", {}],
+      ["/admin-api/workspaces/default/invites/inviteA000000000/revoke", {}],
     ] as const)
       expect((await send("bea", "dashboard", path, body)).status, path).toBe(403);
     expect((await as("bea", "dashboard", "/admin-api/workspaces")).status).toBe(403);
+    // a workspace's detail page (#140): the instance admins', for her own workspace too
+    for (const id of ["default", "b"])
+      expect((await as("bea", "dashboard", `/admin-api/workspaces/${id}`)).status, id).toBe(403);
     // nor the instance's accounts, which the create form picks its admin from
     expect((await as("bea", "dashboard", "/admin-api/users")).status).toBe(403);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM workspaces WHERE name = 'Mine'").first("n")).toBe(0);
     expect(
       await env.DB.prepare("SELECT archived_at FROM workspaces WHERE id = 'default'").first("archived_at"),
     ).toBeNull();
+    // archiving from Settings (#138) archives her own workspace, whatever the body says
+    expect((await send("bea", "dashboard", "/admin-api/settings/archive", { workspaceId: "default" })).status).toBe(
+      200,
+    );
+    const archived = await env.DB.prepare(
+      "SELECT id, archived_at IS NOT NULL AS gone FROM workspaces WHERE id IN ('default', 'b') ORDER BY id",
+    ).all();
+    expect(archived.results).toEqual([
+      { id: "b", gone: 1 },
+      { id: "default", gone: 0 },
+    ]);
+    await env.DB.prepare("UPDATE workspaces SET archived_at = NULL WHERE id = 'b'").run();
   });
 
   it("switching: a member of B can't move a session into another workspace, nor see it listed", async () => {
@@ -860,9 +877,12 @@ describe("the owner's apps follow the signed-in user's workspace (Phase 4b)", ()
     expect(rows.results).toEqual([{ workspace_id: "b", user_id: "bea", grp: "digest" }]);
   });
 
-  it("a user in no workspace is turned away", async () => {
+  it("a user in no workspace is turned away, except from their own page (#143)", async () => {
     expect((await as("nobody", "dashboard", "/admin-api/accounts")).status).toBe(403);
     expect((await as("nobody", "pwa", "/app-api/status")).status).toBe(403);
+    for (const path of ["/admin-api/members", "/admin-api/settings", "/admin-api/audit", "/admin-api/passkeys"])
+      expect((await as("nobody", "dashboard", path)).status, path).toBe(403);
+    expect((await as("nobody", "dashboard", "/admin-api/me")).json).toMatchObject({ workspaces: [] });
   });
 });
 
