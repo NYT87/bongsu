@@ -11,7 +11,6 @@
 import { createApp } from "@bongsu/api/app";
 import type { Db } from "@bongsu/core/db";
 import { registerMailer } from "@bongsu/core/mail";
-import { registerStore } from "@bongsu/core/media/index";
 import { PostgresDb } from "@bongsu/core/postgres";
 import { schedulesOff } from "@bongsu/core/schedules";
 import { exportData, importData, TransferError } from "@bongsu/schema/transfer";
@@ -19,7 +18,7 @@ import { serve } from "@hono/node-server";
 import { staticAssets } from "./assets";
 import { SqliteDb } from "./db";
 import { ConfigError, nodeEnv } from "./env";
-import { LocalStore } from "./local-store";
+import { registerLocalStore } from "./local-store";
 import { migrate, migratePostgres } from "./migrate";
 import { postgresDriver } from "./postgres";
 import { checkSchedules, clearLocks, startSchedules } from "./schedules";
@@ -37,10 +36,7 @@ const HOST = vars.HOST ?? "0.0.0.0";
 
 // The server's own disk, offered as the "local" media store when MEDIA_DIR names a directory (/media in Docker); the
 // dashboard picks it like any other store.
-if (vars.MEDIA_DIR) {
-  const dir = vars.MEDIA_DIR;
-  registerStore("local", () => new LocalStore(dir));
-}
+if (vars.MEDIA_DIR) registerLocalStore(vars.MEDIA_DIR);
 registerMailer("smtp", smtpMailer);
 
 /** Fetch called unbound, as on Workers (clients call `this.fetcher(…)`). */
