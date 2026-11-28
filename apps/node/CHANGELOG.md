@@ -1,5 +1,35 @@
 # @bongsu/node
 
+## 0.6.1
+
+### Patch Changes
+
+- c9baf17: The server's disk store is one for the process, so it remembers where files are and their checksums between requests: a video is no longer read in full and hashed again on every media link request and every inbox run.
+- c9baf17: A second process with `SCHEDULES=off` (a replica) no longer frees the main process's locks when it starts or stops, so the main process's runs can't overlap.
+- Updated dependencies [95a76fb]
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [95a76fb]
+- Updated dependencies [e01506d]
+- Updated dependencies [ce269d5]
+- Updated dependencies [c9baf17]
+- Updated dependencies [95a76fb]
+- Updated dependencies [c9baf17]
+- Updated dependencies [c9baf17]
+- Updated dependencies [f10eca2]
+- Updated dependencies [a712dac]
+- Updated dependencies [df8b115]
+- Updated dependencies [c9baf17]
+- Updated dependencies [2bb26f5]
+- Updated dependencies [134f112]
+- Updated dependencies [a64f69e]
+- Updated dependencies [ec930bd]
+- Updated dependencies [95a76fb]
+  - @bongsu/api@0.9.0
+  - @bongsu/core@0.9.0
+  - @bongsu/schema@0.5.3
+
 ## 0.6.0
 
 ### Minor Changes

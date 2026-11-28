@@ -1,5 +1,33 @@
 # @bongsu/core
 
+## 0.9.0
+
+### Minor Changes
+
+- 95a76fb: People can delete their account once they belong to no workspace: on the dashboard's You page (or the "not in a workspace yet" screen), with their email typed again and a fresh passkey check. Their personal data, passkeys, sessions, devices and recovery codes go and their CLI tokens and sent invites are revoked; the account stays as a nameless tombstone (`users.deleted_at`, migration 0031), so audit rows read "deleted user". The email can be used again. The last instance admin is refused.
+- ce269d5: The Google Drive store can live in a Shared drive (Google Workspace): paste the Shared drive's link, or a folder's inside it, as the root folder. Every Drive call now supports Shared drives, and a store whose root is in one lists, uploads and moves files within that drive (the connecting account needs the Content manager role there).
+- 95a76fb: Instance admins no longer appear among a workspace's members, nor in its member count, and they don't count toward "a workspace keeps one admin": every workspace keeps an admin of its own, and an instance admin's own membership can always be removed. They're managed from a new **Instance admins** card on the admin dashboard's Workspaces page (remove one, or make anyone on the instance one); Members keeps **Make instance admin**.
+- 95a76fb: A theme choice: System (the device's light or dark setting, the default), Light or Dark, on the dashboard's You page and in the app's Settings. It's the person's own (`users.theme`), so it follows them to the app, the dashboard and every device they sign in on, and it applies before the first paint.
+
+### Patch Changes
+
+- c9baf17: A busy inbox makes drafts again: post folders already drafted (waiting or refused) aren't listed on every run, and what a run found before its calls ran out is still drafted, instead of every run stopping at the same place.
+- c9baf17: Checking a post for new comments no longer writes every stored comment again: one read per post, and only the new ones are written, so the run's query budget is left for token renewal and the media store checks.
+- c9baf17: Posts whose comments can't be read (Bluesky, a broken connection, a removed account) no longer take every slot of the comments check: they're marked checked like the others, so new comments on the other workspaces' posts arrive again.
+- e01506d: Google Drive folders are listed in full, page after page, instead of stopping at 200 entries: a Reel's caption file past
+  the first page is no longer missed, and a subfolder past it is no longer made a second time.
+- c9baf17: An inbox folder deleted and made again is found: when the remembered folder lists nothing, the inbox path is looked up again, instead of drafts silently stopping for good.
+- c9baf17: On Postgres, two admins removing or demoting each other at the same moment can no longer leave a workspace without an admin, nor the instance without an instance admin: the change now locks the workspace (or the instance admins) first, in one transaction.
+- c9baf17: An Instagram or Threads post whose container is ready more than 6 hours after its due time (the workspace was paused, or the scheduler stuck) is held with a note instead of being published late.
+- a712dac: When a post failed after its publishing call was made (a lost answer, then "already published"), the note said it was still private and to publish it by hand, which made a second post. It now says it may already be public there and to check it; "still private" is kept for a video that was uploaded and never published.
+- df8b115: On Postgres, a post whose metrics sampling failed (one deleted on Instagram, say) stopped every later sampling run:
+  its failure stamp was refused, so it stayed first in line. The stamp is now written and sampling goes on past it.
+- c9baf17: Pausing a workspace now stops a run that's already going: a post or Shorts comment not yet sent when the pause lands waits for the resume. And a Shorts comment a dry run closed is posted once dry run is turned off, as posts already were.
+- 2bb26f5: A YouTube video or Bluesky post is only started publishing when the run has every call its finish needs left, so it can no longer be stuck as "may already be live" after running out midway.
+- 134f112: Reconnecting an Instagram or Threads account while its token was being renewed could lose the new token or mark the fresh connection broken; the renewal now leaves a connection changed meanwhile alone.
+- a64f69e: Removing a member, or a member leaving, now also revokes the agent keys they made in that workspace, not only their CLI
+  tokens: a removed admin can't keep using a key they copied.
+
 ## 0.8.0
 
 ### Minor Changes
