@@ -2,7 +2,8 @@
 // (Connect Google Drive in the dashboard, scope drive: the files they drop in by hand too, and moving them aside).
 // Uploads from the app open a resumable session, so the bytes go from the browser straight to Google. Paths start at
 // a workspace's folder ("UPLOADS/inbox/<project>"), inside the store's root folder when it has one, else anywhere in
-// the Drive (found by its name). Nothing here trashes or deletes.
+// the Drive (found by its name). The root may be in a Shared drive (#109): every call says it supports them, and a
+// store whose root is in one lists that drive's files. Nothing here trashes or deletes.
 import { refreshToken } from "../clients/google";
 import type { Db } from "../db";
 import { type MediaEntry, MediaRefused, type MediaStore, type UploadTarget } from "./store";
@@ -12,7 +13,9 @@ const UPLOAD_API = "https://www.googleapis.com/upload/drive/v3/files";
 /** What Connect Google Drive asks for. */
 export const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive";
 const FOLDER = "application/vnd.google-apps.folder";
-const FIELDS = "id,name,mimeType,md5Checksum,size,modifiedTime,parents,trashed";
+const FIELDS = "id,name,mimeType,md5Checksum,size,modifiedTime,parents,trashed,driveId";
+/** On every call: without it Drive doesn't see a Shared drive's files at all (a 404). */
+const ALL = "supportsAllDrives=true";
 
 interface DriveFile {
   id: string;
@@ -23,6 +26,8 @@ interface DriveFile {
   modifiedTime?: string;
   parents?: string[];
   trashed?: boolean;
+  /** Set for a file in a Shared drive: the drive's id. */
+  driveId?: string;
 }
 
 /** "<store id>:<folder path>" → its folder, per Worker instance (see resolve). */
@@ -55,12 +60,16 @@ export interface DriveStoreOptions {
   /** The Drive id of the root folder the workspaces' folders live in (the store's settings.root); none: the
    *  workspaces' folders are found by name anywhere in the Drive and made at the top of My Drive. */
   root?: string;
+  /** The Shared drive the root folder is in (its settings.root.driveId); none: it's in My Drive. Lists then search that
+   *  drive, as Drive wants for its files. */
+  driveId?: string;
 }
 
-/** A root folder as the dashboard keeps it: its Drive id, and its name to show. */
+/** A root folder as the dashboard keeps it: its Drive id, its name to show, and the Shared drive it's in, if any. */
 export interface DriveRoot {
   id: string;
   name: string;
+  driveId?: string;
 }
 
 /** The folder id in a Drive folder link (…/folders/<id>); null when the input isn't one. */
@@ -80,7 +89,9 @@ export class DriveStore implements MediaStore {
   }
 
   private async get(id: string): Promise<DriveFile | null> {
-    const r = await this.o.fetch(`${API}/${encodeURIComponent(id)}?fields=${FIELDS}`, { headers: await this.auth() });
+    const r = await this.o.fetch(`${API}/${encodeURIComponent(id)}?fields=${FIELDS}&${ALL}`, {
+      headers: await this.auth(),
+    });
     if (r.status === 404) return null;
     if (!r.ok) throw new Error(`drive stat ${id}: ${r.status}`);
     const f = (await r.json()) as DriveFile;
@@ -92,6 +103,12 @@ export class DriveStore implements MediaStore {
     return this.o.root ?? "root";
   }
 
+  /** Where lists search: the root's Shared drive, else the user's own files (My Drive and what's shared with them). */
+  private get corpus(): string {
+    const d = this.o.driveId;
+    return d ? `&${ALL}&includeItemsFromAllDrives=true&corpora=drive&driveId=${encodeURIComponent(d)}` : `&${ALL}`;
+  }
+
   /** Every file matching `q`, page after page: one page holds at most 1000, and a folder can hold more. */
   private async query(q: string): Promise<DriveFile[]> {
     const fields = encodeURIComponent(`nextPageToken,files(${FIELDS})`);
@@ -99,9 +116,12 @@ export class DriveStore implements MediaStore {
     let token: string | undefined;
     do {
       const page = token ? `&pageToken=${encodeURIComponent(token)}` : "";
-      const r = await this.o.fetch(`${API}?q=${encodeURIComponent(q)}&fields=${fields}&pageSize=1000${page}`, {
-        headers: await this.auth(),
-      });
+      const r = await this.o.fetch(
+        `${API}?q=${encodeURIComponent(q)}&fields=${fields}&pageSize=1000${page}${this.corpus}`,
+        {
+          headers: await this.auth(),
+        },
+      );
       if (!r.ok) throw new Error(`drive list: ${r.status}`);
       const body = (await r.json()) as { files: DriveFile[]; nextPageToken?: string };
       out.push(...body.files);
@@ -118,7 +138,7 @@ export class DriveStore implements MediaStore {
   async stream(id: string, range?: string | null) {
     const h: Record<string, string> = await this.auth();
     if (range) h.Range = range;
-    const r = await this.o.fetch(`${API}/${encodeURIComponent(id)}?alt=media`, { headers: h });
+    const r = await this.o.fetch(`${API}/${encodeURIComponent(id)}?alt=media&${ALL}`, { headers: h });
     return r.status === 404 ? new Response("not found", { status: 404 }) : r;
   }
 
@@ -203,7 +223,7 @@ export class DriveStore implements MediaStore {
   }
 
   private async mkdir(name: string, parent: string): Promise<string> {
-    const r = await this.o.fetch(`${API}?fields=id`, {
+    const r = await this.o.fetch(`${API}?fields=id&${ALL}`, {
       method: "POST",
       headers: { ...(await this.auth()), "Content-Type": "application/json" },
       body: JSON.stringify({ name, mimeType: FOLDER, parents: [parent] }),
@@ -233,7 +253,7 @@ export class DriveStore implements MediaStore {
   async renameFolder(path: string, name: string) {
     const f = await this.resolve(path);
     if (!f?.folder) throw new Error(`drive: no folder ${path}`);
-    const r = await this.o.fetch(`${API}/${encodeURIComponent(f.id)}?fields=id`, {
+    const r = await this.o.fetch(`${API}/${encodeURIComponent(f.id)}?fields=id&${ALL}`, {
       method: "PATCH",
       headers: { ...(await this.auth()), "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -250,7 +270,8 @@ export class DriveStore implements MediaStore {
     if (!f) throw new Error(`drive move ${id}: gone`);
     const to = await this.ensureFolder(toFolderPath);
     if (f.parents?.includes(to)) return;
-    const qs = `&addParents=${encodeURIComponent(to)}&removeParents=${encodeURIComponent((f.parents ?? []).join(","))}`;
+    // in a Shared drive a file moves only within it, and the grant needs Content manager there: else a 403, refused
+    const qs = `&addParents=${encodeURIComponent(to)}&removeParents=${encodeURIComponent((f.parents ?? []).join(","))}&${ALL}`;
     const r = await this.o.fetch(`${API}/${encodeURIComponent(id)}?fields=id${qs}`, {
       method: "PATCH",
       headers: { ...(await this.auth()), "Content-Type": "application/json" },
@@ -265,7 +286,10 @@ export class DriveStore implements MediaStore {
   async findRoot(input: string): Promise<DriveRoot> {
     const byId = async (id: string) => {
       const f = await this.get(id);
-      return f && f.mimeType === FOLDER ? { id, name: f.name ?? id } : null;
+      // in a Shared drive (or its top, whose id is the drive's): the store lists that drive
+      return f && f.mimeType === FOLDER
+        ? { id, name: f.name ?? id, ...(f.driveId ? { driveId: f.driveId } : {}) }
+        : null;
     };
     const link = driveFolderId(input);
     if (link) {
@@ -295,7 +319,7 @@ export class DriveStore implements MediaStore {
       .bind(key)
       .first<{ value: string }>();
     if (hit && (await this.get(hit.value))) return hit.value;
-    const r = await this.o.fetch(`${API}?fields=id`, {
+    const r = await this.o.fetch(`${API}?fields=id&${ALL}`, {
       method: "POST",
       headers: { ...(await this.auth()), "Content-Type": "application/json" },
       body: JSON.stringify({ name, mimeType: FOLDER, parents: [this.top] }),
@@ -319,7 +343,7 @@ export class DriveStore implements MediaStore {
       const have = (await this.list(folder)).find((e) => e.folder && e.name === part);
       folder = have?.id ?? (await this.mkdir(part, folder));
     }
-    const r = await this.o.fetch(`${UPLOAD_API}?uploadType=resumable&fields=id,name,mimeType,md5Checksum,size`, {
+    const r = await this.o.fetch(`${UPLOAD_API}?uploadType=resumable&fields=id,name,mimeType,md5Checksum,size&${ALL}`, {
       method: "POST",
       // Origin: Google then answers the browser's PUTs to the session URL with CORS headers for the app.
       // No X-Upload-Content-Length: a picked file can turn out a different size than it claims; the last chunk says.

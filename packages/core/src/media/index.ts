@@ -96,8 +96,15 @@ export function buildStore(
 ): MediaStore {
   if (kind === "drive") {
     if (!credentials) throw new Error("Google Drive isn't connected");
-    const root = (settings.root as DriveRoot | undefined)?.id;
-    return new DriveStore({ oauth: credentials, fetch: fetcher, db: env.DB, id, ...(root ? { root } : {}) });
+    const root = settings.root as DriveRoot | undefined;
+    return new DriveStore({
+      oauth: credentials,
+      fetch: fetcher,
+      db: env.DB,
+      id,
+      ...(root?.id ? { root: root.id } : {}),
+      ...(root?.driveId ? { driveId: root.driveId } : {}),
+    });
   }
   if (kind === "s3") {
     if (!credentials) throw new Error("the bucket's keys are missing");

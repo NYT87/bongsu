@@ -60,8 +60,40 @@ export class World {
       name?: string;
       parent?: string;
       modified?: string;
+      /** In a Shared drive (its id): reached only with supportsAllDrives, listed only with corpora=drive. */
+      driveId?: string;
     }
   >();
+
+  /** A Shared drive (#109): its top folder has the drive's id, as on Drive; `path` is put inside it, folders made as
+   *  needed, every one in the drive. Returns the last one's id. */
+  drivePutShared(
+    driveId: string,
+    path: string,
+    file: { md5: string; mimeType: string; bytes?: string; size?: number; modified?: string },
+  ): string {
+    const FOLDER_MIME = "application/vnd.google-apps.folder";
+    if (!this.drive.has(driveId))
+      this.drive.set(driveId, { md5: "", mimeType: FOLDER_MIME, name: "Team media", driveId });
+    let parent = driveId;
+    const parts = path.split("/");
+    for (const [i, name] of parts.entries()) {
+      const last = i === parts.length - 1;
+      let id = [...this.drive.entries()].find(([, f]) => f.name === name && f.parent === parent)?.[0];
+      if (!id) {
+        id = `sd_${parts
+          .slice(0, i + 1)
+          .join("_")
+          .replace(/[^A-Za-z0-9]/g, "")}`.slice(0, 60);
+        this.drive.set(
+          id,
+          last ? { ...file, name, parent, driveId } : { md5: "", mimeType: FOLDER_MIME, name, parent, driveId },
+        );
+      }
+      parent = id;
+    }
+    return parent;
+  }
 
   /** Put a file at a Drive path under UPLOADS/ (folders created as needed); returns its id. */
   drivePut(
@@ -87,6 +119,10 @@ export class World {
       parent = id;
     }
     return parent!;
+  }
+  /** Whether Drive answers 404 for a Shared drive's file: a call without supportsAllDrives doesn't see it. */
+  private sharedHidden(url: URL, f: { driveId?: string } | undefined) {
+    return !!f?.driveId && url.searchParams.get("supportsAllDrives") !== "true";
   }
   calls: Call[] = [];
   /** Composio handlers by slug; return data, or throw to fail the tool. */
@@ -298,6 +334,7 @@ export class World {
     }
     if (url.hostname === "www.googleapis.com" && url.pathname === "/upload/drive/v3/files" && req.method === "POST") {
       const b = (await req.json()) as { name: string; parents: string[] };
+      if (this.sharedHidden(url, this.drive.get(b.parents?.[0] ?? ""))) return new Response("404", { status: 404 });
       this.uploads.push({ ...b, origin: req.headers.get("Origin"), type: req.headers.get("X-Upload-Content-Type") });
       return new Response(null, {
         status: 200,
@@ -317,7 +354,9 @@ export class World {
       for (let n = 2; this.drive.has(id); n++) id = `${base}_${n}`;
       // "root" is My Drive's top, where the fake keeps files without a parent
       const parent = b.parents?.[0] === "root" ? undefined : b.parents?.[0];
-      this.drive.set(id, { md5: "", mimeType: b.mimeType, name: b.name, parent });
+      const inDrive = parent ? this.drive.get(parent) : undefined;
+      if (this.sharedHidden(url, inDrive)) return new Response("404", { status: 404 });
+      this.drive.set(id, { md5: "", mimeType: b.mimeType, name: b.name, parent, driveId: inDrive?.driveId });
       if (this.driveSearchLag) this.driveUnsearchable.add(id);
       return json({ id });
     }
@@ -327,7 +366,7 @@ export class World {
       req.method === "PATCH"
     ) {
       const f = this.drive.get(decodeURIComponent(url.pathname.split("/").pop()!));
-      if (!f) return new Response("404", { status: 404 });
+      if (!f || this.sharedHidden(url, f)) return new Response("404", { status: 404 });
       if (this.driveRefuses) return new Response("403", { status: 403 });
       const id = decodeURIComponent(url.pathname.split("/").pop()!);
       const b = ((await req.text()) || "{}") as string;
@@ -335,6 +374,8 @@ export class World {
       if (name !== undefined && this.driveRenameRefused.has(id)) return new Response("403", { status: 403 });
       if (name !== undefined) f.name = name;
       const add = url.searchParams.get("addParents");
+      // a Shared drive's file moves only within its drive
+      if (add && this.drive.get(add)?.driveId !== f.driveId) return new Response("403", { status: 403 });
       if (add) f.parent = add;
       return json({ id });
     }
@@ -343,10 +384,18 @@ export class World {
       const q = url.searchParams.get("q") ?? "";
       const name = /name='([^']+)'/.exec(q)?.[1];
       const parent = /'([^']+)' in parents/.exec(q)?.[1];
+      // a Shared drive's files come only in its own corpus, asked for as Drive wants
+      const corpus =
+        url.searchParams.get("corpora") === "drive" &&
+        url.searchParams.get("includeItemsFromAllDrives") === "true" &&
+        url.searchParams.get("supportsAllDrives") === "true"
+          ? url.searchParams.get("driveId")
+          : null;
       const files = [...this.drive.entries()]
         .filter(
           ([id, f]) =>
             !f.trashed &&
+            (f.driveId ?? null) === corpus &&
             (parent && parent !== "root" ? f.parent === parent : !f.parent) &&
             (!name || (f.name === name && !this.driveUnsearchable.has(id))),
         )
@@ -368,7 +417,7 @@ export class World {
     if (url.hostname === "www.googleapis.com" && url.pathname.startsWith("/drive/v3/files/")) {
       const id = decodeURIComponent(url.pathname.split("/").pop()!);
       const f = this.drive.get(id);
-      if (!f) return new Response("404", { status: 404 });
+      if (!f || this.sharedHidden(url, f)) return new Response("404", { status: 404 });
       if (url.searchParams.get("alt") === "media") {
         const all = f.bytes ?? "bytes";
         const r = /^bytes=(\d+)-(\d*)$/.exec(req.headers.get("Range") ?? "");
@@ -393,6 +442,7 @@ export class World {
         mimeType: f.mimeType,
         trashed: !!f.trashed,
         parents: f.parent ? [f.parent] : [],
+        ...(f.driveId ? { driveId: f.driveId } : {}),
       });
     }
     if (url.hostname === "youtubeanalytics.googleapis.com" && url.pathname === "/v2/reports") {
