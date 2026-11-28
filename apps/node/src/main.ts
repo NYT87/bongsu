@@ -11,7 +11,6 @@
 import { createApp } from "@bongsu/api/app";
 import type { Db } from "@bongsu/core/db";
 import { registerMailer } from "@bongsu/core/mail";
-import { registerStore } from "@bongsu/core/media/index";
 import { PostgresDb } from "@bongsu/core/postgres";
 import { schedulesOff } from "@bongsu/core/schedules";
 import { exportData, importData, TransferError } from "@bongsu/schema/transfer";
@@ -19,10 +18,10 @@ import { serve } from "@hono/node-server";
 import { staticAssets } from "./assets";
 import { SqliteDb } from "./db";
 import { ConfigError, nodeEnv } from "./env";
-import { LocalStore } from "./local-store";
+import { registerLocalStore } from "./local-store";
 import { migrate, migratePostgres } from "./migrate";
 import { postgresDriver } from "./postgres";
-import { checkSchedules, startSchedules } from "./schedules";
+import { checkSchedules, clearLocks, startSchedules } from "./schedules";
 import { smtpMailer } from "./smtp";
 
 const vars = process.env;
@@ -37,10 +36,7 @@ const HOST = vars.HOST ?? "0.0.0.0";
 
 // The server's own disk, offered as the "local" media store when MEDIA_DIR names a directory (/media in Docker); the
 // dashboard picks it like any other store.
-if (vars.MEDIA_DIR) {
-  const dir = vars.MEDIA_DIR;
-  registerStore("local", () => new LocalStore(dir));
-}
+if (vars.MEDIA_DIR) registerLocalStore(vars.MEDIA_DIR);
 registerMailer("smtp", smtpMailer);
 
 /** Fetch called unbound, as on Workers (clients call `this.fetcher(…)`). */
@@ -121,8 +117,8 @@ async function main() {
   // An invalid CRON_* stops the start, naming the variable, rather than leaving that run silently off.
   if (!schedulesOff(env)) checkSchedules(env);
   // A lock left by a run this process didn't finish (a crash, a kill -9) would hold its schedule for up to its
-  // expiry; this is the database's only process, so any lock at start is stale.
-  await db.prepare("DELETE FROM locks").run();
+  // expiry; the process that runs the schedules is the only one that takes locks, so any lock at its start is stale.
+  await clearLocks(env);
 
   const app = createApp(realFetch);
   const server = serve({ fetch: (req) => app.fetch(req, env), port: PORT, hostname: HOST }, (a) =>
@@ -144,7 +140,7 @@ async function main() {
     stopSchedules?.();
     server.close();
     await Promise.race([Promise.all(running), new Promise((r) => setTimeout(r, 30_000))]);
-    await db.prepare("DELETE FROM locks").run();
+    await clearLocks(env);
     await close();
     process.exit(0);
   };

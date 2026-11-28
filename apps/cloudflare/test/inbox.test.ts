@@ -3,6 +3,7 @@ import { upsertConnection } from "@bongsu/core/accounts";
 import { runBudget } from "@bongsu/core/budget";
 import { cleanMedia } from "@bongsu/core/cleanup";
 import { inboxTexts, nextWorkspaces, scanInbox } from "@bongsu/core/inbox";
+import { clearFolderCache } from "@bongsu/core/media/drive";
 import { saveStore } from "@bongsu/core/media/manage";
 import { createWorkspace } from "@bongsu/core/people";
 import { workspaceSettings } from "@bongsu/core/workspaces";
@@ -202,6 +203,37 @@ describe("the Drive inbox", () => {
     expect(first.waiting).toBe(2);
     const second = await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
     expect(second.drafted).toEqual(["demo/a3", "demo/a4"]);
+  });
+
+  it("doesn't list drafted post folders again: a busy inbox still drafts a new drop within the run's calls", async () => {
+    for (let n = 1; n <= 20; n++)
+      w.drivePut(`UPLOADS/inbox/demo/${n}_post/1.jpg`, { md5: `p${n}`, mimeType: "image/jpeg", modified: OLD });
+    const e = await testEnv(env);
+    let made = 0; // a run drafts a few at most
+    for (let n = 0; n < 10 && made < 20; n++) made += (await scanInbox(e, { fetch: w.fetch, now: NOW })).drafted.length;
+    expect(made).toBe(20);
+    await env.DB.prepare("UPDATE drafts SET status = 'refused'").run(); // refused ones stay in the inbox for good
+    w.drivePut("UPLOADS/inbox/demo/new.jpg", { md5: "n", mimeType: "image/jpeg", modified: OLD });
+    // fewer calls than listing the 20 old folders would take
+    const budget = runBudget(12, w.fetch).step("inbox", 0);
+    const r = await scanInbox(e, { fetch: budget.fetch, now: NOW, budget });
+    expect(r.drafted).toEqual(["demo/new"]);
+  });
+
+  it("finds an inbox folder deleted and made again, instead of listing the old one forever", async () => {
+    const old = w.drivePut("UPLOADS/inbox/demo/a.jpg", { md5: "a", mimeType: "image/jpeg", modified: OLD });
+    const e = await testEnv(env);
+    expect((await scanInbox(e, { fetch: w.fetch, now: NOW })).drafted).toEqual(["demo/a"]);
+    // the owner deletes inbox/ (in the trash with everything in it) and makes a new one
+    const project = w.drive.get(old)!.parent!;
+    const inbox = w.drive.get(project)!.parent!;
+    const uploads = w.drive.get(inbox)!.parent!;
+    for (const id of [old, project, inbox]) w.drive.set(id, { ...w.drive.get(id)!, trashed: true, name: `${id}-old` });
+    const folder = { md5: "", mimeType: "application/vnd.google-apps.folder" };
+    w.drive.set("new_inbox_folder_000", { ...folder, name: "inbox", parent: uploads });
+    w.drivePut("UPLOADS/inbox/demo/b.jpg", { md5: "b", mimeType: "image/jpeg", modified: OLD });
+    clearFolderCache();
+    expect((await scanInbox(e, { fetch: w.fetch, now: NOW })).drafted).toEqual(["demo/b"]);
   });
 
   it("always drafts the run's first item, however heavy", async () => {

@@ -4,7 +4,7 @@
 // invite routes) makes the person a member; admins change roles and remove members, and a workspace always keeps one
 // admin unless an instance admin says otherwise.
 import { decryptSecret, encryptSecret } from "./crypto";
-import type { Db } from "./db";
+import type { Db, DbStatement } from "./db";
 import type { Env } from "./env";
 import { sha256Hex } from "./formats/approved";
 import { instanceName, mailer } from "./mail";
@@ -152,6 +152,17 @@ const LAST_ADMIN = "a workspace keeps one admin: make someone else admin first";
 const keepsAdmin = (override: string) => `(role <> 'admin' OR ${override} = 1 OR EXISTS (SELECT 1 FROM memberships a
    WHERE a.workspace_id = ?1 AND a.role = 'admin' AND a.user_id <> ?2))`;
 
+/** Runs a change to a workspace's admins after locking the workspace's row, in one transaction: on Postgres two
+ *  changes at once lock different memberships and each statement's snapshot still sees the other admin, so both
+ *  would pass keepsAdmin; the lock makes the second wait and see the first. The change's RETURNING row, if any. */
+async function asOnlyChange(db: Db, workspaceId: string, change: DbStatement): Promise<unknown> {
+  const [, r] = await db.batch([
+    db.prepare("UPDATE workspaces SET name = name WHERE id = ?1").bind(workspaceId),
+    change,
+  ]);
+  return r.results[0] ?? null;
+}
+
 /** Why a change matched no row: not a member (404), or the last admin (409). */
 async function refused(db: Db, workspaceId: string, userId: string): Promise<MemberError> {
   const m = await db
@@ -181,13 +192,16 @@ export async function setRole(
   by: { instanceAdmin: boolean },
   nowS: number,
 ): Promise<void> {
-  const r = await db
-    .prepare(
-      `UPDATE memberships SET role = ?3 WHERE workspace_id = ?1 AND user_id = ?2
+  const r = await asOnlyChange(
+    db,
+    workspaceId,
+    db
+      .prepare(
+        `UPDATE memberships SET role = ?3 WHERE workspace_id = ?1 AND user_id = ?2
          AND (?3 = 'admin' OR ${keepsAdmin("?4")}) RETURNING user_id`,
-    )
-    .bind(workspaceId, userId, role, by.instanceAdmin ? 1 : 0)
-    .first();
+      )
+      .bind(workspaceId, userId, role, by.instanceAdmin ? 1 : 0),
+  );
   if (!r) throw await refused(db, workspaceId, userId);
   if (role !== "admin") await revokeSentInvites(db, workspaceId, userId, nowS).run();
 }
@@ -204,12 +218,15 @@ export async function removeMember(
   by: { instanceAdmin: boolean },
   nowS: number,
 ): Promise<void> {
-  const r = await db
-    .prepare(
-      `DELETE FROM memberships WHERE workspace_id = ?1 AND user_id = ?2 AND ${keepsAdmin("?3")} RETURNING user_id`,
-    )
-    .bind(workspaceId, userId, by.instanceAdmin ? 1 : 0)
-    .first();
+  const r = await asOnlyChange(
+    db,
+    workspaceId,
+    db
+      .prepare(
+        `DELETE FROM memberships WHERE workspace_id = ?1 AND user_id = ?2 AND ${keepsAdmin("?3")} RETURNING user_id`,
+      )
+      .bind(workspaceId, userId, by.instanceAdmin ? 1 : 0),
+  );
   if (!r) throw await refused(db, workspaceId, userId);
   await db.batch([
     db.prepare("DELETE FROM sessions WHERE workspace_id = ?1 AND user_id = ?2").bind(workspaceId, userId),

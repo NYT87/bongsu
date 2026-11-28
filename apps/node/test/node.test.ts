@@ -11,7 +11,7 @@ import { dbCases } from "@bongsu/core/db-conformance";
 import type { Env } from "@bongsu/core/env";
 import { inboxWorkspacesPerRun } from "@bongsu/core/inbox";
 import { mediaStoreCases } from "@bongsu/core/media/conformance";
-import { registerStore } from "@bongsu/core/media/index";
+import { buildStore, registerStore } from "@bongsu/core/media/index";
 import { runSchedule, schedulesOff } from "@bongsu/core/schedules";
 import { jobsPerTick } from "@bongsu/core/tick";
 import Database from "better-sqlite3";
@@ -19,9 +19,9 @@ import { afterAll, describe, expect, it, vi } from "vitest";
 import { staticAssets } from "../src/assets";
 import { SqliteDb } from "../src/db";
 import { ConfigError, nodeEnv } from "../src/env";
-import { LocalStore, putFile } from "../src/local-store";
+import { LocalStore, putFile, registerLocalStore } from "../src/local-store";
 import { migrate } from "../src/migrate";
-import { checkSchedules, startSchedules } from "../src/schedules";
+import { checkSchedules, clearLocks, startSchedules } from "../src/schedules";
 
 const MIGRATIONS = join(__dirname, "../../../migrations/sqlite");
 const tmp = mkdtempSync(join(tmpdir(), "bongsu-node-"));
@@ -107,6 +107,19 @@ describe("media store conformance: local (a directory)", () => {
     rmSync(join(root, "a.mp4"));
     expect(await store.stat(a)).toBeNull(); // a walk looks for it
     expect(sums.size).toBe(0);
+  });
+
+  it("is one store for the process, so its checksums last across requests and runs (#170)", async () => {
+    const root = join(tmp, "store-shared");
+    registerLocalStore(root);
+    const env = nodeEnv({ PUBLIC_URL: "https://x.test", MEDIA_DIR: root }, migrated());
+    const store = buildStore(env, fetch, "local", {}, null); // an /m request's
+    const a = await putFile(store as LocalStore, root, "a.mp4", "one");
+    await store.stat(a);
+    const next = buildStore(env, fetch, "local", {}, null); // the next request's, or a run's
+    expect(next).toBe(store);
+    expect((next as unknown as { sums: Map<string, unknown> }).sums.size).toBe(1); // hashed already
+    registerStore("local", (e) => new LocalStore(e.MEDIA_DIR as string)); // as the tests below register it
   });
 });
 
@@ -195,6 +208,16 @@ describe("the HTTP app and the schedules on Node", () => {
   it("turns the schedules off with SCHEDULES=off, which the dashboard's Scheduler shows", () => {
     expect(schedulesOff(nodeEnv({ PUBLIC_URL: "https://x.test" }, db))).toBe(false);
     expect(schedulesOff(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db))).toBe(true);
+  });
+
+  it("frees stale locks only in the process that runs the schedules, never a SCHEDULES=off replica's (#169)", async () => {
+    const db = migrated();
+    const locks = async () => (await db.prepare("SELECT name FROM locks").all()).results;
+    await db.prepare("INSERT INTO locks VALUES ('tick:instagram', 'main', 9999999999)").run();
+    await clearLocks(nodeEnv({ PUBLIC_URL: "https://x.test", SCHEDULES: "off" }, db));
+    expect(await locks()).toEqual([{ name: "tick:instagram" }]); // the main process's, still held
+    await clearLocks(nodeEnv({ PUBLIC_URL: "https://x.test" }, db));
+    expect(await locks()).toEqual([]);
   });
 
   it("answers /health: migrated, local store, nothing missing", async () => {

@@ -7,6 +7,7 @@ import { createReadStream } from "node:fs";
 import { mkdir, open, readdir, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
+import { registerStore } from "@bongsu/core/media/index";
 import { type MediaEntry, MediaRefused, type MediaStore } from "@bongsu/core/media/store";
 
 const TYPES: Record<string, string> = {
@@ -25,6 +26,13 @@ const TYPES: Record<string, string> = {
   ".json": "application/json",
 };
 const mimeOf = (name: string) => TYPES[extname(name).toLowerCase()] ?? "application/octet-stream";
+
+/** Offers the server's disk as the "local" store: one LocalStore for the process, so its paths and checksums are
+ *  remembered across requests and runs (one per call would walk the folder and hash whole videos every time). */
+export function registerLocalStore(dir: string): void {
+  const local = new LocalStore(dir);
+  registerStore("local", () => local);
+}
 
 export class LocalStore implements MediaStore {
   private readonly root: string;
