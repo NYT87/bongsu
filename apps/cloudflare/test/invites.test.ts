@@ -710,6 +710,7 @@ describe("leaving a workspace", () => {
     expect((await eda("/admin-api/me")).json).toEqual({
       email: "eda@example.com",
       name: "Eda",
+      theme: null,
       workspaces: [
         { id: "default", name: expect.any(String), role: "editor" },
         { id: "b", name: "Workspace B", role: "creator" },
