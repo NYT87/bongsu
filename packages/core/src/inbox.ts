@@ -173,18 +173,46 @@ async function inboxId(env: Env, store: MediaStore, folder: string): Promise<str
   return node.id;
 }
 
-/** What's waiting in one store's inbox: a Reel or photo per media file, a post per folder. */
+/** What's waiting in one store's inbox: a Reel or photo per media file, a post per folder. A post folder already
+ *  drafted isn't listed again (it would spend the run's calls on old drops). `spent`: the run's calls ran out midway,
+ *  and the items are those found before. */
 async function inboxItems(
+  db: Db,
   store: MediaStore,
   workspaceId: string,
   root: string,
   reads: { used: number },
-): Promise<Item[]> {
+): Promise<{ items: Item[]; spent: boolean }> {
   const items: Item[] = [];
+  try {
+    await listInbox(db, store, workspaceId, root, reads, items);
+  } catch (e) {
+    if (!(e instanceof BudgetSpent)) throw e;
+    return { items, spent: true };
+  }
+  return { items, spent: false };
+}
+
+async function listInbox(
+  db: Db,
+  store: MediaStore,
+  workspaceId: string,
+  root: string,
+  reads: { used: number },
+  items: Item[],
+) {
   reads.used++;
   for (const proj of (await store.list(root)).filter((f) => f.folder && !f.name.startsWith("_"))) {
     reads.used++;
     const kids = await store.list(proj.id);
+    const dirs = kids.filter((k) => k.folder && !k.name.startsWith("_"));
+    const seen = dirs.length
+      ? await seenIds(
+          db,
+          store.id,
+          dirs.map((d) => d.id),
+        )
+      : new Set<string>();
     for (const f of kids.filter((k) => isMedia(k))) {
       const s = stem(f.name);
       const t = (n: string) => kids.find((k) => k.name === n);
@@ -207,7 +235,7 @@ async function inboxItems(
         tooBig: [],
       });
     }
-    for (const dir of kids.filter((k) => k.folder && !k.name.startsWith("_"))) {
+    for (const dir of dirs.filter((d) => !seen.has(d.id))) {
       reads.used++;
       const inner = await store.list(dir.id);
       const t = (n: string) => inner.find((k) => k.name === n);
@@ -235,7 +263,15 @@ async function inboxItems(
       });
     }
   }
-  return items;
+}
+
+/** The ones of a store's media ids that already made a draft. */
+async function seenIds(db: Db, store: string, ids: string[]): Promise<Set<string>> {
+  const r = await db
+    .prepare(`SELECT media_id FROM inbox_seen WHERE store = ?2 AND media_id IN ${jsonList(db, 1)}`)
+    .bind(JSON.stringify(ids), store)
+    .all<{ media_id: string }>();
+  return new Set(r.results.map((x) => x.media_id));
 }
 
 export interface InboxRun {
@@ -295,9 +331,14 @@ export async function scanInbox(env: Env, deps: StepDeps): Promise<InboxRun> {
         if (!root) continue;
         inboxes++;
         stores.set(store.id, store);
-        items.push(...(await inboxItems(store, workspaceId, root, reads)));
+        // the run's calls ran out midway: what was found is still drafted, the rest waits for the next turn
+        const found = await inboxItems(env.DB, store, workspaceId, root, reads);
+        items.push(...found.items);
+        if (found.spent) {
+          spent = true;
+          break;
+        }
       } catch (e) {
-        // the run's calls ran out midway: what this store held waits for the workspace's next turn
         if (e instanceof BudgetSpent) {
           spent = true;
           break;
@@ -323,12 +364,7 @@ export async function scanInbox(env: Env, deps: StepDeps): Promise<InboxRun> {
   for (const store of stores.values()) {
     const keys = items.filter((i) => i.store.id === store.id).map((i) => i.key);
     if (!keys.length) continue;
-    const seen = await env.DB.prepare(
-      `SELECT media_id FROM inbox_seen WHERE store = ?2 AND media_id IN ${jsonList(env.DB, 1)}`,
-    )
-      .bind(JSON.stringify(keys), store.id)
-      .all<{ media_id: string }>();
-    for (const r of seen.results) done.add(`${store.id}:${r.media_id}`);
+    for (const id of await seenIds(env.DB, store.id, keys)) done.add(`${store.id}:${id}`);
   }
   const fresh = items.filter((i) => !done.has(`${i.store.id}:${i.key}`) && i.media.length);
   const settled = (i: Item) => {

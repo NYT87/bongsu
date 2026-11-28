@@ -204,6 +204,21 @@ describe("the Drive inbox", () => {
     expect(second.drafted).toEqual(["demo/a3", "demo/a4"]);
   });
 
+  it("doesn't list drafted post folders again: a busy inbox still drafts a new drop within the run's calls", async () => {
+    for (let n = 1; n <= 20; n++)
+      w.drivePut(`UPLOADS/inbox/demo/${n}_post/1.jpg`, { md5: `p${n}`, mimeType: "image/jpeg", modified: OLD });
+    const e = await testEnv(env);
+    let made = 0; // a run drafts a few at most
+    for (let n = 0; n < 10 && made < 20; n++) made += (await scanInbox(e, { fetch: w.fetch, now: NOW })).drafted.length;
+    expect(made).toBe(20);
+    await env.DB.prepare("UPDATE drafts SET status = 'refused'").run(); // refused ones stay in the inbox for good
+    w.drivePut("UPLOADS/inbox/demo/new.jpg", { md5: "n", mimeType: "image/jpeg", modified: OLD });
+    // fewer calls than listing the 20 old folders would take
+    const budget = runBudget(12, w.fetch).step("inbox", 0);
+    const r = await scanInbox(e, { fetch: budget.fetch, now: NOW, budget });
+    expect(r.drafted).toEqual(["demo/new"]);
+  });
+
   it("always drafts the run's first item, however heavy", async () => {
     heavy("demo", "b1", [...FIVE, "ja", "ko", "nl"]);
     const r = await scanInbox(await testEnv(env), { fetch: w.fetch, now: NOW });
