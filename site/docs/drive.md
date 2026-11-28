@@ -28,6 +28,16 @@ folders existed keeps its folders at the top of My Drive until you save one.)
 **Save the root folder** moves to another root: the folders are made in the new one, and files already in the old one
 stay where they are (move them yourself).
 
+### A Shared drive (Google Workspace)
+
+On Google Workspace, keep the media in a **Shared drive** when it belongs to the team rather than to one person: the
+files stay with the organisation if the person who connected leaves. Paste the link of the Shared drive itself, or of a
+folder inside it, as the root folder (a Shared drive isn't found by its name). Bongsu then reads, uploads and moves files
+within that drive. The Google account you connect with needs at least the **Content manager** role on the Shared
+drive: a lower role can read but not move files to `_posted` or make the workspaces' folders. A file can only move
+within its own Shared drive, so keep everything under the root. To switch a store between My Drive and a Shared drive,
+save the new root (or connect again with it) and move the files yourself.
+
 ## 3. The folders
 
 Each workspace has a media folder, named after the workspace's id (`w_…`) so renaming the workspace never changes it.

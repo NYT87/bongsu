@@ -558,6 +558,36 @@ describe("Connect Google Drive", () => {
     expect(await settings()).toEqual({ root: { id: "root-folder-id-2", name: "shared media" } });
   });
 
+  it("takes a root in a Shared drive (#109): keeps its drive, and finds, uploads and moves files within it", async () => {
+    await env.DB.prepare("DELETE FROM media_store").run();
+    const root = w.drivePutShared("0ATeamDrive01", "bongsu-media", { md5: "", mimeType: FOLDER });
+    await connectDrive(`https://drive.google.com/drive/folders/${root}`);
+    const row = await env.DB.prepare("SELECT settings FROM media_store WHERE id = 'drive'").first<{
+      settings: string;
+    }>();
+    expect(JSON.parse(row!.settings)).toEqual({ root: { id: root, name: "bongsu-media", driveId: "0ATeamDrive01" } });
+    // the workspaces' folders are made in it, in the drive
+    const [folder] = await activeFolders();
+    const ws = folderIn(root, folder);
+    expect(w.drive.get(ws!)?.driveId).toBe("0ATeamDrive01");
+    const store = (await mediaStores(e, w.fetch)).get("drive")!;
+    // a file dropped in its inbox is found and read
+    const file = w.drivePutShared("0ATeamDrive01", `bongsu-media/${folder}/inbox/trip/a.jpg`, {
+      md5: "a1",
+      mimeType: "image/jpeg",
+    });
+    expect((await store.resolve(`${folder}/inbox/trip/a.jpg`))?.id).toBe(file);
+    expect(await store.stat(file)).toMatchObject({ checksum: "a1", parent: folderIn(folderIn(ws, "inbox"), "trip") });
+    expect(await store.inside(file, folder)).toBe(true);
+    // an upload from the app goes into the drive's folder
+    await store.createUpload!("b.jpg", `${folder}/inbox/trip`, "image/jpeg", "https://bongsu.test");
+    expect(w.uploads.at(-1)?.parents).toEqual([folderIn(folderIn(ws, "inbox"), "trip")]);
+    // and a posted file moves aside within the drive
+    await store.move(file, `${folder}/_posted`);
+    expect(w.drive.get(file)?.parent).toBe(folderIn(ws, "_posted"));
+    expect(w.drive.get(folderIn(ws, "_posted")!)?.driveId).toBe("0ATeamDrive01");
+  });
+
   it("saves another root for a connected Drive, making the folders there, and refuses an empty one", async () => {
     await env.DB.prepare("DELETE FROM media_store").run();
     await connectDrive(ROOT);

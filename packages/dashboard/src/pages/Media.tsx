@@ -445,7 +445,7 @@ export function DriveForm({
     <form onSubmit={save} className="inset">
       <Field
         label="Root folder (required)"
-        help="Make a folder in your Drive for Bongsu, then type its name (when it's at the top of My Drive) or paste its link. Each workspace's folder is made inside it."
+        help="Make a folder in your Drive for Bongsu, then type its name (when it's at the top of My Drive) or paste its link: a Shared drive's link, or a folder's in one, works too. Each workspace's folder is made inside it."
         error={err}
       >
         {(p) => (
